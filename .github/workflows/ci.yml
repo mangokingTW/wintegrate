@@ -11,17 +11,21 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.13"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install ruff
+
       - name: Run Ruff Lint & Format Check
         run: |
           ruff check src/ tests/
+          ruff format --check src/ tests/
 
   test-x64:
     needs: lint
@@ -69,6 +73,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Disable Noisy WSL Auto-update on ARM Runner
+        shell: pwsh
+        run: |
+          try {
+            Get-ScheduledTask -TaskPath "\" -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like "*wsl*" } | Disable-ScheduledTask -ErrorAction SilentlyContinue
+            Get-ScheduledTask -TaskPath "\Microsoft\Windows\WSL\" -ErrorAction SilentlyContinue | Disable-ScheduledTask -ErrorAction SilentlyContinue
+            Get-Process -Name "wsl","msedge" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          } catch {
+            Write-Host "WSL task disable completed"
+          }
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
