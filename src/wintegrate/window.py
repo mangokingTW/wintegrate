@@ -11,6 +11,7 @@ from wintegrate.interop import (
     get_window_class,
     get_window_pid,
     get_foreground_window,
+    attach_to_input_desktop,
     SW_RESTORE,
     SW_SHOW,
     SW_MINIMIZE,
@@ -56,6 +57,7 @@ class Window:
 
     def set_foreground(self, verify: bool = True, timeout: float = 2.0) -> bool:
         """Brings the window to the foreground and verifies active status."""
+        attach_to_input_desktop()
         user32.ShowWindow(self.hwnd, SW_RESTORE)
         user32.SetForegroundWindow(self.hwnd)
         user32.BringWindowToTop(self.hwnd)
@@ -129,6 +131,7 @@ class Window:
         Launches an application and discovers its top-level window by diffing pre/post snapshots.
         Solves launcher PID != window PID issue (e.g. Modern Windows Notepad).
         """
+        attach_to_input_desktop()
         before = WindowCensus.capture()
 
         if isinstance(cmd, str):
@@ -143,7 +146,7 @@ class Window:
             after = WindowCensus.capture()
             diff = WindowCensus.diff(before, after)
 
-            # Check new windows first
+            # 1. Check newly added windows
             for snap in diff.added:
                 if not snap.is_visible:
                     continue
@@ -151,14 +154,14 @@ class Window:
                     if compiled_re.search(snap.title):
                         return proc, cls(snap.hwnd, snap.pid)
                 else:
-                    # If no pattern given, accept first visible non-empty title or matching PID
                     if snap.pid == proc.pid or snap.title:
                         return proc, cls(snap.hwnd, snap.pid)
 
-            # Also check if title appeared on an existing or matching process
-            for snap in after:
-                if snap.is_visible and compiled_re and compiled_re.search(snap.title):
-                    return proc, cls(snap.hwnd, snap.pid)
+            # 2. Check all currently visible windows if title pattern matched
+            if compiled_re:
+                for snap in after:
+                    if snap.is_visible and compiled_re.search(snap.title):
+                        return proc, cls(snap.hwnd, snap.pid)
 
             time.sleep(0.1)
 

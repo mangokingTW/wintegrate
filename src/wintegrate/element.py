@@ -8,7 +8,7 @@ from typing import Any
 import comtypes
 import comtypes.client
 
-from wintegrate.interop import user32, get_window_title
+from wintegrate.interop import user32, get_window_title, attach_to_input_desktop
 from wintegrate.text import normalize_line_endings, count_lines
 from wintegrate.exceptions import (
     ElementNotFoundError,
@@ -18,6 +18,13 @@ from wintegrate.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Ensure thread is attached to input desktop and COM is initialized
+attach_to_input_desktop()
+try:
+    ctypes.windll.ole32.CoInitializeEx(None, 0x2)  # COINIT_MULTITHREADED = 0x2
+except Exception:
+    pass
 
 # Load UIAutomationClient type library via comtypes
 try:
@@ -51,6 +58,11 @@ def get_uia() -> IUIAutomation:
     """Returns the process-wide IUIAutomation singleton."""
     global _uia
     if _uia is None:
+        attach_to_input_desktop()
+        try:
+            ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+        except Exception:
+            pass
         comtypes.client.GetModule("UIAutomationCore.dll")
         from comtypes.gen.UIAutomationClient import CUIAutomation, IUIAutomation
 
@@ -144,7 +156,6 @@ class UiaElement:
         while time.monotonic() < deadline:
             try:
                 focused = UiaElement.get_focused()
-                # Check equality by handle or runtime id
                 if focused.handle and self.handle and focused.handle == self.handle:
                     return True
                 if (
@@ -169,7 +180,6 @@ class UiaElement:
         uia = get_uia()
 
         while time.monotonic() < deadline:
-            # Build condition
             conditions = []
             if automation_id:
                 prop_id = 30011  # UIA_AutomationIdPropertyId
@@ -196,7 +206,6 @@ class UiaElement:
                 except Exception:
                     pass
 
-            # Fallback if substring search requested or raw scan needed
             if name_contains:
                 true_cond = uia.CreateTrueCondition()
                 try:
