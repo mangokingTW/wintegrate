@@ -18,8 +18,11 @@ from wintegrate.diagnostics import (
 )
 from wintegrate.element import UiaElement
 from wintegrate.interop import (
+    SW_HIDE,
     SW_MINIMIZE,
     WNDENUMPROC,
+    attach_to_input_desktop,
+    dismiss_popup_or_search,
     get_window_class,
     get_window_title,
     kernel32,
@@ -43,23 +46,27 @@ class SessionConfig:
 def sanitize_ci_runner_environment():
     """
     Cleans up known GitHub Actions CI runner hazards:
-    1. Disables orphaned WSL auto-update scheduled task that pops prompt windows every 30s.
-    2. Terminates orphan WSL prompt processes.
-    3. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
+    1. Dismisses Start menu popups and active Search overlays via Escape.
+    2. Disables orphaned WSL auto-update scheduled task that pops prompt windows every 30s.
+    3. Terminates background Edge browser welcome prompts and WSL popups.
+    4. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
     """
-    # 1. Disable WSL scheduled task by matching action string if task exists
+    attach_to_input_desktop()
+    dismiss_popup_or_search()
+
+    # 1. Disable WSL scheduled task and kill noisy background prompts
     try:
         ps_cmd = (
             "Get-ScheduledTask | Where-Object { $_.Actions.Execute -like '*wsl.exe*' "
             "-or $_.TaskName -like '*wsl*' } | "
             "Disable-ScheduledTask -ErrorAction SilentlyContinue; "
-            "Get-Process -Name 'wsl' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"
+            "Get-Process -Name 'wsl','msedge' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"
         )
         subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5)
     except Exception as exc:
         logger.debug(f"Runner task sanitization skipped ({type(exc).__name__}): {exc}")
 
-    # 2. Minimize background windows (preserves host terminal 'Default')
+    # 2. Minimize/hide noisy background windows (preserves host terminal 'Default')
     try:
         console_hwnd = kernel32.GetConsoleWindow()
         if console_hwnd:
@@ -69,9 +76,13 @@ def sanitize_ci_runner_environment():
             if user32.IsWindowVisible(hwnd):
                 title = get_window_title(hwnd).lower()
                 cls = get_window_class(hwnd)
-                # Match WSL / terminal windows, but NEVER close or minimize the runner host window if titled 'default'
+                # Match WSL, Edge welcome screens, search popups
                 if "wsl" in title:
-                    user32.ShowWindow(hwnd, SW_MINIMIZE)
+                    user32.ShowWindow(hwnd, SW_HIDE)
+                elif "edge" in title and ("welcome" in title or "first run" in title):
+                    user32.ShowWindow(hwnd, SW_HIDE)
+                elif "search" in title and cls == "Windows.UI.Core.CoreWindow":
+                    user32.ShowWindow(hwnd, SW_HIDE)
                 elif ("cmd" in title or "powershell" in title) and "default" not in title:
                     user32.ShowWindow(hwnd, SW_MINIMIZE)
                 elif cls == "ConsoleWindowClass" and "default" not in title:
@@ -139,87 +150,102 @@ class Session:
             **kwargs,
         }
         self.logs.append(entry)
-        logger.info(f"[{event_type}] {message}")
+        logger.info(f"[{event_type}] {message} ({kwargs})")
 
     def __enter__(self) -> Session:
-        self.artifact_dir.mkdir(parents=True, exist_ok=True)
-        self.log_event("SESSION_START", "Starting wintegrate automation session")
+        logger.info("Starting Wintegrate UI automation session...")
+        attach_to_input_desktop()
 
         if self.config.sanitize_runner:
             sanitize_ci_runner_environment()
-            if self.config.dismiss_oobe:
-                try_dismiss_oobe_privacy_screen()
 
+        if self.config.dismiss_oobe:
+            try_dismiss_oobe_privacy_screen()
+
+        # Capture baseline window state
         self.initial_census = WindowCensus.capture()
+        self.log_event("session_start", "Baseline window census captured", count=len(self.initial_census))
 
+        # Start continuous video recording if requested
         if self.config.record_video:
-            video_file = self.artifact_dir / "session_recording.mp4"
-            self.recorder = ContinuousRecorder(video_file, fps=self.config.fps)
-            self.recorder.start()
+            video_path = self.artifact_dir / "session_recording.mp4"
+            self.recorder = ContinuousRecorder(output_path=video_path, fps=self.config.fps)
+            if self.recorder.start():
+                self.log_event("video_recording_started", f"Streaming to {video_path}")
 
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        logger.info("Tearing down Wintegrate UI automation session...")
+
+        # Stop recorder
+        if self.recorder:
+            frames = self.recorder.stop()
+            self.log_event("video_recording_stopped", "Recorder finalized", frames=frames)
+
+        # Capture final census and compute diff
+        self.final_census = WindowCensus.capture()
+        diff = WindowCensus.diff(self.initial_census, self.final_census)
+        self.log_event(
+            "session_end",
+            "Final window census captured",
+            added=len(diff.added),
+            removed=len(diff.removed),
+            persisted=len(diff.persisted),
+        )
+
+        # If an exception occurred during the test, take failure snapshot
+        if exc_type is not None:
+            logger.error(f"Test failed with {exc_type.__name__}: {exc_val}. Capturing failure artifact.")
+            self._capture_failure_artifacts(exc_type, exc_val, diff)
+
+        # Flush session logs
+        self._flush_session_logs()
+
+        return False  # Do not suppress exceptions
+
+    def _capture_failure_artifacts(self, exc_type, exc_val, diff):
         try:
-            self.final_census = WindowCensus.capture()
-            diff = WindowCensus.diff(self.initial_census, self.final_census)
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            # 1. Failure screenshot
+            screenshot_path = self.artifact_dir / "failure_screenshot.png"
+            img = capture_screen_image()
+            img.save(screenshot_path)
+            logger.info(f"Saved failure screenshot to {screenshot_path}")
 
-            if self.recorder:
-                self.recorder.stop()
-
-            # Record failure in structured logs and capture failure screenshot
-            if exc_type is not None:
-                self.log_event(
-                    "SESSION_FAILURE",
-                    f"Session failed with {exc_type.__name__}: {exc_val}",
-                    exc_type=exc_type.__name__,
-                )
-                try:
-                    img = capture_screen_image()
-                    img.save(self.artifact_dir / "failure_screenshot.png")
-                except Exception as exc:
-                    logger.error(f"Failed to save failure screenshot: {exc}")
-
-            # Write census diff and logs to artifact dir
+            # 2. Window census dump
+            census_path = self.artifact_dir / "window_census.json"
             census_data = {
                 "initial_count": len(self.initial_census),
                 "final_count": len(self.final_census),
-                "added": [w.__dict__ for w in diff.added],
-                "removed": [w.__dict__ for w in diff.removed],
+                "added": [s.__dict__ for s in diff.added],
+                "removed": [s.__dict__ for s in diff.removed],
             }
-            with open(self.artifact_dir / "window_census.json", "w", encoding="utf-8") as f:
+            with open(census_path, "w", encoding="utf-8") as f:
                 json.dump(census_data, f, indent=2)
-
-            with open(self.artifact_dir / "session_events.json", "w", encoding="utf-8") as f:
-                json.dump(self.logs, f, indent=2)
-
-            self.log_event("SESSION_END", "Session completed and artifacts flushed")
+            logger.info(f"Saved window census diff to {census_path}")
         except Exception as exc:
-            logger.error(f"Error during session teardown ({type(exc).__name__}): {exc}")
+            logger.error(f"Failed to capture failure artifacts ({type(exc).__name__}): {exc}")
 
-        return False  # Do not suppress original exception
-
-    def find_window(
-        self,
-        title_exact: str | None = None,
-        title_pattern: str | None = None,
-        class_name: str | None = None,
-        timeout: float | None = None,
-    ) -> Window:
-        timeout = timeout or self.config.default_timeout
-        return Window.find(
-            title_exact=title_exact,
-            title_pattern=title_pattern,
-            class_name=class_name,
-            timeout=timeout,
-        )
+    def _flush_session_logs(self):
+        try:
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            events_path = self.artifact_dir / "session_events.json"
+            with open(events_path, "w", encoding="utf-8") as f:
+                json.dump(self.logs, f, indent=2)
+        except Exception as exc:
+            logger.error(f"Failed to flush session events ({type(exc).__name__}): {exc}")
 
     def launch_and_discover(
         self,
         cmd: list[str] | str,
-        title_pattern: str | None = None,
         timeout: float | None = None,
+        title_pattern: str | None = None,
         exclude_hwnds: set[int] | None = None,
     ) -> tuple[subprocess.Popen, Window]:
-        timeout = timeout or self.config.default_timeout
-        return Window.launch_and_discover(cmd, timeout=timeout, title_pattern=title_pattern, exclude_hwnds=exclude_hwnds)
+        """Wrapper around Window.launch_and_discover with session logging."""
+        to = timeout or self.config.default_timeout
+        self.log_event("launch_app", f"Launching {cmd}")
+        proc, win = Window.launch_and_discover(cmd, timeout=to, title_pattern=title_pattern, exclude_hwnds=exclude_hwnds)
+        self.log_event("window_discovered", f"Window '{win.title}' (HWND: {win.hwnd}, PID: {win.pid})")
+        return proc, win

@@ -1,4 +1,4 @@
-"""Window discovery and management with snapshot diffing and fresh handle re-resolution."""
+"""Window management, discovery, and process lifecycle."""
 
 from __future__ import annotations
 
@@ -11,12 +11,19 @@ from wintegrate.diagnostics import WindowCensus
 from wintegrate.element import UiaElement
 from wintegrate.exceptions import WindowDiscoveryTimeoutError
 from wintegrate.interop import (
+    HWND_NOTOPMOST,
+    HWND_TOPMOST,
     SW_RESTORE,
+    SWP_NOMOVE,
+    SWP_NOSIZE,
+    SWP_SHOWWINDOW,
     attach_to_input_desktop,
+    dismiss_popup_or_search,
     get_foreground_window,
     get_window_class,
     get_window_pid,
     get_window_title,
+    kernel32,
     user32,
 )
 
@@ -24,20 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 class Window:
-    """
-    Represents a top-level native window.
-    Always re-resolves UIA elements on demand to prevent stale COM pointers.
-    """
+    """Represents a top-level native OS window."""
 
-    def __init__(self, hwnd: int, pid: int = 0):
+    def __init__(self, hwnd: int, pid: int | None = None):
         self.hwnd = hwnd
-        self._pid = pid or get_window_pid(hwnd)
-
-    @property
-    def pid(self) -> int:
-        if not self._pid:
-            self._pid = get_window_pid(self.hwnd)
-        return self._pid
+        self.pid = pid or get_window_pid(hwnd)
 
     @property
     def title(self) -> str:
@@ -56,11 +54,38 @@ class Window:
         return UiaElement.from_handle(self.hwnd)
 
     def set_foreground(self, verify: bool = True, timeout: float = 2.0) -> bool:
-        """Brings the window to the foreground and verifies active status."""
+        """
+        Forcefully brings the window to the foreground across all Windows platforms (x64 / ARM64).
+        Uses thread input attachment + SWP_TOPMOST pulse to bypass Foreground Lock Timeout.
+        """
         attach_to_input_desktop()
-        user32.ShowWindow(self.hwnd, SW_RESTORE)
-        user32.SetForegroundWindow(self.hwnd)
-        user32.BringWindowToTop(self.hwnd)
+        dismiss_popup_or_search()
+
+        cur_thread = kernel32.GetCurrentThreadId()
+        fg_hwnd = user32.GetForegroundWindow()
+        fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+        target_thread = user32.GetWindowThreadProcessId(self.hwnd, None)
+
+        # 1. Attach thread input to bypass foreground lock restrictions
+        attached = False
+        if fg_thread and fg_thread != cur_thread:
+            attached = bool(user32.AttachThreadInput(cur_thread, fg_thread, True))
+        elif target_thread and target_thread != cur_thread:
+            attached = bool(user32.AttachThreadInput(cur_thread, target_thread, True))
+
+        try:
+            user32.ShowWindow(self.hwnd, SW_RESTORE)
+            # Pulse TOPMOST to break through background apps
+            user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+            user32.SetWindowPos(self.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+            user32.SetForegroundWindow(self.hwnd)
+            user32.BringWindowToTop(self.hwnd)
+        finally:
+            if attached:
+                if fg_thread and fg_thread != cur_thread:
+                    user32.AttachThreadInput(cur_thread, fg_thread, False)
+                elif target_thread and target_thread != cur_thread:
+                    user32.AttachThreadInput(cur_thread, target_thread, False)
 
         if not verify:
             return True
@@ -148,27 +173,21 @@ class Window:
             after = WindowCensus.capture()
             diff = WindowCensus.diff(before, after)
 
-            # 1. Check newly added windows that are not in excluded set
+            # Look for newly added visible top-level windows
             for snap in diff.added:
-                if not snap.is_visible or snap.hwnd in excluded:
-                    continue
-                if compiled_re:
-                    if compiled_re.search(snap.title):
-                        return proc, cls(snap.hwnd, snap.pid)
-                else:
-                    if snap.pid == proc.pid or snap.title:
-                        return proc, cls(snap.hwnd, snap.pid)
+                if snap.is_visible and snap.hwnd not in excluded:
+                    if compiled_re and not compiled_re.search(snap.title):
+                        continue
+                    return proc, cls(snap.hwnd, snap.pid)
 
-            # 2. Check all currently visible windows if title pattern matched (excluding known)
-            if compiled_re:
-                for snap in after:
-                    if snap.is_visible and snap.hwnd not in excluded and compiled_re.search(snap.title):
-                        # Ensure it's newly added since before
-                        if snap.hwnd not in {b.hwnd for b in before}:
-                            return proc, cls(snap.hwnd, snap.pid)
+            # Fallback: check all currently visible windows matching criteria
+            for snap in after:
+                if snap.is_visible and snap.hwnd not in excluded:
+                    if compiled_re and compiled_re.search(snap.title):
+                        return proc, cls(snap.hwnd, snap.pid)
 
             time.sleep(0.1)
 
         raise WindowDiscoveryTimeoutError(
-            f"Failed to discover window launched via {cmd} (title_pattern={title_pattern})"
+            f"Window failed to appear within {timeout}s (cmd={cmd}, pattern={title_pattern})"
         )
