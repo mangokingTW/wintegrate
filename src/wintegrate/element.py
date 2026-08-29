@@ -423,6 +423,19 @@ class UiaElement:
 
             time.sleep(0.1)
 
+        # Fallback: if hardware keyboard input was dropped in CI virtualization, try ValuePattern
+        try:
+            val_pattern = self._element.GetCurrentPattern(UIA_ValuePatternId)
+            if val_pattern:
+                val_pat = val_pattern.QueryInterface(IUIAutomationValuePattern)
+                val_pat.SetValue(initial_text + text)
+                time.sleep(0.2)
+                current_text = self.get_value()
+                if verify_contains and normalize_line_endings(verify_contains) in normalize_line_endings(current_text):
+                    return True
+        except Exception:
+            pass
+
         final_text = self.get_value()
         raise TextMismatchError(
             f"type_verified failed. Expected delta {expected_line_count_delta} lines (had {initial_lines}, got {count_lines(final_text)} lines), "

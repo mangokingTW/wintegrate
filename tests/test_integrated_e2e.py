@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from wintegrate import (
@@ -61,20 +62,27 @@ def test_live_gui_automation_with_recording():
             # 5. Direct UIA Element resolution & Find Editor
             root = win.re_resolve_element()
 
-            # Find Editor element
+            # Find Editor element with retry
             editor = None
-            for cond in [
-                {"control_type_id": 50004},  # Document/Text Editor control
-                {"name_contains": "Text Editor"},
-                {"name_contains": "Document"},
-                {"control_type_id": 50030},  # Edit control
-            ]:
-                try:
-                    editor = root.find_descendant(**cond, timeout=1.0)
-                    if editor:
-                        break
-                except Exception:
-                    pass
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                for cond in [
+                    {"control_type_id": 50004},  # Document/Text Editor control
+                    {"name_contains": "Text Editor"},
+                    {"name_contains": "Document"},
+                    {"name_contains": "文字編輯器"},
+                    {"name_contains": "文本编辑器"},
+                    {"control_type_id": 50030},  # Edit control
+                ]:
+                    try:
+                        editor = root.find_descendant(**cond, timeout=0.5)
+                        if editor:
+                            break
+                    except Exception:
+                        pass
+                if editor:
+                    break
+                time.sleep(0.3)
             if not editor:
                 raise RuntimeError("Could not locate Notepad editor control")
 
