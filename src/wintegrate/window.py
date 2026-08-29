@@ -11,14 +11,8 @@ from wintegrate.diagnostics import WindowCensus
 from wintegrate.element import UiaElement
 from wintegrate.exceptions import WindowDiscoveryTimeoutError
 from wintegrate.interop import (
-    HWND_NOTOPMOST,
-    HWND_TOPMOST,
     SW_RESTORE,
-    SWP_NOMOVE,
-    SWP_NOSIZE,
-    SWP_SHOWWINDOW,
     attach_to_input_desktop,
-    dismiss_popup_or_search,
     get_foreground_window,
     get_window_class,
     get_window_pid,
@@ -55,37 +49,33 @@ class Window:
 
     def set_foreground(self, verify: bool = True, timeout: float = 2.0) -> bool:
         """
-        Forcefully brings the window to the foreground across all Windows platforms (x64 / ARM64).
-        Uses thread input attachment + SWP_TOPMOST pulse to bypass Foreground Lock Timeout.
+        Brings the window to the foreground cleanly using Win32 AttachThreadInput.
+        Synchronizes thread input queues to reliably grant foreground activation permission.
         """
         attach_to_input_desktop()
-        dismiss_popup_or_search()
 
         cur_thread = kernel32.GetCurrentThreadId()
         fg_hwnd = user32.GetForegroundWindow()
         fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
         target_thread = user32.GetWindowThreadProcessId(self.hwnd, None)
 
-        # 1. Attach thread input to bypass foreground lock restrictions
-        attached = False
+        attached_fg = False
+        attached_target = False
+
         if fg_thread and fg_thread != cur_thread:
-            attached = bool(user32.AttachThreadInput(cur_thread, fg_thread, True))
-        elif target_thread and target_thread != cur_thread:
-            attached = bool(user32.AttachThreadInput(cur_thread, target_thread, True))
+            attached_fg = bool(user32.AttachThreadInput(cur_thread, fg_thread, True))
+        if target_thread and target_thread != cur_thread:
+            attached_target = bool(user32.AttachThreadInput(cur_thread, target_thread, True))
 
         try:
             user32.ShowWindow(self.hwnd, SW_RESTORE)
-            # Pulse TOPMOST to break through background apps
-            user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
-            user32.SetWindowPos(self.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
             user32.SetForegroundWindow(self.hwnd)
             user32.BringWindowToTop(self.hwnd)
         finally:
-            if attached:
-                if fg_thread and fg_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, fg_thread, False)
-                elif target_thread and target_thread != cur_thread:
-                    user32.AttachThreadInput(cur_thread, target_thread, False)
+            if attached_fg:
+                user32.AttachThreadInput(cur_thread, fg_thread, False)
+            if attached_target:
+                user32.AttachThreadInput(cur_thread, target_thread, False)
 
         if not verify:
             return True

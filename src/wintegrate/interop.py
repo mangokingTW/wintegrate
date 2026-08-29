@@ -26,14 +26,6 @@ SW_SHOW = 5
 SW_MINIMIZE = 6
 SW_RESTORE = 9
 
-# SetWindowPos Flags & HWND placement
-HWND_TOPMOST = -1
-HWND_NOTOPMOST = -2
-HWND_TOP = 0
-SWP_NOSIZE = 0x0001
-SWP_NOMOVE = 0x0002
-SWP_SHOWWINDOW = 0x0040
-
 # Window Messages
 WM_DESTROY = 0x0002
 WM_SETFOCUS = 0x0007
@@ -67,7 +59,6 @@ KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_SCANCODE = 0x0008
 
 # Virtual Key Codes
-VK_ESCAPE = 0x1B
 VK_RETURN = 0x0D
 VK_TAB = 0x09
 VK_SPACE = 0x20
@@ -193,17 +184,6 @@ user32.AttachThreadInput.restype = wintypes.BOOL
 user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 
-user32.SetWindowPos.argtypes = [
-    wintypes.HWND,
-    wintypes.HWND,
-    ctypes.c_int,
-    ctypes.c_int,
-    ctypes.c_int,
-    ctypes.c_int,
-    wintypes.UINT,
-]
-user32.SetWindowPos.restype = wintypes.BOOL
-
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 
@@ -235,20 +215,6 @@ def send_char_input(char: str):
         )
         arr = (INPUT * 2)(inp_down, inp_up)
         user32.SendInput(2, arr, ctypes.sizeof(INPUT))
-
-
-def dismiss_popup_or_search():
-    """Sends VK_ESCAPE to dismiss any open Start Menu Search, Taskbar flyout, or modal dialog."""
-    inp_down = INPUT(
-        type=INPUT_KEYBOARD,
-        u=_INPUT_UNION(ki=KEYBDINPUT(wVk=VK_ESCAPE, wScan=0x01, dwFlags=0, time=0, dwExtraInfo=0)),
-    )
-    inp_up = INPUT(
-        type=INPUT_KEYBOARD,
-        u=_INPUT_UNION(ki=KEYBDINPUT(wVk=VK_ESCAPE, wScan=0x01, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
-    )
-    arr = (INPUT * 2)(inp_down, inp_up)
-    user32.SendInput(2, arr, ctypes.sizeof(INPUT))
 
 
 def get_input_desktop_handle() -> wintypes.HANDLE | None:

@@ -22,7 +22,6 @@ from wintegrate.interop import (
     SW_MINIMIZE,
     WNDENUMPROC,
     attach_to_input_desktop,
-    dismiss_popup_or_search,
     get_window_class,
     get_window_title,
     kernel32,
@@ -46,13 +45,11 @@ class SessionConfig:
 def sanitize_ci_runner_environment():
     """
     Cleans up known GitHub Actions CI runner hazards:
-    1. Dismisses Start menu popups and active Search overlays via Escape.
-    2. Disables orphaned WSL auto-update scheduled task that pops prompt windows every 30s.
-    3. Terminates background Edge browser welcome prompts and WSL popups.
-    4. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
+    1. Disables orphaned WSL auto-update scheduled task that pops prompt windows every 30s.
+    2. Terminates background Edge browser welcome prompts and WSL popups.
+    3. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
     """
     attach_to_input_desktop()
-    dismiss_popup_or_search()
 
     # 1. Disable WSL scheduled task and kill noisy background prompts
     try:
