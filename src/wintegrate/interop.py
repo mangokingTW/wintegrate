@@ -26,6 +26,11 @@ SW_SHOW = 5
 SW_MINIMIZE = 6
 SW_RESTORE = 9
 
+# SetWindowPos Flags
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_SHOWWINDOW = 0x0040
+
 # Window Messages
 WM_DESTROY = 0x0002
 WM_SETFOCUS = 0x0007
@@ -183,6 +188,12 @@ user32.AttachThreadInput.restype = wintypes.BOOL
 
 user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+user32.SetFocus.argtypes = [wintypes.HWND]
+user32.SetFocus.restype = wintypes.HWND
+
+user32.SetActiveWindow.argtypes = [wintypes.HWND]
+user32.SetActiveWindow.restype = wintypes.HWND
 
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 

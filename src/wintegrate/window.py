@@ -70,6 +70,8 @@ class Window:
         try:
             user32.ShowWindow(self.hwnd, SW_RESTORE)
             user32.SetForegroundWindow(self.hwnd)
+            user32.SetActiveWindow(self.hwnd)
+            user32.SetFocus(self.hwnd)
             user32.BringWindowToTop(self.hwnd)
         finally:
             if attached_fg:

@@ -191,26 +191,22 @@ class Session:
             persisted=len(diff.persisted),
         )
 
+        # Always save window census
+        self._save_census_dump(diff)
+
         # If an exception occurred during the test, take failure snapshot
         if exc_type is not None:
             logger.error(f"Test failed with {exc_type.__name__}: {exc_val}. Capturing failure artifact.")
-            self._capture_failure_artifacts(exc_type, exc_val, diff)
+            self._capture_failure_screenshot()
 
         # Flush session logs
         self._flush_session_logs()
 
         return False  # Do not suppress exceptions
 
-    def _capture_failure_artifacts(self, exc_type, exc_val, diff):
+    def _save_census_dump(self, diff):
         try:
             self.artifact_dir.mkdir(parents=True, exist_ok=True)
-            # 1. Failure screenshot
-            screenshot_path = self.artifact_dir / "failure_screenshot.png"
-            img = capture_screen_image()
-            img.save(screenshot_path)
-            logger.info(f"Saved failure screenshot to {screenshot_path}")
-
-            # 2. Window census dump
             census_path = self.artifact_dir / "window_census.json"
             census_data = {
                 "initial_count": len(self.initial_census),
@@ -222,7 +218,17 @@ class Session:
                 json.dump(census_data, f, indent=2)
             logger.info(f"Saved window census diff to {census_path}")
         except Exception as exc:
-            logger.error(f"Failed to capture failure artifacts ({type(exc).__name__}): {exc}")
+            logger.error(f"Failed to dump window census ({type(exc).__name__}): {exc}")
+
+    def _capture_failure_screenshot(self):
+        try:
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            screenshot_path = self.artifact_dir / "failure_screenshot.png"
+            img = capture_screen_image()
+            img.save(screenshot_path)
+            logger.info(f"Saved failure screenshot to {screenshot_path}")
+        except Exception as exc:
+            logger.error(f"Failed to capture failure screenshot ({type(exc).__name__}): {exc}")
 
     def _flush_session_logs(self):
         try:
@@ -232,6 +238,17 @@ class Session:
                 json.dump(self.logs, f, indent=2)
         except Exception as exc:
             logger.error(f"Failed to flush session events ({type(exc).__name__}): {exc}")
+
+    def find_window(
+        self,
+        title_exact: str | None = None,
+        title_pattern: str | None = None,
+        class_name: str | None = None,
+        timeout: float | None = None,
+    ) -> Window:
+        """Finds an existing top-level window matching criteria."""
+        to = timeout or self.config.default_timeout
+        return Window.find(title_exact=title_exact, title_pattern=title_pattern, class_name=class_name, timeout=to)
 
     def launch_and_discover(
         self,
