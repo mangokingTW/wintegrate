@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from wintegrate import (
@@ -60,14 +61,15 @@ def test_live_gui_automation_with_recording():
             # 5. Direct UIA Element resolution
             root = win.re_resolve_element()
 
-            # 6. Perform verified calculation: 1 + 2 + 3 = 6
+            # 6. Perform verified calculation: 1 + 2 + 3 = 6 (using invoke for high reliability)
             timeline.record_action("calc_start", details={"expression": "1 + 2 + 3"})
-            root.find_descendant(automation_id="num1Button").click()
-            root.find_descendant(automation_id="plusButton").click()
-            root.find_descendant(automation_id="num2Button").click()
-            root.find_descendant(automation_id="plusButton").click()
-            root.find_descendant(automation_id="num3Button").click()
-            root.find_descendant(automation_id="equalButton").click()
+            root.find_descendant(automation_id="num1Button").invoke()
+            root.find_descendant(automation_id="plusButton").invoke()
+            root.find_descendant(automation_id="num2Button").invoke()
+            root.find_descendant(automation_id="plusButton").invoke()
+            root.find_descendant(automation_id="num3Button").invoke()
+            root.find_descendant(automation_id="equalButton").invoke()
+            time.sleep(0.3)
             timeline.record_action("calc_success")
 
             # 7. Assert Calculation Result Buffer

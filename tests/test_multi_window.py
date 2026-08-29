@@ -67,10 +67,11 @@ def test_multi_window_switching_and_typing():
             time.sleep(0.3)
             timeline.record_action("focus_win_a", window=win_a)
 
-            root_a.find_descendant(automation_id="num7Button").click()
-            root_a.find_descendant(automation_id="plusButton").click()
-            root_a.find_descendant(automation_id="num8Button").click()
-            root_a.find_descendant(automation_id="equalButton").click()
+            root_a.find_descendant(automation_id="num7Button").invoke()
+            root_a.find_descendant(automation_id="plusButton").invoke()
+            root_a.find_descendant(automation_id="num8Button").invoke()
+            root_a.find_descendant(automation_id="equalButton").invoke()
+            time.sleep(0.3)
             timeline.record_action("calc_win_a", text="7 + 8")
 
             # 4. Switch to Window B and Perform Calculation: 9 + 9 = 18
@@ -78,13 +79,12 @@ def test_multi_window_switching_and_typing():
             time.sleep(0.3)
             timeline.record_action("focus_win_b", window=win_b)
 
-            root_b.find_descendant(automation_id="num9Button").click()
-            root_b.find_descendant(automation_id="plusButton").click()
-            root_b.find_descendant(automation_id="num9Button").click()
-            root_b.find_descendant(automation_id="equalButton").click()
-            timeline.record_action("calc_win_b", text="9 + 9")
-
+            root_b.find_descendant(automation_id="num9Button").invoke()
+            root_b.find_descendant(automation_id="plusButton").invoke()
+            root_b.find_descendant(automation_id="num9Button").invoke()
+            root_b.find_descendant(automation_id="equalButton").invoke()
             time.sleep(0.3)
+            timeline.record_action("calc_win_b", text="9 + 9")
 
             # 5. Assert Final Buffers and Isolation
             res_a = root_a.find_descendant(automation_id="CalculatorResults").name
