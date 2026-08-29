@@ -47,12 +47,24 @@ class Window:
         """Always resolves a fresh UIA element directly from the HWND."""
         return UiaElement.from_handle(self.hwnd)
 
+    def move_to_current_desktop(self):
+        """Moves this window to the currently active virtual desktop if pyvda is available."""
+        try:
+            from pyvda import AppView, VirtualDesktop
+
+            current_desktop = VirtualDesktop.current()
+            app_view = AppView(self.hwnd)
+            app_view.move(current_desktop)
+        except Exception as exc:
+            logger.debug(f"move_to_current_desktop skipped: {exc}")
+
     def set_foreground(self, verify: bool = True, timeout: float = 2.0) -> bool:
         """
         Brings the window to the foreground cleanly using Win32 AttachThreadInput.
         Synchronizes thread input queues to reliably grant foreground activation permission.
         """
         attach_to_input_desktop()
+        self.move_to_current_desktop()
 
         cur_thread = kernel32.GetCurrentThreadId()
         fg_hwnd = user32.GetForegroundWindow()

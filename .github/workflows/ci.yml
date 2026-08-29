@@ -74,15 +74,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Disable Noisy WSL Auto-update on ARM Runner
+      - name: Sanitize ARM Runner (Disable WSL & Edge First Run OOBE)
         shell: pwsh
         run: |
           try {
+            # 1. Disable WSL scheduled update tasks
             Get-ScheduledTask -TaskPath "\" -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like "*wsl*" } | Disable-ScheduledTask -ErrorAction SilentlyContinue
             Get-ScheduledTask -TaskPath "\Microsoft\Windows\WSL\" -ErrorAction SilentlyContinue | Disable-ScheduledTask -ErrorAction SilentlyContinue
-            Get-Process -Name "wsl","msedge" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+            # 2. Disable Microsoft Edge First Run Experience via Registry
+            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "PreventFirstRunPage" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+            New-Item -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+
+            # 3. Kill any running Edge / WSL background instances
+            Get-Process -Name "wsl","msedge","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           } catch {
-            Write-Host "WSL task disable completed"
+            Write-Host "Runner sanitization completed"
           }
 
       - name: Set up Python ${{ matrix.python-version }}
