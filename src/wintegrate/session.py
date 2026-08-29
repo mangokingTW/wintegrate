@@ -46,25 +46,19 @@ class SessionConfig:
 def sanitize_ci_runner_environment():
     """
     Cleans up known GitHub Actions CI runner hazards:
-    1. Disables orphaned WSL auto-update scheduled task that pops prompt windows every 30s.
-    2. Terminates background Edge browser welcome prompts and WSL popups.
-    3. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
+    1. Terminates background WSL, Windows Terminal, and Edge popups.
+    2. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
     """
     attach_to_input_desktop()
 
-    # 1. Disable WSL scheduled task and kill noisy background prompts
+    # 1. Kill noisy background prompts
     try:
-        ps_cmd = (
-            "Get-ScheduledTask | Where-Object { $_.Actions.Execute -like '*wsl.exe*' "
-            "-or $_.TaskName -like '*wsl*' } | "
-            "Disable-ScheduledTask -ErrorAction SilentlyContinue; "
-            "Get-Process -Name 'wsl','msedge' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"
-        )
+        ps_cmd = "Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
         )
     except Exception as exc:
-        logger.debug(f"Runner task sanitization skipped ({type(exc).__name__}): {exc}")
+        logger.debug(f"Runner process cleanup skipped ({type(exc).__name__}): {exc}")
 
     # 2. Minimize/hide noisy background windows (preserves host terminal 'Default')
     try:
@@ -94,37 +88,96 @@ def sanitize_ci_runner_environment():
         logger.debug(f"Window minimization skipped ({type(exc).__name__}): {exc}")
 
 
-def try_dismiss_oobe_privacy_screen() -> bool:
+def try_dismiss_oobe_privacy_screen(timeout: float = 15.0) -> bool:
     """
-    Dismisses Windows First-Sign-in / OOBE privacy screens using UIA focus fallback
-    and AutomationId substring matching.
+    Dismisses Windows First-Sign-in / OOBE onboarding and privacy screens
+    (Shell_OOBEProxy / CoreWindow) by walking focused elements and invoking buttons.
     """
-    try:
-        # Check if an OOBE / CoreWindow is active
-        oobe_win = None
-        for snap in WindowCensus.capture():
-            if "oobe" in snap.class_name.lower() or "oobe" in snap.title.lower():
-                oobe_win = snap
-                break
+    deadline = time.monotonic() + timeout
+    clicked = 0
 
-        if not oobe_win:
+    known_ids = {"OobeSettingsAcceptButton", "AcceptButton", "NextButton"}
+    name_substrings = [
+        "next",
+        "accept",
+        "skip",
+        "continue",
+        "i agree",
+        "not now",
+        "decline",
+        "ask me later",
+        "close",
+        "sign in later",
+        "do this later",
+        "start without",
+    ]
+
+    def is_match_button(elem: UiaElement | None) -> bool:
+        if not elem:
+            return False
+        try:
+            # ControlType 50000 = Button
+            if elem.control_type_id != 50000 and "button" not in elem.control_type_name.lower():
+                return False
+            if elem.automation_id in known_ids:
+                return True
+            elem_name = elem.name.lower()
+            return any(sub in elem_name for sub in name_substrings)
+        except Exception:
             return False
 
-        logger.info(f"Detected OOBE / Privacy screen: {oobe_win}")
-        # Use FocusedElement fallback
+    while time.monotonic() < deadline:
+        # Check if Shell_OOBEProxy or any OOBE window is present
+        oobe_present = False
+        for snap in WindowCensus.capture():
+            c_name = snap.class_name.lower()
+            t_name = snap.title.lower()
+            if (
+                "shell_oobeproxy" in c_name
+                or "oobe" in c_name
+                or "oobe" in t_name
+                or "microsoft account" in t_name
+            ):
+                oobe_present = True
+                break
+
+        if not oobe_present:
+            if clicked > 0:
+                logger.info(f"OOBE screens cleared after clicking {clicked} button(s)")
+            return clicked > 0
+
+        # Find button via FocusedElement + ancestor walk
+        btn_to_invoke = None
         try:
-            elem = UiaElement.get_focused()
-            logger.info(f"Focused OOBE element: '{elem.name}', ID: '{elem.automation_id}'")
-            # Try to find Next/Accept buttons
-            parent = UiaElement.from_handle(oobe_win.hwnd)
-            btn = parent.find_descendant(automation_id="OobeSettingsAcceptButton", timeout=2.0)
-            btn.invoke()
-            return True
+            focused = UiaElement.get_focused()
+            if is_match_button(focused):
+                btn_to_invoke = focused
+            else:
+                curr = focused
+                for _ in range(4):
+                    parent = curr.get_parent() if curr else None
+                    if is_match_button(parent):
+                        btn_to_invoke = parent
+                        break
+                    curr = parent
         except Exception:
             pass
-    except Exception as exc:
-        logger.debug(f"OOBE dismissal check skipped ({type(exc).__name__}): {exc}")
-    return False
+
+        if btn_to_invoke:
+            try:
+                logger.info(
+                    f"Invoking OOBE onboarding button: '{btn_to_invoke.name}' (ID: '{btn_to_invoke.automation_id}')"
+                )
+                btn_to_invoke.invoke()
+                clicked += 1
+                time.sleep(1.0)
+                continue
+            except Exception as exc:
+                logger.debug(f"OOBE button invoke failed: {exc}")
+
+        time.sleep(1.0)
+
+    return clicked > 0
 
 
 class Session:
@@ -159,6 +212,9 @@ class Session:
         logger.info("Starting Wintegrate UI automation session...")
         attach_to_input_desktop()
 
+        if self.config.dismiss_oobe:
+            try_dismiss_oobe_privacy_screen(timeout=3.0)
+
         if self.config.isolated_virtual_desktop:
             self._setup_isolated_virtual_desktop()
 
@@ -166,7 +222,7 @@ class Session:
             sanitize_ci_runner_environment()
 
         if self.config.dismiss_oobe:
-            try_dismiss_oobe_privacy_screen()
+            try_dismiss_oobe_privacy_screen(timeout=3.0)
 
         # Capture baseline window state
         self.initial_census = WindowCensus.capture()
@@ -300,7 +356,10 @@ class Session:
         """Finds an existing top-level window matching criteria."""
         to = timeout or self.config.default_timeout
         return Window.find(
-            title_exact=title_exact, title_pattern=title_pattern, class_name=class_name, timeout=to
+            title_exact=title_exact,
+            title_pattern=title_pattern,
+            class_name=class_name,
+            timeout=to,
         )
 
     def launch_and_discover(

@@ -149,6 +149,18 @@ class UiaElement:
             raise ElementNotFoundError("No element currently has UIA focus")
         return cls(elem)
 
+    def get_parent(self) -> UiaElement | None:
+        """Returns the parent UIA element using ControlViewWalker."""
+        try:
+            uia = get_uia()
+            walker = uia.ControlViewWalker
+            parent = walker.GetParentElement(self._element)
+            if parent:
+                return UiaElement(parent)
+        except Exception:
+            pass
+        return None
+
     def set_focus(self, verify: bool = True, timeout: float = 2.0) -> bool:
         """Sets focus to this element and optionally verifies it has focus."""
         try:

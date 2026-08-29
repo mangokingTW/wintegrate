@@ -74,26 +74,47 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Sanitize ARM Runner (Disable WSL & Edge First Run OOBE)
+      - name: Install WSL on ARM Runner (Stop 30s probe popups)
         shell: pwsh
         run: |
-          try {
-            # 1. Disable WSL scheduled update tasks
-            Get-ScheduledTask -TaskPath "\" -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like "*wsl*" } | Disable-ScheduledTask -ErrorAction SilentlyContinue
-            Get-ScheduledTask -TaskPath "\Microsoft\Windows\WSL\" -ErrorAction SilentlyContinue | Disable-ScheduledTask -ErrorAction SilentlyContinue
+          # 1. Update WSL stub so the provision daemon stops spawning terminal popups every 30s
+          $p = Start-Process -FilePath wsl.exe -ArgumentList '--update', '--confirm' -NoNewWindow -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); Write-Host 'wsl --update timed out' }
 
-            # 2. Disable Microsoft Edge First Run Experience via Registry
-            New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "PreventFirstRunPage" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-            New-Item -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
-            Set-ItemProperty -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-
-            # 3. Kill any running Edge / WSL background instances
-            Get-Process -Name "wsl","msedge","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          } catch {
-            Write-Host "Runner sanitization completed"
+          # 2. Fallback to arm64 MSI if needed
+          function Get-WslStatus {
+            $prev = [Console]::OutputEncoding
+            try {
+              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+              return ((& wsl.exe --status 2>&1 | Out-String) -replace "\0", '')
+            } finally { [Console]::OutputEncoding = $prev }
           }
+          $status = Get-WslStatus
+          Write-Host "WSL status: $status"
+          if ($status -match 'not installed') {
+            try {
+              $rel = Invoke-RestMethod 'https://api.github.com/repos/microsoft/WSL/releases/latest'
+              $asset = $rel.assets | Where-Object { $_.name -match 'arm64\.msi$' } | Select-Object -First 1
+              if ($asset) {
+                Write-Host "Downloading $($asset.name)..."
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile wsl-arm64.msi
+                Start-Process msiexec -ArgumentList '/i', 'wsl-arm64.msi', '/qn', '/norestart' -Wait
+              }
+            } catch {
+              Write-Host "WSL MSI fallback skipped: $_"
+            }
+          }
+
+          # 3. Disable Microsoft Edge First Run Experience via Registry
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "PreventFirstRunPage" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          New-Item -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+
+          # 4. Sweep existing background popups
+          Get-Process -Name "wsl","wslhost","WindowsTerminal","msedge","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE = 0
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
@@ -104,21 +125,18 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
+          # Use official BtbN winarm64 static build for native performance
           try {
-            choco install ffmpeg -y --no-progress
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-winarm64-gpl.zip" -OutFile ffmpeg-arm64.zip
+            Expand-Archive -Path ffmpeg-arm64.zip -DestinationPath ffmpeg-arm64 -Force
+            $binDir = Get-ChildItem -Path ffmpeg-arm64 -Filter bin -Recurse -Directory | Select-Object -First 1 -ExpandProperty FullName
+            Write-Host "Native ARM64 FFmpeg at: $binDir"
+            Add-Content -Path $env:GITHUB_PATH -Value $binDir
           } catch {
-            Write-Host "Choco installation attempt finished"
-          }
-          $ffmpegPaths = @(
-            "C:\ProgramData\chocolatey\bin",
-            "C:\Program Files\FFmpeg\bin"
-          )
-          foreach ($p in $ffmpegPaths) {
-            if (Test-Path "$p\ffmpeg.exe") {
-              Write-Host "Found FFmpeg at $p"
-              $p | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-              break
-            }
+            Write-Host "ARM64 FFmpeg download fallback to Chocolatey"
+            choco install ffmpeg -y --no-progress
+            Add-Content -Path $env:GITHUB_PATH -Value "C:\ProgramData\chocolatey\bin"
           }
 
       - name: Install dependencies
