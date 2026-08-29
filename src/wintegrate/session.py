@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -39,16 +38,6 @@ class SessionConfig:
     sanitize_runner: bool = True
     default_timeout: float = 15.0
     dismiss_oobe: bool = True
-    # Privacy safeguard: Only capture full-screen screenshots on automated CI runners
-    capture_failure_screenshot: bool = False
-
-
-def is_ci_runner() -> bool:
-    """Returns True only when running in known CI environments."""
-    return any(
-        os.getenv(k)
-        for k in ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "TF_BUILD", "CIRCLECI", "TRAVIS")
-    )
 
 
 def sanitize_ci_runner_environment():
@@ -163,7 +152,6 @@ class Session:
 
         self.initial_census = WindowCensus.capture()
 
-        # Video recording only runs if explicitly requested and on CI or enabled
         if self.config.record_video:
             video_file = self.artifact_dir / "session_recording.mp4"
             self.recorder = ContinuousRecorder(video_file, fps=self.config.fps)
@@ -179,24 +167,18 @@ class Session:
             if self.recorder:
                 self.recorder.stop()
 
-            # Record failure in structured logs
+            # Record failure in structured logs and capture failure screenshot
             if exc_type is not None:
                 self.log_event(
                     "SESSION_FAILURE",
                     f"Session failed with {exc_type.__name__}: {exc_val}",
                     exc_type=exc_type.__name__,
                 )
-                # Strict privacy safeguard: Never take desktop screenshot on local developer machines.
-                # Only take screenshot if running on an automated CI runner (e.g. GITHUB_ACTIONS) OR explicitly configured.
-                should_capture_screen = self.config.capture_failure_screenshot or (
-                    is_ci_runner() and self.config.sanitize_runner
-                )
-                if should_capture_screen:
-                    try:
-                        img = capture_screen_image()
-                        img.save(self.artifact_dir / "failure_screenshot.png")
-                    except Exception as exc:
-                        logger.error(f"Failed to save failure screenshot: {exc}")
+                try:
+                    img = capture_screen_image()
+                    img.save(self.artifact_dir / "failure_screenshot.png")
+                except Exception as exc:
+                    logger.error(f"Failed to save failure screenshot: {exc}")
 
             # Write census diff and logs to artifact dir
             census_data = {
