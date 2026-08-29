@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -19,12 +20,10 @@ from wintegrate.diagnostics import (
 from wintegrate.element import UiaElement
 from wintegrate.interop import (
     SW_HIDE,
-    SW_MINIMIZE,
     WNDENUMPROC,
     attach_to_input_desktop,
     get_window_class,
     get_window_title,
-    kernel32,
     user32,
 )
 from wintegrate.window import Window
@@ -37,7 +36,7 @@ class SessionConfig:
     artifact_dir: str | Path = "artifacts"
     record_video: bool = True
     fps: int = 30
-    sanitize_runner: bool = True
+    sanitize_runner: bool = False
     default_timeout: float = 15.0
     dismiss_oobe: bool = True
     isolated_virtual_desktop: bool = False
@@ -46,25 +45,23 @@ class SessionConfig:
 def sanitize_ci_runner_environment():
     """
     Cleans up known GitHub Actions CI runner hazards:
-    1. Terminates background WSL, Windows Terminal, and Edge popups.
-    2. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
+    1. Terminates background WSL, Windows Terminal, and Edge popups without touching current runner PID.
+    2. Minimizes background windows (excluding current test runner process).
     """
     attach_to_input_desktop()
+    curr_pid = os.getpid()
 
-    # 1. Kill noisy background prompts
+    # 1. Kill noisy background prompts (excluding our own process hierarchy)
     try:
-        ps_cmd = "Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"
+        ps_cmd = f"Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {curr_pid} }} | Stop-Process -Force -ErrorAction SilentlyContinue"
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
         )
     except Exception as exc:
         logger.debug(f"Runner process cleanup skipped ({type(exc).__name__}): {exc}")
 
-    # 2. Minimize/hide noisy background windows (preserves host terminal 'Default')
+    # 2. Hide noisy background popups
     try:
-        console_hwnd = kernel32.GetConsoleWindow()
-        if console_hwnd:
-            user32.ShowWindow(console_hwnd, SW_MINIMIZE)
 
         def enum_proc(hwnd, _):
             if user32.IsWindowVisible(hwnd):
@@ -77,10 +74,6 @@ def sanitize_ci_runner_environment():
                     user32.ShowWindow(hwnd, SW_HIDE)
                 elif "search" in title and cls == "Windows.UI.Core.CoreWindow":
                     user32.ShowWindow(hwnd, SW_HIDE)
-                elif ("cmd" in title or "powershell" in title) and "default" not in title:
-                    user32.ShowWindow(hwnd, SW_MINIMIZE)
-                elif cls == "ConsoleWindowClass" and "default" not in title:
-                    user32.ShowWindow(hwnd, SW_MINIMIZE)
             return True
 
         user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
