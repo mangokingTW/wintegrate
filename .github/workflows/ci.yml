@@ -58,25 +58,6 @@ jobs:
             artifacts/
           if-no-files-found: ignore
 
-      - name: Append Recording Summary to Step Summary
-        if: always()
-        shell: pwsh
-        run: |
-          $summary = "### 🎥 Video & Action Recording Summary (x64 - Python ${{ matrix.python-version }})`n`n"
-          if (Test-Path "recording-artifacts/session_recording.mp4") {
-            $size = (Get-Item "recording-artifacts/session_recording.mp4").Length / 1KB
-            $summary += "- ✅ **Video Recording**: `session_recording.mp4` (${size:N1} KB)`n"
-          } else {
-            $summary += "- ⚠️ **Video Recording**: No MP4 produced (FFmpeg unavailable on runner)`n"
-          }
-          if (Test-Path "recording-artifacts/timeline.log") {
-            $summary += "- 📝 **Action Timeline**: `timeline.log``n"
-          }
-          if (Test-Path "recording-artifacts/window_census.json") {
-            $summary += "- 🪟 **Window Census**: `window_census.json``n"
-          }
-          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
   test-arm64:
     needs: lint
     runs-on: windows-11-arm
@@ -112,22 +93,3 @@ jobs:
             recording-artifacts/
             artifacts/
           if-no-files-found: ignore
-
-      - name: Append Recording Summary to Step Summary
-        if: always()
-        shell: pwsh
-        run: |
-          $summary = "### 🎥 Video & Action Recording Summary (ARM64 - Python ${{ matrix.python-version }})`n`n"
-          if (Test-Path "recording-artifacts/session_recording.mp4") {
-            $size = (Get-Item "recording-artifacts/session_recording.mp4").Length / 1KB
-            $summary += "- ✅ **Video Recording**: `session_recording.mp4` (${size:N1} KB)`n"
-          } else {
-            $summary += "- ⚠️ **Video Recording**: No MP4 produced (FFmpeg unavailable on runner)`n"
-          }
-          if (Test-Path "recording-artifacts/timeline.log") {
-            $summary += "- 📝 **Action Timeline**: `timeline.log``n"
-          }
-          if (Test-Path "recording-artifacts/window_census.json") {
-            $summary += "- 🪟 **Window Census**: `window_census.json``n"
-          }
-          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
