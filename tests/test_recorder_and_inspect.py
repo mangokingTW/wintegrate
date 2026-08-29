@@ -1,11 +1,9 @@
 """Tests for TextActionTimelineRecorder, ActionPlayer, and inspect_desktop_tree."""
 
 import json
-from pathlib import Path
 from wintegrate import (
     TextActionTimelineRecorder,
     ActionPlayer,
-    RecordedAction,
     inspect_desktop_tree,
 )
 

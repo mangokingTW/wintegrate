@@ -6,12 +6,10 @@ import logging
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from wintegrate.interop import (
-    user32,
     get_window_title,
-    get_window_class,
     get_foreground_window,
     attach_to_input_desktop,
 )

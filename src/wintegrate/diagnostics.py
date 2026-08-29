@@ -22,7 +22,6 @@ from wintegrate.interop import (
     attach_to_input_desktop,
     get_input_desktop_handle,
 )
-from wintegrate.exceptions import DiagnosticPipelineError
 
 logger = logging.getLogger(__name__)
 

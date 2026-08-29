@@ -1,12 +1,7 @@
 """Unit tests for text normalization, line counting, and exception formatting."""
 
-import pytest
 from wintegrate.text import normalize_line_endings, count_lines
-from wintegrate.exceptions import (
-    WintegrateError,
-    TextMismatchError,
-    ElementNotFoundError,
-)
+from wintegrate.exceptions import WintegrateError
 
 
 def test_normalize_line_endings():

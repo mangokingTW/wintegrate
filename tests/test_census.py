@@ -1,6 +1,6 @@
 """Tests for WindowCensus snapshot diffing and census tracking."""
 
-from wintegrate.diagnostics import WindowCensus, WindowSnapshot, CensusDiff
+from wintegrate.diagnostics import WindowCensus, WindowSnapshot
 
 
 def test_census_diff():

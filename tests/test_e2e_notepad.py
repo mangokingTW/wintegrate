@@ -1,9 +1,6 @@
 """E2E verification tests for wintegrate."""
 
-import os
-import time
-import pytest
-from wintegrate import Session, SessionConfig, Window
+from wintegrate import Session, SessionConfig
 from wintegrate.diagnostics import WindowCensus
 
 

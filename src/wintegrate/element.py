@@ -4,17 +4,20 @@ from __future__ import annotations
 import ctypes
 import time
 import logging
-from typing import Any
 import comtypes
 import comtypes.client
 
-from wintegrate.interop import user32, get_window_title, attach_to_input_desktop
+from wintegrate.interop import (
+    user32,
+    WM_GETTEXT,
+    WM_GETTEXTLENGTH,
+    attach_to_input_desktop,
+)
 from wintegrate.text import normalize_line_endings, count_lines
 from wintegrate.exceptions import (
     ElementNotFoundError,
     ActionVerificationError,
     TextMismatchError,
-    FocusStealDetectedError,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,14 +39,10 @@ try:
         IUIAutomationValuePattern,
         IUIAutomationInvokePattern,
         IUIAutomationTextPattern,
-        TreeScope_Element,
-        TreeScope_Children,
         TreeScope_Descendants,
-        TreeScope_Subtree,
         UIA_ValuePatternId,
         UIA_InvokePatternId,
         UIA_TextPatternId,
-        UIA_SelectionItemPatternId,
     )
 
     _uia = comtypes.client.CreateObject(CUIAutomation, interface=IUIAutomation)
@@ -228,7 +227,7 @@ class UiaElement:
         )
 
     def get_value(self) -> str:
-        """Reads element text via ValuePattern or fallback."""
+        """Reads element text via ValuePattern, TextPattern, or window text fallback."""
         try:
             val_pattern = self._element.GetCurrentPattern(UIA_ValuePatternId)
             if val_pattern:
@@ -237,9 +236,18 @@ class UiaElement:
         except Exception:
             pass
 
+        try:
+            text_pattern = self._element.GetCurrentPattern(UIA_TextPatternId)
+            if text_pattern:
+                text_pat = text_pattern.QueryInterface(IUIAutomationTextPattern)
+                doc_range = text_pat.DocumentRange
+                if doc_range:
+                    return doc_range.GetText(-1) or ""
+        except Exception:
+            pass
+
         # Fallback: check window text if handle exists
         if self.handle:
-            from wintegrate.interop import user32, WM_GETTEXT, WM_GETTEXTLENGTH
             length = user32.SendMessageW(self.handle, WM_GETTEXTLENGTH, 0, 0)
             if length > 0:
                 buf = ctypes.create_unicode_buffer(length + 1)
@@ -293,23 +301,23 @@ class UiaElement:
         text: str,
         expected_line_count_delta: int = 0,
         verify_contains: str | None = None,
-        delay_per_char: float = 0.02,
-        timeout: float = 5.0,
+        delay_per_char: float = 0.05,
+        timeout: float = 8.0,
     ) -> bool:
         """
-        Sends hardware keypresses to this element and asserts verified text mutation.
-        Uses normalized line endings for multi-line comparison.
+        Sends hardware keypresses via SendInput with explicit shift handling,
+        and asserts verified text mutation.
         """
         import pydirectinput
         pydirectinput.FAILSAFE = False
 
         self.set_focus()
-        time.sleep(0.1)
+        time.sleep(0.2)
 
         initial_text = self.get_value()
         initial_lines = count_lines(initial_text)
 
-        # Type character by character or key sequence
+        # Type character by character with reliable timing for CI runners
         for char in text:
             if char == "\n" or char == "\r":
                 pydirectinput.press("enter")
@@ -317,8 +325,16 @@ class UiaElement:
                 pydirectinput.press("tab")
             elif char == " ":
                 pydirectinput.press("space")
+            elif char.isupper():
+                pydirectinput.keyDown("shift")
+                pydirectinput.press(char.lower())
+                pydirectinput.keyUp("shift")
+            elif char == ":":
+                pydirectinput.keyDown("shift")
+                pydirectinput.press(";")
+                pydirectinput.keyUp("shift")
             else:
-                pydirectinput.write(char)
+                pydirectinput.press(char)
             if delay_per_char > 0:
                 time.sleep(delay_per_char)
 

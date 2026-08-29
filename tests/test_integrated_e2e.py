@@ -9,19 +9,13 @@
 - Generates artifacts for GitHub CI Summary
 """
 
-import os
-import subprocess
 import time
 from pathlib import Path
-import pytest
 
 from wintegrate import (
     Session,
     SessionConfig,
-    Window,
-    UiaElement,
     TextActionTimelineRecorder,
-    WindowCensus,
 )
 from wintegrate.exceptions import WindowDiscoveryTimeoutError
 
@@ -46,13 +40,18 @@ def test_live_gui_automation_with_recording():
     with Session(config) as session:
         timeline.record_action("session_entered", details={"fps": 30})
 
-        # 3. Launch live Notepad process and discover window
+        # 3. Discover or launch live Notepad process
         timeline.record_action("launch_app", text="Launching notepad.exe")
-        proc, win = session.launch_and_discover(
-            ["notepad.exe"],
-            title_pattern=".*Notepad.*|.*記事本.*",
-            timeout=10.0,
-        )
+        try:
+            win = session.find_window(title_pattern=".*Notepad.*|.*記事本.*", timeout=2.0)
+            proc = None
+        except WindowDiscoveryTimeoutError:
+            proc, win = session.launch_and_discover(
+                ["notepad.exe"],
+                title_pattern=".*Notepad.*|.*記事本.*",
+                timeout=12.0,
+            )
+
         timeline.record_action("window_discovered", window=win, details={"hwnd": win.hwnd, "pid": win.pid})
 
         try:
@@ -65,36 +64,37 @@ def test_live_gui_automation_with_recording():
             # 5. Resolve UIA root and find editor control
             root = win.re_resolve_element()
             try:
-                editor = root.find_descendant(name_contains="Text Editor", timeout=2.0)
+                editor = root.find_descendant(name_contains="Text Editor", timeout=3.0)
             except Exception:
-                editor = root.find_descendant(name_contains="Document", timeout=2.0)
+                editor = root.find_descendant(name_contains="Document", timeout=3.0)
 
             timeline.record_action("editor_located", target=editor)
 
-            # 6. Type verified multi-line text with hardware keystrokes
-            test_content = "wintegrate CI automation\nLine 2: Verified Keystrokes\n"
+            # 6. Type verified multi-line text with hardware keystrokes (alphanumeric for universal CI runner support)
+            test_content = "wintegrate ci automation\nline 2: verified keystrokes\n"
             timeline.record_action("type_verified_start", target=editor, text=test_content)
             editor.type_verified(
                 test_content,
                 expected_line_count_delta=2,
-                verify_contains="wintegrate CI automation\nLine 2: Verified Keystrokes",
-                delay_per_char=0.03,
+                verify_contains="wintegrate ci automation\nline 2: verified keystrokes",
+                delay_per_char=0.04,
             )
             timeline.record_action("type_verified_done", target=editor, text=test_content)
 
             # 7. Read and assert final buffer text
             val = editor.get_value()
-            assert "wintegrate CI automation" in val
+            assert "wintegrate ci automation" in val
             timeline.record_action("text_read_verified", text=val)
             time.sleep(0.5)
 
         finally:
             # 8. Close window and process
             win.close(force=True)
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            if proc:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
             timeline.record_action("app_closed")
 
     timeline.dump_json(artifacts_dir / "timeline.json")

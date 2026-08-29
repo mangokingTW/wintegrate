@@ -13,10 +13,8 @@ from wintegrate.interop import (
     get_foreground_window,
     attach_to_input_desktop,
     SW_RESTORE,
-    SW_SHOW,
-    SW_MINIMIZE,
 )
-from wintegrate.diagnostics import WindowCensus, WindowSnapshot
+from wintegrate.diagnostics import WindowCensus
 from wintegrate.element import UiaElement
 from wintegrate.exceptions import WindowDiscoveryTimeoutError
 

@@ -76,27 +76,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install FFmpeg on Windows ARM64
-        shell: pwsh
-        run: |
-          # Install ffmpeg via winget or chocolatey on windows-11-arm runner
-          try {
-            winget install --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements -h --disable-interactivity
-          } catch {
-            Write-Host "winget ffmpeg install failed: $_"
-          }
-          if (!(Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-            try {
-              choco install ffmpeg -y
-            } catch {
-              Write-Host "choco ffmpeg install failed: $_"
-            }
-          }
-          $ffmpegCmd = Get-Command ffmpeg -ErrorAction SilentlyContinue
-          if ($ffmpegCmd) {
-            Write-Host "FFmpeg discovered at: $($ffmpegCmd.Source)"
-          }
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

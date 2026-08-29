@@ -7,7 +7,6 @@ which obscures trailing newlines created by pressing Enter at the end of a docum
 """
 
 from __future__ import annotations
-import re
 
 
 def normalize_line_endings(text: str) -> str:
