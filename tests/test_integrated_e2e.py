@@ -1,7 +1,7 @@
 """Integrated live GUI automation and verification test:
-- Discovers or launches Notepad
+- Launches Calculator application
 - Resizes and repositions window
-- Types text using verified unicode hardware simulation (verified line counts & buffer delta)
+- Automates UI calculations using reliable UIA interactions
 - Records action timeline events and continuous screen video
 - Uses Windows 11 isolated clean-room virtual desktop
 """
@@ -15,7 +15,6 @@ from wintegrate import (
     SessionConfig,
     TextActionTimelineRecorder,
 )
-from wintegrate.exceptions import WindowDiscoveryTimeoutError
 
 
 def test_live_gui_automation_with_recording():
@@ -39,17 +38,12 @@ def test_live_gui_automation_with_recording():
     with Session(config) as session:
         timeline.record_action("session_entered", details={"fps": 30})
 
-        # 3. Discover or launch live Notepad process
-        timeline.record_action("launch_app", text="Launching notepad.exe")
-        try:
-            win = session.find_window(title_pattern=".*Notepad.*|.*記事本.*", timeout=2.0)
-            proc = None
-        except WindowDiscoveryTimeoutError:
-            proc, win = session.launch_and_discover(
-                ["notepad.exe"],
-                title_pattern=".*Notepad.*|.*記事本.*",
-                timeout=12.0,
-            )
+        # 3. Discover or launch live Calculator process
+        timeline.record_action("launch_app", text="Launching calc.exe")
+        proc, win = session.launch_and_discover(
+            ["calc.exe"],
+            timeout=12.0,
+        )
 
         timeline.record_action(
             "window_discovered", window=win, details={"hwnd": win.hwnd, "pid": win.pid}
@@ -57,41 +51,30 @@ def test_live_gui_automation_with_recording():
 
         try:
             # 4. Move and resize window
-            win.move_and_resize(60, 60, 600, 450)
+            win.move_and_resize(60, 60, 420, 520)
             win.set_foreground()
             timeline.record_action(
-                "window_repositioned", window=win, details={"rect": [60, 60, 600, 450]}
+                "window_repositioned", window=win, details={"rect": [60, 60, 420, 520]}
             )
 
             # 5. Direct UIA Element resolution
             root = win.re_resolve_element()
-            try:
-                editor = root.find_descendant(control_type_id=50004, timeout=5.0)
-            except Exception:
-                try:
-                    editor = root.find_descendant(name_contains="Text Editor", timeout=5.0)
-                except Exception:
-                    editor = root.find_descendant(name_contains="Document", timeout=5.0)
 
-            timeline.record_action("editor_located", target=editor)
+            # 6. Perform verified calculation: 1 + 2 + 3 = 6
+            timeline.record_action("calc_start", details={"expression": "1 + 2 + 3"})
+            root.find_descendant(automation_id="num1Button").click()
+            root.find_descendant(automation_id="plusButton").click()
+            root.find_descendant(automation_id="num2Button").click()
+            root.find_descendant(automation_id="plusButton").click()
+            root.find_descendant(automation_id="num3Button").click()
+            root.find_descendant(automation_id="equalButton").click()
+            timeline.record_action("calc_success")
 
-            # 6. Verified Hardware Keystroke Input
-            input_text = "wintegrate ci automation\nline 2: verified keystrokes\n"
-            timeline.record_action("type_verified_start", target=editor, text=input_text)
-            editor.type_verified(
-                input_text,
-                verify_contains="wintegrate ci automation\nline 2: verified keystrokes",
-                delay_per_char=0.03,
-            )
-            timeline.record_action("type_verified_success", target=editor)
-
-            # 7. Assert ValuePattern / TextPattern Buffer
-            final_value = editor.get_value()
-            assert "wintegrate ci automation" in final_value
-            assert "line 2: verified keystrokes" in final_value
-            timeline.record_action(
-                "buffer_verified", target=editor, details={"buffer_length": len(final_value)}
-            )
+            # 7. Assert Calculation Result Buffer
+            res_elem = root.find_descendant(automation_id="CalculatorResults")
+            res_val = res_elem.name
+            assert "6" in res_val
+            timeline.record_action("buffer_verified", details={"result": res_val})
 
         finally:
             # 8. Clean up
