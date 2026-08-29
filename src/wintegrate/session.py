@@ -44,14 +44,16 @@ def sanitize_ci_runner_environment():
     """
     Cleans up known GitHub Actions CI runner hazards:
     1. Disables orphaned WSL auto-update scheduled task that pops prompt windows every 30s.
-    2. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
+    2. Terminates orphan WSL prompt processes.
+    3. Minimizes background console/terminal windows without killing the host runner terminal (titled 'Default').
     """
     # 1. Disable WSL scheduled task by matching action string if task exists
     try:
         ps_cmd = (
             "Get-ScheduledTask | Where-Object { $_.Actions.Execute -like '*wsl.exe*' "
-            "-and $_.Actions.Arguments -like '*--prompt-before-exit*' } | "
-            "Disable-ScheduledTask -ErrorAction SilentlyContinue"
+            "-or $_.TaskName -like '*wsl*' } | "
+            "Disable-ScheduledTask -ErrorAction SilentlyContinue; "
+            "Get-Process -Name 'wsl' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"
         )
         subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5)
     except Exception as exc:
@@ -67,8 +69,10 @@ def sanitize_ci_runner_environment():
             if user32.IsWindowVisible(hwnd):
                 title = get_window_title(hwnd).lower()
                 cls = get_window_class(hwnd)
-                # Match terminal windows, but NEVER close or minimize the runner host window if titled 'default'
-                if ("cmd" in title or "powershell" in title) and "default" not in title:
+                # Match WSL / terminal windows, but NEVER close or minimize the runner host window if titled 'default'
+                if "wsl" in title:
+                    user32.ShowWindow(hwnd, SW_MINIMIZE)
+                elif ("cmd" in title or "powershell" in title) and "default" not in title:
                     user32.ShowWindow(hwnd, SW_MINIMIZE)
                 elif cls == "ConsoleWindowClass" and "default" not in title:
                     user32.ShowWindow(hwnd, SW_MINIMIZE)

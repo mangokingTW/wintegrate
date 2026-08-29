@@ -33,7 +33,7 @@ def test_live_gui_automation_with_recording():
         artifact_dir=artifacts_dir,
         record_video=True,
         fps=30,
-        sanitize_runner=False,
+        sanitize_runner=True,
         default_timeout=15.0,
     )
 
