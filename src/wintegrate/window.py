@@ -89,7 +89,7 @@ class Window:
             time.sleep(0.05)
 
         if force and self.pid:
-            subprocess.run(["taskkill", "/F", "/PID", str(self.pid)], capture_output=True)
+            subprocess.run(["taskkill", "/F", "/PID", str(self.pid)], capture_output=True, check=False)
 
     @classmethod
     def find(
@@ -126,13 +126,15 @@ class Window:
         cmd: list[str] | str,
         timeout: float = 10.0,
         title_pattern: str | None = None,
+        exclude_hwnds: set[int] | None = None,
     ) -> tuple[subprocess.Popen, Window]:
         """
         Launches an application and discovers its top-level window by diffing pre/post snapshots.
-        Solves launcher PID != window PID issue (e.g. Modern Windows Notepad).
+        Solves launcher PID != window PID issue and allows excluding existing HWNDs.
         """
         attach_to_input_desktop()
         before = WindowCensus.capture()
+        excluded = exclude_hwnds or set()
 
         if isinstance(cmd, str):
             proc = subprocess.Popen(cmd, shell=True)
@@ -146,9 +148,9 @@ class Window:
             after = WindowCensus.capture()
             diff = WindowCensus.diff(before, after)
 
-            # 1. Check newly added windows
+            # 1. Check newly added windows that are not in excluded set
             for snap in diff.added:
-                if not snap.is_visible:
+                if not snap.is_visible or snap.hwnd in excluded:
                     continue
                 if compiled_re:
                     if compiled_re.search(snap.title):
@@ -157,11 +159,13 @@ class Window:
                     if snap.pid == proc.pid or snap.title:
                         return proc, cls(snap.hwnd, snap.pid)
 
-            # 2. Check all currently visible windows if title pattern matched
+            # 2. Check all currently visible windows if title pattern matched (excluding known)
             if compiled_re:
                 for snap in after:
-                    if snap.is_visible and compiled_re.search(snap.title):
-                        return proc, cls(snap.hwnd, snap.pid)
+                    if snap.is_visible and snap.hwnd not in excluded and compiled_re.search(snap.title):
+                        # Ensure it's newly added since before
+                        if snap.hwnd not in {b.hwnd for b in before}:
+                            return proc, cls(snap.hwnd, snap.pid)
 
             time.sleep(0.1)
 

@@ -14,7 +14,6 @@ from wintegrate import (
     Session,
     SessionConfig,
     TextActionTimelineRecorder,
-    Window,
 )
 
 
@@ -45,12 +44,13 @@ def test_multi_window_switching_and_typing():
         win_a.set_foreground()
         time.sleep(0.5)
 
-        # 2. Launch Notepad B
+        # 2. Launch Notepad B (exclude win_a.hwnd so discovery never confuses the two)
         timeline.record_action("launch_win_b", text="Launching Notepad Window B")
-        proc_b, win_b = Window.launch_and_discover(
+        proc_b, win_b = session.launch_and_discover(
             ["notepad.exe"],
             title_pattern=".*Notepad.*|.*記事本.*",
             timeout=12.0,
+            exclude_hwnds={win_a.hwnd},
         )
         win_b.move_and_resize(580, 50, 500, 400)
         win_b.set_foreground()
@@ -72,6 +72,7 @@ def test_multi_window_switching_and_typing():
 
             # 4. Focus Window A and Type Text A
             win_a.set_foreground()
+            editor_a.set_focus()
             time.sleep(0.3)
             timeline.record_action("focus_win_a", window=win_a)
             text_a = "Window A: First Stream\nLine A2\n"
@@ -84,6 +85,7 @@ def test_multi_window_switching_and_typing():
 
             # 5. Switch to Window B and Type Text B
             win_b.set_foreground()
+            editor_b.set_focus()
             time.sleep(0.3)
             timeline.record_action("focus_win_b", window=win_b)
             text_b = "Window B: Second Stream\nLine B2\n"
@@ -96,6 +98,7 @@ def test_multi_window_switching_and_typing():
 
             # 6. Switch back to Window A and append additional text
             win_a.set_foreground()
+            editor_a.set_focus()
             time.sleep(0.3)
             timeline.record_action("refocus_win_a", window=win_a)
             text_a_extra = "Line A3: Verified Append\n"

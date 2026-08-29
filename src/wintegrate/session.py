@@ -219,6 +219,7 @@ class Session:
         cmd: list[str] | str,
         title_pattern: str | None = None,
         timeout: float | None = None,
+        exclude_hwnds: set[int] | None = None,
     ) -> tuple[subprocess.Popen, Window]:
         timeout = timeout or self.config.default_timeout
-        return Window.launch_and_discover(cmd, timeout=timeout, title_pattern=title_pattern)
+        return Window.launch_and_discover(cmd, timeout=timeout, title_pattern=title_pattern, exclude_hwnds=exclude_hwnds)
