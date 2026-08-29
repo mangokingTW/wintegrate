@@ -18,6 +18,7 @@ from wintegrate.interop import (
     WM_GETTEXT,
     WM_GETTEXTLENGTH,
     attach_to_input_desktop,
+    send_unicode_char,
     user32,
 )
 from wintegrate.text import count_lines, normalize_line_endings
@@ -303,40 +304,22 @@ class UiaElement:
         text: str,
         expected_line_count_delta: int = 0,
         verify_contains: str | None = None,
-        delay_per_char: float = 0.05,
+        delay_per_char: float = 0.03,
         timeout: float = 8.0,
     ) -> bool:
         """
-        Sends hardware keypresses via SendInput with explicit shift handling,
+        Sends hardware keypresses via native Win32 SendInput KEYEVENTF_UNICODE (x64 / ARM64 universal),
         and asserts verified text mutation.
         """
-        import pydirectinput
-        pydirectinput.FAILSAFE = False
-
         self.set_focus()
         time.sleep(0.2)
 
         initial_text = self.get_value()
         initial_lines = count_lines(initial_text)
 
-        # Type character by character with reliable timing for CI runners
+        # Send unicode characters using native Win32 SendInput
         for char in text:
-            if char == "\n" or char == "\r":
-                pydirectinput.press("enter")
-            elif char == "\t":
-                pydirectinput.press("tab")
-            elif char == " ":
-                pydirectinput.press("space")
-            elif char.isupper():
-                pydirectinput.keyDown("shift")
-                pydirectinput.press(char.lower())
-                pydirectinput.keyUp("shift")
-            elif char == ":":
-                pydirectinput.keyDown("shift")
-                pydirectinput.press(";")
-                pydirectinput.keyUp("shift")
-            else:
-                pydirectinput.press(char)
+            send_unicode_char(char)
             if delay_per_char > 0:
                 time.sleep(delay_per_char)
 

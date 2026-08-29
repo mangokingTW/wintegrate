@@ -49,6 +49,15 @@ IMC_SETOPENSTATUS = 0x0006
 DESKTOP_ALL = 0x01FF
 HWND_BROADCAST = 0xFFFF
 
+# SendInput Constants
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+INPUT_HARDWARE = 2
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
+
 
 class RECT(ctypes.Structure):
     _fields_ = [
@@ -89,6 +98,50 @@ class BITMAPINFOHEADER(ctypes.Structure):
     ]
 
 
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [
+        ("mi", MOUSEINPUT),
+        ("ki", KEYBDINPUT),
+        ("hi", HARDWAREINPUT),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("u", _INPUT_UNION),
+    ]
+
+
 WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 # Explicit signatures
@@ -115,6 +168,26 @@ user32.GetClassNameW.restype = ctypes.c_int
 
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
+
+user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+user32.SendInput.restype = wintypes.UINT
+
+
+def send_unicode_char(char: str):
+    """Sends a unicode character reliably using native Win32 SendInput (KEYEVENTF_UNICODE)."""
+    val = ord(char)
+    if val == 10:  # LF
+        val = 13  # CR for Enter in Edit controls
+    inp_down = INPUT(
+        type=INPUT_KEYBOARD,
+        u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE, time=0, dwExtraInfo=0)),
+    )
+    inp_up = INPUT(
+        type=INPUT_KEYBOARD,
+        u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
+    )
+    arr = (INPUT * 2)(inp_down, inp_up)
+    user32.SendInput(2, arr, ctypes.sizeof(INPUT))
 
 
 def get_input_desktop_handle() -> wintypes.HANDLE | None:
