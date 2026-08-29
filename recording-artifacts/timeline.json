@@ -1,0 +1,61 @@
+[
+  {
+    "timestamp_offset": 0.0002,
+    "action_type": "test_init",
+    "target_automation_id": null,
+    "target_name": null,
+    "target_class": null,
+    "window_title": "diag(ci): record what keeps launching wsl.exe on the ARM64 runner \u00b7 mangokingTW/ImeModePersistence@49e8add - Google Chrome",
+    "text_content": "Starting full integrated E2E test",
+    "details": {}
+  },
+  {
+    "timestamp_offset": 0.009,
+    "action_type": "session_entered",
+    "target_automation_id": null,
+    "target_name": null,
+    "target_class": null,
+    "window_title": "diag(ci): record what keeps launching wsl.exe on the ARM64 runner \u00b7 mangokingTW/ImeModePersistence@49e8add - Google Chrome",
+    "text_content": null,
+    "details": {
+      "details": {
+        "fps": 30,
+        "artifact_dir": "recording-artifacts"
+      }
+    }
+  },
+  {
+    "timestamp_offset": 0.0128,
+    "action_type": "census_taken",
+    "target_automation_id": null,
+    "target_name": null,
+    "target_class": null,
+    "window_title": "diag(ci): record what keeps launching wsl.exe on the ARM64 runner \u00b7 mangokingTW/ImeModePersistence@49e8add - Google Chrome",
+    "text_content": null,
+    "details": {
+      "details": {
+        "visible_windows": 637
+      }
+    }
+  },
+  {
+    "timestamp_offset": 0.0128,
+    "action_type": "simulated_interaction",
+    "target_automation_id": null,
+    "target_name": null,
+    "target_class": null,
+    "window_title": "diag(ci): record what keeps launching wsl.exe on the ARM64 runner \u00b7 mangokingTW/ImeModePersistence@49e8add - Google Chrome",
+    "text_content": "Verifying UI element resolution & timeline tracking",
+    "details": {}
+  },
+  {
+    "timestamp_offset": 1.5154,
+    "action_type": "test_complete",
+    "target_automation_id": null,
+    "target_name": null,
+    "target_class": null,
+    "window_title": "diag(ci): record what keeps launching wsl.exe on the ARM64 runner \u00b7 mangokingTW/ImeModePersistence@49e8add - Google Chrome",
+    "text_content": "Full integrated test finished",
+    "details": {}
+  }
+]

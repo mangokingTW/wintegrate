@@ -27,19 +27,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
-      - name: Run unit & regression tests
+      - name: Run unit & integrated recording tests
         run: |
           pytest tests/ -v
 
-      - name: Generate Desktop Recording & Artifacts
-        run: |
-          python -c "import time; from pathlib import Path; from wintegrate import Session, SessionConfig, TextActionTimelineRecorder; out = Path('recording-artifacts'); out.mkdir(exist_ok=True); rec = TextActionTimelineRecorder(out / 'timeline.log'); rec.record_action('session_init', text='Recording test demo'); rec.record_action('capture_sample', details={'fps': 30}); rec.close(); cfg = SessionConfig(artifact_dir=out, record_video=True, fps=30, sanitize_runner=False); session = Session(cfg); session.__enter__(); time.sleep(2.0); session.__exit__(None, None, None)"
-
-      - name: Upload Recording Artifacts & Failure Diagnostics
+      - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recording-artifacts-x64-py${{ matrix.python-version }}
+          name: ci-artifacts-x64-py${{ matrix.python-version }}
           path: |
             recording-artifacts/
             artifacts/
@@ -85,19 +81,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
-      - name: Run unit & regression tests
+      - name: Run unit & integrated recording tests
         run: |
           pytest tests/ -v
 
-      - name: Generate Desktop Recording & Artifacts
-        run: |
-          python -c "import time; from pathlib import Path; from wintegrate import Session, SessionConfig, TextActionTimelineRecorder; out = Path('recording-artifacts'); out.mkdir(exist_ok=True); rec = TextActionTimelineRecorder(out / 'timeline.log'); rec.record_action('session_init', text='Recording test demo'); rec.record_action('capture_sample', details={'fps': 30}); rec.close(); cfg = SessionConfig(artifact_dir=out, record_video=True, fps=30, sanitize_runner=False); session = Session(cfg); session.__enter__(); time.sleep(2.0); session.__exit__(None, None, None)"
-
-      - name: Upload Recording Artifacts & Failure Diagnostics
+      - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recording-artifacts-arm64-py${{ matrix.python-version }}
+          name: ci-artifacts-arm64-py${{ matrix.python-version }}
           path: |
             recording-artifacts/
             artifacts/
