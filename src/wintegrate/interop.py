@@ -1,9 +1,10 @@
 """Low-level Windows OS interop (ctypes definitions for User32, GDI32, Imm32, Kernel32)."""
 
 from __future__ import annotations
+
 import ctypes
-from ctypes import wintypes
 import logging
+from ctypes import wintypes
 
 logger = logging.getLogger(__name__)
 

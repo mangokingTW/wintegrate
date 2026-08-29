@@ -1,22 +1,24 @@
 """Window discovery and management with snapshot diffing and fresh handle re-resolution."""
 
 from __future__ import annotations
+
+import logging
 import re
 import subprocess
 import time
-import logging
-from wintegrate.interop import (
-    user32,
-    get_window_title,
-    get_window_class,
-    get_window_pid,
-    get_foreground_window,
-    attach_to_input_desktop,
-    SW_RESTORE,
-)
+
 from wintegrate.diagnostics import WindowCensus
 from wintegrate.element import UiaElement
 from wintegrate.exceptions import WindowDiscoveryTimeoutError
+from wintegrate.interop import (
+    SW_RESTORE,
+    attach_to_input_desktop,
+    get_foreground_window,
+    get_window_class,
+    get_window_pid,
+    get_window_title,
+    user32,
+)
 
 logger = logging.getLogger(__name__)
 

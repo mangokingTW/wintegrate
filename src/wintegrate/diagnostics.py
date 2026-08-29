@@ -1,26 +1,28 @@
 """CI-first diagnostic subsystem: streaming video recorder, desktop window census, and process tracking."""
 
 from __future__ import annotations
+
 import ctypes
+import logging
 import os
 import subprocess
 import threading
 import time
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+
 from PIL import Image
 
 from wintegrate.interop import (
-    user32,
-    gdi32,
     BITMAPINFOHEADER,
     WNDENUMPROC,
-    get_window_title,
+    attach_to_input_desktop,
+    gdi32,
+    get_input_desktop_handle,
     get_window_class,
     get_window_pid,
-    attach_to_input_desktop,
-    get_input_desktop_handle,
+    get_window_title,
+    user32,
 )
 
 logger = logging.getLogger(__name__)

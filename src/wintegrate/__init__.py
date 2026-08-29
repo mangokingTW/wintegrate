@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
-from wintegrate.session import Session, SessionConfig
-from wintegrate.window import Window
+from wintegrate.diagnostics import CensusDiff, ContinuousRecorder, WindowCensus, WindowSnapshot
 from wintegrate.element import UiaElement
-from wintegrate.text import normalize_line_endings, count_lines
 from wintegrate.exceptions import (
-    WintegrateError,
-    WindowDiscoveryTimeoutError,
-    ElementNotFoundError,
     ActionVerificationError,
-    TextMismatchError,
-    FocusStealDetectedError,
     DiagnosticPipelineError,
+    ElementNotFoundError,
+    FocusStealDetectedError,
+    TextMismatchError,
+    WindowDiscoveryTimeoutError,
+    WintegrateError,
 )
-from wintegrate.diagnostics import ContinuousRecorder, WindowCensus, WindowSnapshot, CensusDiff
 from wintegrate.recorder import (
+    ActionPlayer,
     RecordedAction,
     TextActionTimelineRecorder,
-    ActionPlayer,
     inspect_desktop_tree,
 )
+from wintegrate.session import Session, SessionConfig
+from wintegrate.text import count_lines, normalize_line_endings
+from wintegrate.window import Window
 
 __all__ = [
     "Session",

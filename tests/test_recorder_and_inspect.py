@@ -1,9 +1,10 @@
 """Tests for TextActionTimelineRecorder, ActionPlayer, and inspect_desktop_tree."""
 
 import json
+
 from wintegrate import (
-    TextActionTimelineRecorder,
     ActionPlayer,
+    TextActionTimelineRecorder,
     inspect_desktop_tree,
 )
 

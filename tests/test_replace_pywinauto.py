@@ -1,6 +1,6 @@
 """Test replacing pywinauto with wintegrate for Notepad automation workflow."""
 
-from wintegrate import Window, UiaElement
+from wintegrate import UiaElement, Window
 from wintegrate.exceptions import WindowDiscoveryTimeoutError
 
 

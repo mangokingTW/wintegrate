@@ -37,6 +37,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-cov",
+    "ruff>=0.5.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -45,3 +46,11 @@ packages = ["src/wintegrate"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

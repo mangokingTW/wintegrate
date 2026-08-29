@@ -1,24 +1,26 @@
 """Direct Windows UI Automation (UIA) COM bindings without control-type wrapper hierarchy."""
 
 from __future__ import annotations
+
 import ctypes
-import time
 import logging
+import time
+
 import comtypes
 import comtypes.client
 
+from wintegrate.exceptions import (
+    ActionVerificationError,
+    ElementNotFoundError,
+    TextMismatchError,
+)
 from wintegrate.interop import (
-    user32,
     WM_GETTEXT,
     WM_GETTEXTLENGTH,
     attach_to_input_desktop,
+    user32,
 )
-from wintegrate.text import normalize_line_endings, count_lines
-from wintegrate.exceptions import (
-    ElementNotFoundError,
-    ActionVerificationError,
-    TextMismatchError,
-)
+from wintegrate.text import count_lines, normalize_line_endings
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +38,13 @@ try:
         CUIAutomation,
         IUIAutomation,
         IUIAutomationElement,
-        IUIAutomationValuePattern,
         IUIAutomationInvokePattern,
         IUIAutomationTextPattern,
+        IUIAutomationValuePattern,
         TreeScope_Descendants,
-        UIA_ValuePatternId,
         UIA_InvokePatternId,
         UIA_TextPatternId,
+        UIA_ValuePatternId,
     )
 
     _uia = comtypes.client.CreateObject(CUIAutomation, interface=IUIAutomation)

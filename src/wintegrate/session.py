@@ -1,6 +1,7 @@
 """Session management, CI environment sanitization, and artifact flushing."""
 
 from __future__ import annotations
+
 import json
 import logging
 import subprocess
@@ -9,14 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from wintegrate.interop import (
-    user32,
-    kernel32,
-    get_window_title,
-    get_window_class,
-    SW_MINIMIZE,
-    WNDENUMPROC,
-)
 from wintegrate.diagnostics import (
     ContinuousRecorder,
     WindowCensus,
@@ -24,6 +17,14 @@ from wintegrate.diagnostics import (
     capture_screen_image,
 )
 from wintegrate.element import UiaElement
+from wintegrate.interop import (
+    SW_MINIMIZE,
+    WNDENUMPROC,
+    get_window_class,
+    get_window_title,
+    kernel32,
+    user32,
+)
 from wintegrate.window import Window
 
 logger = logging.getLogger(__name__)

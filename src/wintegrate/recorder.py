@@ -1,21 +1,23 @@
 """Action recorder, playback engine, text-based action timeline recording, and CLI inspect tool."""
 
 from __future__ import annotations
+
 import json
 import logging
+import re
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from wintegrate.interop import (
-    get_window_title,
-    get_foreground_window,
-    attach_to_input_desktop,
-)
-from wintegrate.element import UiaElement
-from wintegrate.window import Window
 from wintegrate.diagnostics import WindowCensus
+from wintegrate.element import UiaElement, get_uia
+from wintegrate.interop import (
+    attach_to_input_desktop,
+    get_foreground_window,
+    get_window_title,
+)
+from wintegrate.window import Window
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +134,7 @@ class ActionPlayer:
 
             # Locate window if specified
             if action.window_title:
-                win = Window.find(title_pattern=f".*{re_escape(action.window_title)}.*", timeout=2.0)
+                win = Window.find(title_pattern=f".*{re.escape(action.window_title)}.*", timeout=2.0)
                 win.set_foreground()
                 root = win.re_resolve_element()
             else:
@@ -156,11 +158,6 @@ class ActionPlayer:
                 elem.set_focus()
 
 
-def re_escape(s: str) -> str:
-    import re
-    return re.escape(s)
-
-
 def inspect_desktop_tree(max_depth: int = 2) -> dict[str, Any]:
     """
     CLI/inspect helper to dump current UIA hierarchy on desktop.
@@ -180,10 +177,10 @@ def inspect_desktop_tree(max_depth: int = 2) -> dict[str, Any]:
         }
         try:
             root = UiaElement.from_handle(w.hwnd)
-            # Find direct descendants
-            uia = comtypes.client.CreateObject(comtypes.gen.UIAutomationClient.CUIAutomation, interface=comtypes.gen.UIAutomationClient.IUIAutomation)
+            uia = get_uia()
             cond = uia.CreateTrueCondition()
-            children = root.raw.FindAll(comtypes.gen.UIAutomationClient.TreeScope_Children, cond)
+            # TreeScope_Children = 2
+            children = root.raw.FindAll(2, cond)
             if children:
                 for i in range(min(children.Length, 15)):
                     c = children.GetElement(i)
