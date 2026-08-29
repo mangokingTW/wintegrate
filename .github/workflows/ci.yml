@@ -7,12 +7,11 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
-    runs-on: ${{ matrix.os }}
+  test-x64:
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-11-arm]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
@@ -36,7 +35,41 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-failure-diagnostics-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: ci-failure-diagnostics-x64-py${{ matrix.python-version }}
+          path: |
+            artifacts/
+          if-no-files-found: ignore
+
+  test-arm64:
+    runs-on: windows-11-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        # Note: GitHub Actions setup-python only provides official Windows ARM64 builds for Python 3.11+
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Run unit & regression tests
+        run: |
+          pytest tests/test_text_and_exceptions.py tests/test_census.py -v
+
+      - name: Upload diagnostic artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-diagnostics-arm64-py${{ matrix.python-version }}
           path: |
             artifacts/
           if-no-files-found: ignore
