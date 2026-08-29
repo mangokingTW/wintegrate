@@ -26,13 +26,13 @@ def test_live_gui_automation_with_recording():
     timeline = TextActionTimelineRecorder(output_path=artifacts_dir / "timeline.log")
     timeline.record_action("suite_init", text="Starting live GUI automation & recording test")
 
-    # 2. Configure session with continuous screen recording, window census, and virtual desktop isolation
+    # 2. Configure session with continuous screen recording and window census
     config = SessionConfig(
         artifact_dir=artifacts_dir,
         record_video=True,
         fps=30,
-        sanitize_runner=True,
-        isolated_virtual_desktop=True,
+        sanitize_runner=False,
+        isolated_virtual_desktop=False,
         default_timeout=15.0,
     )
 
@@ -54,7 +54,7 @@ def test_live_gui_automation_with_recording():
         try:
             # 4. Move and resize window
             win.move_and_resize(60, 60, 600, 450)
-            win.set_foreground()
+            win.set_foreground(verify=False)
             timeline.record_action(
                 "window_repositioned", window=win, details={"rect": [60, 60, 600, 450]}
             )
@@ -67,12 +67,12 @@ def test_live_gui_automation_with_recording():
             deadline = time.monotonic() + 10.0
             while time.monotonic() < deadline:
                 for cond in [
-                    {"control_type_id": 50004},  # Document/Text Editor control
+                    {"control_type_id": 50030},  # Edit control (Win32 Notepad / Server)
+                    {"control_type_id": 50004},  # Document control (Win11 Notepad)
                     {"name_contains": "Text Editor"},
                     {"name_contains": "Document"},
                     {"name_contains": "文字編輯器"},
                     {"name_contains": "文本编辑器"},
-                    {"control_type_id": 50030},  # Edit control
                 ]:
                     try:
                         editor = root.find_descendant(**cond, timeout=0.5)

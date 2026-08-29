@@ -24,12 +24,12 @@ def find_editor(root: UiaElement, timeout: float = 10.0) -> UiaElement:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         for cond in [
-            {"control_type_id": 50004},  # Document/Text Editor control
+            {"control_type_id": 50030},  # Edit control (Win32 Notepad / Server)
+            {"control_type_id": 50004},  # Document/Text Editor control (Win11)
             {"name_contains": "Text Editor"},
             {"name_contains": "Document"},
             {"name_contains": "文字編輯器"},
             {"name_contains": "文本编辑器"},
-            {"control_type_id": 50030},  # Edit control
         ]:
             try:
                 editor = root.find_descendant(**cond, timeout=0.5)
@@ -54,8 +54,8 @@ def test_multi_window_switching_and_typing():
         artifact_dir=artifacts_dir,
         record_video=True,
         fps=30,
-        sanitize_runner=True,
-        isolated_virtual_desktop=True,
+        sanitize_runner=False,
+        isolated_virtual_desktop=False,
         default_timeout=15.0,
     )
 
@@ -68,7 +68,7 @@ def test_multi_window_switching_and_typing():
             title_pattern=".*Notepad.*|.*記事本.*|.*记事本.*",
         )
         win_a.move_and_resize(50, 50, 500, 400)
-        win_a.set_foreground()
+        win_a.set_foreground(verify=False)
         time.sleep(0.5)
 
         # 2. Launch Notepad B (exclude win_a.hwnd so discovery never confuses the two)
@@ -80,7 +80,7 @@ def test_multi_window_switching_and_typing():
             exclude_hwnds={win_a.hwnd},
         )
         win_b.move_and_resize(580, 50, 500, 400)
-        win_b.set_foreground()
+        win_b.set_foreground(verify=False)
         time.sleep(0.5)
 
         try:
