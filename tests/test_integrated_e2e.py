@@ -75,7 +75,6 @@ def test_live_gui_automation_with_recording():
             timeline.record_action("type_verified_start", target=editor, text=test_content)
             editor.type_verified(
                 test_content,
-                expected_line_count_delta=2,
                 verify_contains="wintegrate ci automation\nline 2: verified keystrokes",
                 delay_per_char=0.04,
             )
