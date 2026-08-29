@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 from wintegrate import (
@@ -61,7 +60,7 @@ def test_live_gui_automation_with_recording():
 
             # 5. Direct UIA Element resolution & Find Editor
             root = win.re_resolve_element()
-            
+
             # Find Editor element
             editor = None
             for cond in [
