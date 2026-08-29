@@ -215,6 +215,7 @@ class UiaElement:
         automation_id: str | None = None,
         name_contains: str | None = None,
         name_exact: str | None = None,
+        class_name: str | None = None,
         control_type_id: int | None = None,
         timeout: float = 5.0,
     ) -> UiaElement:
@@ -231,6 +232,10 @@ class UiaElement:
             if name_exact:
                 prop_id = 30005  # UIA_NamePropertyId
                 cond = uia.CreatePropertyCondition(prop_id, name_exact)
+                conditions.append(cond)
+            if class_name:
+                prop_id = 30012  # UIA_ClassNamePropertyId
+                cond = uia.CreatePropertyCondition(prop_id, class_name)
                 conditions.append(cond)
             if control_type_id:
                 prop_id = 30003  # UIA_ControlTypePropertyId

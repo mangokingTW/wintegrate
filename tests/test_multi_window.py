@@ -29,10 +29,12 @@ def find_editor(target: Window | UiaElement, timeout: float = 12.0) -> UiaElemen
         try:
             root = target.re_resolve_element() if isinstance(target, Window) else target
             for cond in [
-                {"name_contains": "Text Editor", "timeout": 0.8},
-                {"control_type_id": 50030, "timeout": 0.5},
-                {"name_contains": "Document", "timeout": 0.8},
-                {"control_type_id": 50004, "timeout": 0.5},
+                {"class_name": "RichEditD2DPT", "timeout": 0.5},  # Win11 Tabbed Notepad
+                {"class_name": "Edit", "timeout": 0.5},  # Win32 Classic Notepad
+                {"control_type_id": 50030, "timeout": 0.5},  # Edit ControlType
+                {"control_type_id": 50004, "timeout": 0.5},  # Document ControlType
+                {"name_contains": "Text Editor", "timeout": 0.5},
+                {"name_contains": "Document", "timeout": 0.5},
                 {"name_contains": "文字編輯器", "timeout": 0.5},
                 {"name_contains": "文本编辑器", "timeout": 0.5},
             ]:
@@ -44,7 +46,7 @@ def find_editor(target: Window | UiaElement, timeout: float = 12.0) -> UiaElemen
                     pass
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(0.3)
     raise RuntimeError("Could not locate Notepad editor control")
 
 
