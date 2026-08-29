@@ -60,7 +60,9 @@ def sanitize_ci_runner_environment():
             "Disable-ScheduledTask -ErrorAction SilentlyContinue; "
             "Get-Process -Name 'wsl','msedge' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"
         )
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5)
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
+        )
     except Exception as exc:
         logger.debug(f"Runner task sanitization skipped ({type(exc).__name__}): {exc}")
 
@@ -168,7 +170,9 @@ class Session:
 
         # Capture baseline window state
         self.initial_census = WindowCensus.capture()
-        self.log_event("session_start", "Baseline window census captured", count=len(self.initial_census))
+        self.log_event(
+            "session_start", "Baseline window census captured", count=len(self.initial_census)
+        )
 
         # Start continuous video recording if requested
         if self.config.record_video:
@@ -237,7 +241,9 @@ class Session:
 
         # If an exception occurred during the test, take failure snapshot
         if exc_type is not None:
-            logger.error(f"Test failed with {exc_type.__name__}: {exc_val}. Capturing failure artifact.")
+            logger.error(
+                f"Test failed with {exc_type.__name__}: {exc_val}. Capturing failure artifact."
+            )
             self._capture_failure_screenshot()
 
         # Teardown isolated virtual desktop if configured
@@ -293,7 +299,9 @@ class Session:
     ) -> Window:
         """Finds an existing top-level window matching criteria."""
         to = timeout or self.config.default_timeout
-        return Window.find(title_exact=title_exact, title_pattern=title_pattern, class_name=class_name, timeout=to)
+        return Window.find(
+            title_exact=title_exact, title_pattern=title_pattern, class_name=class_name, timeout=to
+        )
 
     def launch_and_discover(
         self,
@@ -305,6 +313,10 @@ class Session:
         """Wrapper around Window.launch_and_discover with session logging."""
         to = timeout or self.config.default_timeout
         self.log_event("launch_app", f"Launching {cmd}")
-        proc, win = Window.launch_and_discover(cmd, timeout=to, title_pattern=title_pattern, exclude_hwnds=exclude_hwnds)
-        self.log_event("window_discovered", f"Window '{win.title}' (HWND: {win.hwnd}, PID: {win.pid})")
+        proc, win = Window.launch_and_discover(
+            cmd, timeout=to, title_pattern=title_pattern, exclude_hwnds=exclude_hwnds
+        )
+        self.log_event(
+            "window_discovered", f"Window '{win.title}' (HWND: {win.hwnd}, PID: {win.pid})"
+        )
         return proc, win

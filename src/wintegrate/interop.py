@@ -206,11 +206,17 @@ def send_char_input(char: str):
         # Press Enter key via VK_RETURN
         inp_down = INPUT(
             type=INPUT_KEYBOARD,
-            u=_INPUT_UNION(ki=KEYBDINPUT(wVk=VK_RETURN, wScan=0x1C, dwFlags=0, time=0, dwExtraInfo=0)),
+            u=_INPUT_UNION(
+                ki=KEYBDINPUT(wVk=VK_RETURN, wScan=0x1C, dwFlags=0, time=0, dwExtraInfo=0)
+            ),
         )
         inp_up = INPUT(
             type=INPUT_KEYBOARD,
-            u=_INPUT_UNION(ki=KEYBDINPUT(wVk=VK_RETURN, wScan=0x1C, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
+            u=_INPUT_UNION(
+                ki=KEYBDINPUT(
+                    wVk=VK_RETURN, wScan=0x1C, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0
+                )
+            ),
         )
         arr = (INPUT * 2)(inp_down, inp_up)
         user32.SendInput(2, arr, ctypes.sizeof(INPUT))
@@ -218,11 +224,21 @@ def send_char_input(char: str):
         val = ord(char)
         inp_down = INPUT(
             type=INPUT_KEYBOARD,
-            u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE, time=0, dwExtraInfo=0)),
+            u=_INPUT_UNION(
+                ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE, time=0, dwExtraInfo=0)
+            ),
         )
         inp_up = INPUT(
             type=INPUT_KEYBOARD,
-            u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
+            u=_INPUT_UNION(
+                ki=KEYBDINPUT(
+                    wVk=0,
+                    wScan=val,
+                    dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                    time=0,
+                    dwExtraInfo=0,
+                )
+            ),
         )
         arr = (INPUT * 2)(inp_down, inp_up)
         user32.SendInput(2, arr, ctypes.sizeof(INPUT))

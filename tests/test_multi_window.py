@@ -23,7 +23,9 @@ def test_multi_window_switching_and_typing():
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     timeline = TextActionTimelineRecorder(output_path=artifacts_dir / "timeline_multiwindow.log")
-    timeline.record_action("multi_window_suite_start", text="Testing multi-window switching & typing")
+    timeline.record_action(
+        "multi_window_suite_start", text="Testing multi-window switching & typing"
+    )
 
     config = SessionConfig(
         artifact_dir=artifacts_dir,
@@ -127,7 +129,9 @@ def test_multi_window_switching_and_typing():
             assert "Window B: Second Stream" in val_b
             assert "Window A: First Stream" not in val_b
 
-            timeline.record_action("isolation_verified", details={"val_a_len": len(val_a), "val_b_len": len(val_b)})
+            timeline.record_action(
+                "isolation_verified", details={"val_a_len": len(val_a), "val_b_len": len(val_b)}
+            )
 
         finally:
             # 8. Clean up both windows

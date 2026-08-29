@@ -51,13 +51,17 @@ def test_live_gui_automation_with_recording():
                 timeout=12.0,
             )
 
-        timeline.record_action("window_discovered", window=win, details={"hwnd": win.hwnd, "pid": win.pid})
+        timeline.record_action(
+            "window_discovered", window=win, details={"hwnd": win.hwnd, "pid": win.pid}
+        )
 
         try:
             # 4. Move and resize window
             win.move_and_resize(60, 60, 600, 450)
             win.set_foreground()
-            timeline.record_action("window_repositioned", window=win, details={"rect": [60, 60, 600, 450]})
+            timeline.record_action(
+                "window_repositioned", window=win, details={"rect": [60, 60, 600, 450]}
+            )
 
             # 5. Direct UIA Element resolution
             root = win.re_resolve_element()
@@ -85,7 +89,9 @@ def test_live_gui_automation_with_recording():
             final_value = editor.get_value()
             assert "wintegrate ci automation" in final_value
             assert "line 2: verified keystrokes" in final_value
-            timeline.record_action("buffer_verified", target=editor, details={"buffer_length": len(final_value)})
+            timeline.record_action(
+                "buffer_verified", target=editor, details={"buffer_length": len(final_value)}
+            )
 
         finally:
             # 8. Clean up

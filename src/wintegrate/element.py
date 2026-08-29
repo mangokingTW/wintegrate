@@ -68,9 +68,7 @@ def get_uia() -> IUIAutomation:
         comtypes.client.GetModule("UIAutomationCore.dll")
         from comtypes.gen.UIAutomationClient import CUIAutomation, IUIAutomation
 
-        _uia = comtypes.client.CreateObject(
-            CUIAutomation, interface=IUIAutomation
-        )
+        _uia = comtypes.client.CreateObject(CUIAutomation, interface=IUIAutomation)
     return _uia
 
 
@@ -167,10 +165,7 @@ class UiaElement:
                 focused = UiaElement.get_focused()
                 if focused.handle and self.handle and focused.handle == self.handle:
                     return True
-                if (
-                    focused.automation_id
-                    and focused.automation_id == self.automation_id
-                ):
+                if focused.automation_id and focused.automation_id == self.automation_id:
                     return True
             except Exception:
                 pass
@@ -193,9 +188,7 @@ class UiaElement:
             conditions = []
             if automation_id:
                 prop_id = 30011  # UIA_AutomationIdPropertyId
-                cond = uia.CreatePropertyCondition(
-                    prop_id, automation_id
-                )
+                cond = uia.CreatePropertyCondition(prop_id, automation_id)
                 conditions.append(cond)
             if name_exact:
                 prop_id = 30005  # UIA_NamePropertyId
@@ -212,9 +205,7 @@ class UiaElement:
                 else:
                     full_cond = uia.CreateAndConditionFromArray(conditions)
                 try:
-                    found = self._element.FindFirst(
-                        TreeScope_Descendants, full_cond
-                    )
+                    found = self._element.FindFirst(TreeScope_Descendants, full_cond)
                     if found:
                         return UiaElement(found)
                 except Exception:
@@ -223,9 +214,7 @@ class UiaElement:
             if name_contains:
                 true_cond = uia.CreateTrueCondition()
                 try:
-                    arr = self._element.FindAll(
-                        TreeScope_Descendants, true_cond
-                    )
+                    arr = self._element.FindAll(TreeScope_Descendants, true_cond)
                     if arr:
                         for i in range(arr.Length):
                             child = arr.GetElement(i)
@@ -296,7 +285,9 @@ class UiaElement:
                 return True
             time.sleep(0.05)
 
-        raise TextMismatchError(f"Value verification failed. Expected '{text}', got '{self.get_value()}'")
+        raise TextMismatchError(
+            f"Value verification failed. Expected '{text}', got '{self.get_value()}'"
+        )
 
     def invoke(self, verify_closed: bool = False, timeout: float = 3.0) -> bool:
         """Triggers InvokePattern on the element."""
@@ -315,7 +306,9 @@ class UiaElement:
                 if not user32.IsWindow(self.handle) or not user32.IsWindowVisible(self.handle):
                     return True
                 time.sleep(0.05)
-            raise ActionVerificationError(f"Window handle {self.handle} remained visible after invoke")
+            raise ActionVerificationError(
+                f"Window handle {self.handle} remained visible after invoke"
+            )
 
         return True
 

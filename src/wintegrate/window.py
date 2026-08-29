@@ -106,7 +106,9 @@ class Window:
             time.sleep(0.05)
 
         if force and self.pid:
-            subprocess.run(["taskkill", "/F", "/PID", str(self.pid)], capture_output=True, check=False)
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(self.pid)], capture_output=True, check=False
+            )
 
     @classmethod
     def find(
@@ -180,7 +182,11 @@ class Window:
 
             # Fallback 2: check all currently visible windows matching criteria
             for snap in after:
-                if snap.is_visible and snap.hwnd not in excluded and snap.hwnd not in {b.hwnd for b in before}:
+                if (
+                    snap.is_visible
+                    and snap.hwnd not in excluded
+                    and snap.hwnd not in {b.hwnd for b in before}
+                ):
                     if compiled_re and compiled_re.search(snap.title):
                         return proc, cls(snap.hwnd, snap.pid)
 

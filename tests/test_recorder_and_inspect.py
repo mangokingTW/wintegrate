@@ -42,8 +42,26 @@ def test_text_action_timeline_recorder(tmp_path):
 def test_action_player_deserialization(tmp_path):
     json_file = tmp_path / "actions.json"
     actions = [
-        {"timestamp_offset": 0.1, "action_type": "set_focus", "target_automation_id": "EditBox", "target_name": None, "target_class": None, "window_title": None, "text_content": None, "details": {}},
-        {"timestamp_offset": 0.5, "action_type": "type", "target_automation_id": "EditBox", "target_name": None, "target_class": None, "window_title": None, "text_content": "Text", "details": {}},
+        {
+            "timestamp_offset": 0.1,
+            "action_type": "set_focus",
+            "target_automation_id": "EditBox",
+            "target_name": None,
+            "target_class": None,
+            "window_title": None,
+            "text_content": None,
+            "details": {},
+        },
+        {
+            "timestamp_offset": 0.5,
+            "action_type": "type",
+            "target_automation_id": "EditBox",
+            "target_name": None,
+            "target_class": None,
+            "window_title": None,
+            "text_content": "Text",
+            "details": {},
+        },
     ]
     json_file.write_text(json.dumps(actions), encoding="utf-8")
 

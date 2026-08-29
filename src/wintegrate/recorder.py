@@ -65,7 +65,11 @@ class TextActionTimelineRecorder:
         auto_id = target.automation_id if target else None
         name = target.name if target else None
         cls_name = target.class_name if target else None
-        w_title = window.title if window else (get_window_title(get_foreground_window()) if not target else None)
+        w_title = (
+            window.title
+            if window
+            else (get_window_title(get_foreground_window()) if not target else None)
+        )
 
         action = RecordedAction(
             timestamp_offset=round(offset, 4),
@@ -134,7 +138,9 @@ class ActionPlayer:
 
             # Locate window if specified
             if action.window_title:
-                win = Window.find(title_pattern=f".*{re.escape(action.window_title)}.*", timeout=2.0)
+                win = Window.find(
+                    title_pattern=f".*{re.escape(action.window_title)}.*", timeout=2.0
+                )
                 win.set_foreground()
                 root = win.re_resolve_element()
             else:
@@ -184,12 +190,14 @@ def inspect_desktop_tree(max_depth: int = 2) -> dict[str, Any]:
             if children:
                 for i in range(min(children.Length, 15)):
                     c = children.GetElement(i)
-                    win_dict["children"].append({
-                        "name": c.CurrentName or "",
-                        "automation_id": c.CurrentAutomationId or "",
-                        "control_type": c.CurrentLocalizedControlType or "",
-                        "class": c.CurrentClassName or "",
-                    })
+                    win_dict["children"].append(
+                        {
+                            "name": c.CurrentName or "",
+                            "automation_id": c.CurrentAutomationId or "",
+                            "control_type": c.CurrentLocalizedControlType or "",
+                            "class": c.CurrentClassName or "",
+                        }
+                    )
         except Exception:
             pass
         results.append(win_dict)

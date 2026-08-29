@@ -159,9 +159,7 @@ class ContinuousRecorder:
             )
         except Exception as exc:
             self._stderr_file.close()
-            logger.error(
-                f"Failed to start FFmpeg subprocess ({type(exc).__name__}): {exc}"
-            )
+            logger.error(f"Failed to start FFmpeg subprocess ({type(exc).__name__}): {exc}")
             return False
 
         self.stop_event.clear()
@@ -184,14 +182,10 @@ class ContinuousRecorder:
                     self._proc.stdin.write(raw_bytes)
                     self._frame_count += 1
             except (BrokenPipeError, OSError) as exc:
-                logger.error(
-                    f"FFmpeg stdin pipe broken ({type(exc).__name__}): {exc}"
-                )
+                logger.error(f"FFmpeg stdin pipe broken ({type(exc).__name__}): {exc}")
                 break
             except Exception as exc:
-                logger.debug(
-                    f"Screen capture frame skipped ({type(exc).__name__}): {exc}"
-                )
+                logger.debug(f"Screen capture frame skipped ({type(exc).__name__}): {exc}")
 
             elapsed = time.monotonic() - t0
             sleep_time = max(0.001, self.interval - elapsed)
@@ -219,9 +213,7 @@ class ContinuousRecorder:
                 pass
             self._stderr_file = None
 
-        logger.info(
-            f"ContinuousRecorder stopped. Total frames recorded: {self._frame_count}"
-        )
+        logger.info(f"ContinuousRecorder stopped. Total frames recorded: {self._frame_count}")
         return self._frame_count
 
 
@@ -274,9 +266,7 @@ class WindowCensus:
         return snapshots
 
     @classmethod
-    def diff(
-        cls, before: list[WindowSnapshot], after: list[WindowSnapshot]
-    ) -> CensusDiff:
+    def diff(cls, before: list[WindowSnapshot], after: list[WindowSnapshot]) -> CensusDiff:
         before_map = {w.hwnd: w for w in before}
         after_map = {w.hwnd: w for w in after}
 
