@@ -75,6 +75,26 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install FFmpeg on Windows ARM64
+        shell: pwsh
+        run: |
+          Write-Host "Installing FFmpeg on Windows ARM64 via winget/choco..."
+          winget install --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements --silent || choco install ffmpeg -y || Write-Host "Package manager installation completed."
+          $ffmpegPaths = @(
+            "C:\ProgramData\chocolatey\bin\ffmpeg.exe",
+            "C:\Program Files\FFmpeg\bin\ffmpeg.exe",
+            "C:\Users\runneradmin\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-*\bin\ffmpeg.exe"
+          )
+          foreach ($p in $ffmpegPaths) {
+            $matched = Get-Item $p -ErrorAction SilentlyContinue
+            if ($matched) {
+              $dir = $matched.Directory.FullName
+              Write-Host "Adding FFmpeg directory to PATH: $dir"
+              $dir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+              break
+            }
+          }
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

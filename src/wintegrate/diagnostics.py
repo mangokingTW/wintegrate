@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+import glob
 import logging
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -57,10 +59,31 @@ def capture_screen_image() -> Image.Image:
 
 def resolve_ffmpeg_exe() -> str | None:
     """
-    Finds a verified, existing ffmpeg executable.
-    Note: imageio_ffmpeg.get_ffmpeg_exe() returns nonexistent paths on Windows ARM64 without raising.
-    We strictly verify os.path.isfile before returning.
+    Finds a verified, existing ffmpeg executable across x64 and ARM64.
+    Searches system PATH, standard Windows / Chocolatey / WinGet directories,
+    and imageio_ffmpeg.
     """
+    # 1. System PATH
+    exe = shutil.which("ffmpeg")
+    if exe and os.path.isfile(exe):
+        return exe
+
+    # 2. Common Windows and Package Manager directories
+    common_patterns = [
+        r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
+        r"C:\Program Files\FFmpeg\bin\ffmpeg.exe",
+        r"C:\ffmpeg\bin\ffmpeg.exe",
+        r"C:\tools\ffmpeg\bin\ffmpeg.exe",
+        r"C:\Users\*\AppData\Local\Microsoft\WinGet\Packages\*\*\bin\ffmpeg.exe",
+        r"C:\Users\*\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe",
+    ]
+    for pattern in common_patterns:
+        matches = glob.glob(pattern)
+        for m in matches:
+            if os.path.isfile(m):
+                return m
+
+    # 3. imageio_ffmpeg fallback (verify file exists)
     try:
         import imageio_ffmpeg
 
@@ -69,13 +92,6 @@ def resolve_ffmpeg_exe() -> str | None:
             return exe
     except Exception as exc:
         logger.debug(f"imageio_ffmpeg lookup failed ({type(exc).__name__}): {exc}")
-
-    # Check system PATH
-    import shutil
-
-    exe = shutil.which("ffmpeg")
-    if exe and os.path.isfile(exe):
-        return exe
 
     return None
 
