@@ -230,22 +230,26 @@ class UiaElement:
         )
 
     def get_value(self) -> str:
-        """Reads element text via ValuePattern, TextPattern, or window text fallback."""
-        try:
-            val_pattern = self._element.GetCurrentPattern(UIA_ValuePatternId)
-            if val_pattern:
-                val_pat = val_pattern.QueryInterface(IUIAutomationValuePattern)
-                return val_pat.CurrentValue or ""
-        except Exception:
-            pass
-
+        """Reads element text via TextPattern, ValuePattern, or window text fallback."""
         try:
             text_pattern = self._element.GetCurrentPattern(UIA_TextPatternId)
             if text_pattern:
                 text_pat = text_pattern.QueryInterface(IUIAutomationTextPattern)
                 doc_range = text_pat.DocumentRange
                 if doc_range:
-                    return doc_range.GetText(-1) or ""
+                    txt = doc_range.GetText(-1)
+                    if txt is not None:
+                        return txt
+        except Exception:
+            pass
+
+        try:
+            val_pattern = self._element.GetCurrentPattern(UIA_ValuePatternId)
+            if val_pattern:
+                val_pat = val_pattern.QueryInterface(IUIAutomationValuePattern)
+                val = val_pat.CurrentValue
+                if val is not None:
+                    return val
         except Exception:
             pass
 
