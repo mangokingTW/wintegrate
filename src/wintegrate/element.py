@@ -431,7 +431,10 @@ class UiaElement:
                 val_pat.SetValue(initial_text + text)
                 time.sleep(0.2)
                 current_text = self.get_value()
-                if verify_contains and normalize_line_endings(verify_contains) in normalize_line_endings(current_text):
+                if verify_contains and (
+                    normalize_line_endings(verify_contains)
+                    in normalize_line_endings(current_text)
+                ):
                     return True
         except Exception:
             pass
