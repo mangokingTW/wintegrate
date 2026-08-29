@@ -173,7 +173,9 @@ def test_multi_window_switching_and_typing():
                 assert "Window B Text" not in res_a
                 assert "Window A Text" not in res_b
 
-                timeline.record_action("isolation_verified", details={"res_a": res_a, "res_b": res_b})
+                timeline.record_action(
+                    "isolation_verified", details={"res_a": res_a, "res_b": res_b}
+                )
             finally:
                 win_a.close(force=True)
                 win_b.close(force=True)

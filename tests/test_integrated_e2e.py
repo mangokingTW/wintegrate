@@ -15,6 +15,8 @@ from wintegrate import (
     Session,
     SessionConfig,
     TextActionTimelineRecorder,
+    UiaElement,
+    Window,
 )
 
 
