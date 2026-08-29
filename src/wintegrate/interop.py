@@ -1,4 +1,4 @@
-"""Low-level Windows OS interop (ctypes definitions for User32, GDI32, Imm32, Kernel32)."""
+"""Win32 structures, constants, and ctypes foreign function interface."""
 
 from __future__ import annotations
 
@@ -8,15 +8,13 @@ from ctypes import wintypes
 
 logger = logging.getLogger(__name__)
 
+# Native DLL handles
 user32 = ctypes.windll.user32
-gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
-try:
-    imm32 = ctypes.windll.imm32
-except Exception:
-    imm32 = None
+imm32 = ctypes.windll.imm32
+gdi32 = ctypes.windll.gdi32
 
-# ShowWindow commands
+# Window Show / Sizing Constants
 SW_HIDE = 0
 SW_SHOWNORMAL = 1
 SW_SHOWMINIMIZED = 2
@@ -24,6 +22,8 @@ SW_MAXIMIZE = 3
 SW_SHOWNOACTIVATE = 4
 SW_SHOW = 5
 SW_MINIMIZE = 6
+SW_SHOWMINNOACTIVE = 7
+SW_SHOWNA = 8
 SW_RESTORE = 9
 
 # SetWindowPos Flags
@@ -43,6 +43,8 @@ WM_CHAR = 0x0102
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_IME_CONTROL = 0x0283
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
 
 # IME Constants
 IMC_GETCONVERSIONMODE = 0x0001
@@ -63,6 +65,11 @@ KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_SCANCODE = 0x0008
 
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_ABSOLUTE = 0x8000
+
 # Virtual Key Codes
 VK_RETURN = 0x0D
 VK_TAB = 0x09
@@ -79,17 +86,10 @@ class RECT(ctypes.Structure):
     ]
 
 
-class GUITHREADINFO(ctypes.Structure):
+class POINT(ctypes.Structure):
     _fields_ = [
-        ("cbSize", wintypes.DWORD),
-        ("flags", wintypes.DWORD),
-        ("hwndActive", wintypes.HWND),
-        ("hwndFocus", wintypes.HWND),
-        ("hwndCapture", wintypes.HWND),
-        ("hwndMenuOwner", wintypes.HWND),
-        ("hwndMoveSize", wintypes.HWND),
-        ("hwndCaret", wintypes.HWND),
-        ("rcCaret", RECT),
+        ("x", wintypes.LONG),
+        ("y", wintypes.LONG),
     ]
 
 
@@ -195,6 +195,9 @@ user32.SetFocus.restype = wintypes.HWND
 user32.SetActiveWindow.argtypes = [wintypes.HWND]
 user32.SetActiveWindow.restype = wintypes.HWND
 
+user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+user32.SetCursorPos.restype = wintypes.BOOL
+
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 
@@ -242,6 +245,29 @@ def send_char_input(char: str):
         )
         arr = (INPUT * 2)(inp_down, inp_up)
         user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+
+
+def send_mouse_click(x: int, y: int):
+    """Positions cursor and performs a standard left mouse click."""
+    user32.SetCursorPos(x, y)
+    inp_down = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTDOWN, time=0, dwExtraInfo=0
+            )
+        ),
+    )
+    inp_up = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTUP, time=0, dwExtraInfo=0
+            )
+        ),
+    )
+    arr = (INPUT * 2)(inp_down, inp_up)
+    user32.SendInput(2, arr, ctypes.sizeof(INPUT))
 
 
 def get_input_desktop_handle() -> wintypes.HANDLE | None:

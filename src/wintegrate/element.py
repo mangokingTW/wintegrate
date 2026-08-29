@@ -19,6 +19,7 @@ from wintegrate.interop import (
     WM_GETTEXTLENGTH,
     attach_to_input_desktop,
     send_char_input,
+    send_mouse_click,
     user32,
 )
 from wintegrate.text import count_lines, normalize_line_endings
@@ -127,6 +128,15 @@ class UiaElement:
         except Exception:
             return 0
 
+    @property
+    def bounding_rectangle(self) -> tuple[int, int, int, int]:
+        """Returns (left, top, right, bottom) bounding rectangle."""
+        try:
+            rect = self._element.CurrentBoundingRectangle
+            return (rect.left, rect.top, rect.right, rect.bottom)
+        except Exception:
+            return (0, 0, 0, 0)
+
     @classmethod
     def from_handle(cls, hwnd: int) -> UiaElement:
         """Resolves an element directly from a native window handle."""
@@ -161,12 +171,25 @@ class UiaElement:
             pass
         return None
 
+    def click(self):
+        """Clicks the center of this element using SendInput mouse simulation."""
+        left, top, right, bottom = self.bounding_rectangle
+        if right > left and bottom > top:
+            cx = (left + right) // 2
+            cy = (top + bottom) // 2
+            send_mouse_click(cx, cy)
+
     def set_focus(self, verify: bool = True, timeout: float = 2.0) -> bool:
-        """Sets focus to this element and optionally verifies it has focus."""
+        """
+        Sets focus to this element via UIA SetFocus and physical center click fallback.
+        """
         try:
             self._element.SetFocus()
         except Exception as exc:
             logger.debug(f"SetFocus raised ({type(exc).__name__}): {exc}")
+
+        # Physical click fallback to claim true OS foreground focus
+        self.click()
 
         if not verify:
             return True
