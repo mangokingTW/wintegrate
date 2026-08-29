@@ -396,7 +396,9 @@ class UiaElement:
         and asserts verified text mutation.
         """
         if not self.set_focus(timeout=1.0):
-            raise FocusStealDetectedError(f"Failed to focus element {self} before sending keystrokes")
+            raise FocusStealDetectedError(
+                f"Failed to focus element {self} before sending keystrokes"
+            )
         time.sleep(0.1)
 
         initial_text = self.get_value()
@@ -445,9 +447,8 @@ class UiaElement:
                 current_lines = count_lines(current_text) if current_text else 1
                 fallback_verified = True
                 if target_verify_contains is not None:
-                    if (
-                        normalize_line_endings(target_verify_contains)
-                        not in normalize_line_endings(current_text)
+                    if normalize_line_endings(target_verify_contains) not in normalize_line_endings(
+                        current_text
                     ):
                         fallback_verified = False
                 if expected_line_count_delta != 0:

@@ -210,7 +210,9 @@ class ContinuousRecorder:
                 except Exception:
                     pass
             except Exception as exc:
-                logger.debug(f"ContinuousRecorder process cleanup warning ({type(exc).__name__}): {exc}")
+                logger.debug(
+                    f"ContinuousRecorder process cleanup warning ({type(exc).__name__}): {exc}"
+                )
             finally:
                 self._proc = None
 

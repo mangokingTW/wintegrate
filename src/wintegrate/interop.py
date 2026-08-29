@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import ctypes
 import logging
-from ctypes import wintypes
-
 import sys
+from ctypes import wintypes
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +16,7 @@ if sys.platform == "win32":
     imm32 = ctypes.windll.imm32
     gdi32 = ctypes.windll.gdi32
 else:
+
     class _MockDll:
         def __getattr__(self, name):
             class _MockFunc:
