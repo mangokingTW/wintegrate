@@ -308,7 +308,7 @@ class UiaElement:
         timeout: float = 8.0,
     ) -> bool:
         """
-        Sends hardware keypresses via send_char_input (SendInput + WM_CHAR fallback),
+        Sends hardware keypresses via send_char_input (SendInput KEYEVENTF_UNICODE),
         and asserts verified text mutation.
         """
         self.set_focus()
@@ -317,9 +317,9 @@ class UiaElement:
         initial_text = self.get_value()
         initial_lines = count_lines(initial_text)
 
-        # Send characters with handle target fallback
+        # Send characters using SendInput
         for char in text:
-            send_char_input(char, hwnd_target=self.handle)
+            send_char_input(char)
             if delay_per_char > 0:
                 time.sleep(delay_per_char)
 
