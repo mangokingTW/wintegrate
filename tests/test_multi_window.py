@@ -8,6 +8,8 @@
 - Uses Windows 11 isolated clean-room virtual desktop
 """
 
+from __future__ import annotations
+
 import time
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from wintegrate import (
     SessionConfig,
     TextActionTimelineRecorder,
     UiaElement,
+    Window,
 )
 
 
