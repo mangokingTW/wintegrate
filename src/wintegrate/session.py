@@ -40,7 +40,7 @@ class SessionConfig:
     sanitize_runner: bool | str = "auto"
     default_timeout: float = 15.0
     dismiss_oobe: bool | str = "auto"
-    isolated_virtual_desktop: bool | str = "auto"
+    isolated_virtual_desktop: bool = False
 
     @property
     def should_sanitize_runner(self) -> bool:
