@@ -18,6 +18,32 @@ from wintegrate import (
 )
 
 
+def find_editor(win: Window, timeout: float = 12.0) -> UiaElement:
+    """Helper to locate Notepad editor control on any OS version/locale."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            root = win.re_resolve_element()
+            for cond in [
+                {"name_contains": "Text Editor", "timeout": 0.8},
+                {"control_type_id": 50030, "timeout": 0.5},
+                {"name_contains": "Document", "timeout": 0.8},
+                {"control_type_id": 50004, "timeout": 0.5},
+                {"name_contains": "文字編輯器", "timeout": 0.5},
+                {"name_contains": "文本编辑器", "timeout": 0.5},
+            ]:
+                try:
+                    editor = root.find_descendant(**cond)
+                    if editor:
+                        return editor
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        time.sleep(0.5)
+    raise RuntimeError("Could not locate Notepad editor control")
+
+
 def test_live_gui_automation_with_recording():
     artifacts_dir = Path("recording-artifacts")
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -53,29 +79,13 @@ def test_live_gui_automation_with_recording():
             # 4. Move and resize window
             win.move_and_resize(60, 60, 600, 450)
             win.set_foreground(verify=False)
+            time.sleep(0.5)
             timeline.record_action(
                 "window_repositioned", window=win, details={"rect": [60, 60, 600, 450]}
             )
 
             # 5. Direct UIA Element resolution & Find Editor
-            root = win.re_resolve_element()
-            editor = None
-            for cond in [
-                {"name_contains": "Text Editor", "timeout": 2.5},
-                {"control_type_id": 50030, "timeout": 1.5},
-                {"name_contains": "Document", "timeout": 2.0},
-                {"control_type_id": 50004, "timeout": 1.5},
-                {"name_contains": "文字編輯器", "timeout": 1.5},
-                {"name_contains": "文本编辑器", "timeout": 1.5},
-            ]:
-                try:
-                    editor = root.find_descendant(**cond)
-                    if editor:
-                        break
-                except Exception:
-                    pass
-            if not editor:
-                raise RuntimeError("Could not locate Notepad editor control")
+            editor = find_editor(win)
 
             # 6. Perform verified typing
             timeline.record_action("type_start", details={"text": "wintegrate ci\n"})

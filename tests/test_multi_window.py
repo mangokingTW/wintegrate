@@ -22,23 +22,29 @@ from wintegrate import (
 )
 
 
-def find_editor(target: Window | UiaElement) -> UiaElement:
+def find_editor(target: Window | UiaElement, timeout: float = 12.0) -> UiaElement:
     """Helper to locate Notepad editor control on any OS version/locale."""
-    root = target.re_resolve_element() if isinstance(target, Window) else target
-    for cond in [
-        {"name_contains": "Text Editor", "timeout": 2.5},
-        {"control_type_id": 50030, "timeout": 1.5},
-        {"name_contains": "Document", "timeout": 2.0},
-        {"control_type_id": 50004, "timeout": 1.5},
-        {"name_contains": "文字編輯器", "timeout": 1.5},
-        {"name_contains": "文本编辑器", "timeout": 1.5},
-    ]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         try:
-            editor = root.find_descendant(**cond)
-            if editor:
-                return editor
+            root = target.re_resolve_element() if isinstance(target, Window) else target
+            for cond in [
+                {"name_contains": "Text Editor", "timeout": 0.8},
+                {"control_type_id": 50030, "timeout": 0.5},
+                {"name_contains": "Document", "timeout": 0.8},
+                {"control_type_id": 50004, "timeout": 0.5},
+                {"name_contains": "文字編輯器", "timeout": 0.5},
+                {"name_contains": "文本编辑器", "timeout": 0.5},
+            ]:
+                try:
+                    editor = root.find_descendant(**cond)
+                    if editor:
+                        return editor
+                except Exception:
+                    pass
         except Exception:
             pass
+        time.sleep(0.5)
     raise RuntimeError("Could not locate Notepad editor control")
 
 
