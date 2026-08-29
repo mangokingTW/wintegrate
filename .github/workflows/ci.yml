@@ -76,21 +76,22 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install FFmpeg on Windows ARM64
+        continue-on-error: true
         shell: pwsh
         run: |
-          Write-Host "Installing FFmpeg on Windows ARM64 via winget/choco..."
-          winget install --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements --silent || choco install ffmpeg -y || Write-Host "Package manager installation completed."
+          try {
+            choco install ffmpeg -y --no-progress
+          } catch {
+            Write-Host "Choco installation attempt finished"
+          }
           $ffmpegPaths = @(
-            "C:\ProgramData\chocolatey\bin\ffmpeg.exe",
-            "C:\Program Files\FFmpeg\bin\ffmpeg.exe",
-            "C:\Users\runneradmin\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-*\bin\ffmpeg.exe"
+            "C:\ProgramData\chocolatey\bin",
+            "C:\Program Files\FFmpeg\bin"
           )
           foreach ($p in $ffmpegPaths) {
-            $matched = Get-Item $p -ErrorAction SilentlyContinue
-            if ($matched) {
-              $dir = $matched.Directory.FullName
-              Write-Host "Adding FFmpeg directory to PATH: $dir"
-              $dir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            if (Test-Path "$p\ffmpeg.exe") {
+              Write-Host "Found FFmpeg at $p"
+              $p | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
               break
             }
           }

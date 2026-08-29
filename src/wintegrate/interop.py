@@ -179,10 +179,9 @@ user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 user32.SendInput.restype = wintypes.UINT
 
 
-def send_char_input(char: str, hwnd_target: int = 0):
+def send_char_input(char: str):
     """
-    Sends character input reliably across both x64 and ARM64 Windows.
-    Uses SendInput with fallback to PostMessageW WM_CHAR if window handle is provided.
+    Sends character input reliably using native Win32 SendInput (KEYEVENTF_UNICODE).
     """
     if char == "\n" or char == "\r":
         # Press Enter key via VK_RETURN
@@ -196,8 +195,6 @@ def send_char_input(char: str, hwnd_target: int = 0):
         )
         arr = (INPUT * 2)(inp_down, inp_up)
         user32.SendInput(2, arr, ctypes.sizeof(INPUT))
-        if hwnd_target:
-            user32.PostMessageW(hwnd_target, WM_CHAR, 0x0D, 0)
     else:
         val = ord(char)
         inp_down = INPUT(
@@ -210,8 +207,6 @@ def send_char_input(char: str, hwnd_target: int = 0):
         )
         arr = (INPUT * 2)(inp_down, inp_up)
         user32.SendInput(2, arr, ctypes.sizeof(INPUT))
-        if hwnd_target:
-            user32.PostMessageW(hwnd_target, WM_CHAR, val, 0)
 
 
 def get_input_desktop_handle() -> wintypes.HANDLE | None:
