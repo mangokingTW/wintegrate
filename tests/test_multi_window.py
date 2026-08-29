@@ -19,6 +19,7 @@ from wintegrate import (
     TextActionTimelineRecorder,
     UiaElement,
     Window,
+    env,
 )
 
 
@@ -78,66 +79,117 @@ def test_multi_window_switching_and_typing():
         win_a.set_foreground(verify=False)
         time.sleep(0.5)
 
-        # 2. Launch Notepad B (exclude win_a.hwnd so discovery never confuses the two)
-        timeline.record_action("launch_win_b", text="Launching Notepad Window B")
-        proc_b, win_b = session.launch_and_discover(
-            ["notepad.exe"],
-            timeout=12.0,
-            title_pattern=".*Notepad.*|.*記事本.*|.*记事本.*",
-            exclude_hwnds={win_a.hwnd},
-        )
-        win_b.move_and_resize(580, 50, 500, 400)
-        win_b.set_foreground(verify=False)
-        time.sleep(0.5)
-
-        try:
-            editor_a = find_editor(win_a)
-            editor_b = find_editor(win_b)
-
-            # 3. Focus Window A and Type: "Window A Text\n"
-            win_a.set_foreground()
-            time.sleep(0.3)
-            timeline.record_action("focus_win_a", window=win_a)
-
-            editor_a.type_verified(
-                "Window A Text\n",
-                expected_line_count_delta=1,
-                verify_contains="Window A Text",
+        if env.is_desktop:
+            # 2. On Desktop (Win11), launch Calculator as distinct top-level Window B
+            timeline.record_action("launch_win_b", text="Launching Calculator Window B")
+            proc_b, win_b = session.launch_and_discover(
+                ["calc.exe"],
+                timeout=12.0,
+                title_pattern="(?i)calculator|小算盤|计算器",
+                exclude_hwnds={win_a.hwnd},
             )
-            time.sleep(0.3)
-            timeline.record_action("typed_win_a", text="Window A Text")
+            win_b.move_and_resize(580, 50, 420, 500)
+            win_b.set_foreground(verify=False)
+            time.sleep(0.5)
 
-            # 4. Switch to Window B and Type: "Window B Text\n"
-            win_b.set_foreground()
-            time.sleep(0.3)
-            timeline.record_action("focus_win_b", window=win_b)
+            try:
+                editor_a = find_editor(win_a)
+                calc_root = win_b.re_resolve_element()
 
-            editor_b.type_verified(
-                "Window B Text\n",
-                expected_line_count_delta=1,
-                verify_contains="Window B Text",
-            )
-            time.sleep(0.3)
-            timeline.record_action("typed_win_b", text="Window B Text")
+                # Focus Win A and type
+                win_a.set_foreground()
+                time.sleep(0.3)
+                editor_a.type_verified(
+                    "Window A Text\n",
+                    expected_line_count_delta=1,
+                    verify_contains="Window A Text",
+                )
 
-            # 5. Assert Final Buffers and Isolation
-            res_a = editor_a.get_value()
-            res_b = editor_b.get_value()
+                # Switch to Win B and interact
+                win_b.set_foreground()
+                time.sleep(0.3)
+                calc_root.find_descendant(automation_id="num7Button").invoke()
 
-            assert "Window A Text" in res_a
-            assert "Window B Text" in res_b
-            assert "Window B Text" not in res_a
-            assert "Window A Text" not in res_b
+                # Switch back to Win A and verify buffer
+                win_a.set_foreground()
+                time.sleep(0.3)
+                res_a = editor_a.get_value()
+                assert "Window A Text" in res_a
 
-            timeline.record_action("isolation_verified", details={"res_a": res_a, "res_b": res_b})
-
-        finally:
-            # 6. Clean up both windows
-            win_a.close(force=True)
-            win_b.close(force=True)
-            for p in (proc_a, proc_b):
-                if p:
+                timeline.record_action("isolation_verified", details={"res_a": res_a})
+            finally:
+                win_a.close(force=True)
+                win_b.close(force=True)
+                if proc_a:
                     try:
-                        p.kill()
+                        proc_a.kill()
                     except Exception:
                         pass
+                if proc_b:
+                    try:
+                        proc_b.kill()
+                    except Exception:
+                        pass
+        else:
+            # 2. On Server, launch second Win32 Notepad Window B
+            timeline.record_action("launch_win_b", text="Launching Notepad Window B")
+            proc_b, win_b = session.launch_and_discover(
+                ["notepad.exe"],
+                timeout=12.0,
+                title_pattern=".*Notepad.*|.*記事本.*|.*记事本.*",
+                exclude_hwnds={win_a.hwnd},
+            )
+            win_b.move_and_resize(580, 50, 500, 400)
+            win_b.set_foreground(verify=False)
+            time.sleep(0.5)
+
+            try:
+                editor_a = find_editor(win_a)
+                editor_b = find_editor(win_b)
+
+                # 3. Focus Window A and Type
+                win_a.set_foreground()
+                time.sleep(0.3)
+                editor_a.type_verified(
+                    "Window A Text\n",
+                    expected_line_count_delta=1,
+                    verify_contains="Window A Text",
+                )
+
+                # 4. Switch to Window B and Type
+                win_b.set_foreground()
+                time.sleep(0.3)
+                editor_b.type_verified(
+                    "Window B Text\n",
+                    expected_line_count_delta=1,
+                    verify_contains="Window B Text",
+                )
+
+                # 5. Assert Buffers
+                res_a = editor_a.get_value()
+                res_b = editor_b.get_value()
+                assert "Window A Text" in res_a
+                assert "Window B Text" in res_b
+                assert "Window B Text" not in res_a
+                assert "Window A Text" not in res_b
+
+                timeline.record_action("isolation_verified", details={"res_a": res_a, "res_b": res_b})
+            finally:
+                win_a.close(force=True)
+                win_b.close(force=True)
+                if proc_a:
+                    try:
+                        proc_a.kill()
+                    except Exception:
+                        pass
+                if proc_b:
+                    try:
+                        proc_b.kill()
+                    except Exception:
+                        pass
+
+    timeline.dump_json(artifacts_dir / "timeline_multiwindow.json")
+    timeline.close()
+
+    assert (artifacts_dir / "timeline_multiwindow.log").exists()
+    assert (artifacts_dir / "timeline_multiwindow.json").exists()
