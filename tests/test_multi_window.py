@@ -89,11 +89,8 @@ def test_multi_window_switching_and_typing():
         time.sleep(0.5)
 
         try:
-            root_a = win_a.re_resolve_element()
-            root_b = win_b.re_resolve_element()
-
-            editor_a = find_editor(root_a)
-            editor_b = find_editor(root_b)
+            editor_a = find_editor(win_a)
+            editor_b = find_editor(win_b)
 
             # 3. Focus Window A and Type: "Window A Text\n"
             win_a.set_foreground()
