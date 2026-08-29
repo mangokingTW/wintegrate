@@ -22,29 +22,23 @@ from wintegrate import (
 )
 
 
-def find_editor(target: Window | UiaElement, timeout: float = 12.0) -> UiaElement:
+def find_editor(target: Window | UiaElement) -> UiaElement:
     """Helper to locate Notepad editor control on any OS version/locale."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    root = target.re_resolve_element() if isinstance(target, Window) else target
+    for cond in [
+        {"name_contains": "Text Editor", "timeout": 2.5},
+        {"control_type_id": 50030, "timeout": 1.5},
+        {"name_contains": "Document", "timeout": 2.0},
+        {"control_type_id": 50004, "timeout": 1.5},
+        {"name_contains": "文字編輯器", "timeout": 1.5},
+        {"name_contains": "文本编辑器", "timeout": 1.5},
+    ]:
         try:
-            root = target.re_resolve_element() if isinstance(target, Window) else target
-            for cond in [
-                {"control_type_id": 50030},  # Edit control (Win32 Notepad / Server)
-                {"control_type_id": 50004},  # Document/Text Editor control (Win11)
-                {"name_contains": "Text Editor"},
-                {"name_contains": "Document"},
-                {"name_contains": "文字編輯器"},
-                {"name_contains": "文本编辑器"},
-            ]:
-                try:
-                    editor = root.find_descendant(**cond, timeout=0.3)
-                    if editor:
-                        return editor
-                except Exception:
-                    pass
+            editor = root.find_descendant(**cond)
+            if editor:
+                return editor
         except Exception:
             pass
-        time.sleep(0.3)
     raise RuntimeError("Could not locate Notepad editor control")
 
 

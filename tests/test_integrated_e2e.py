@@ -57,31 +57,23 @@ def test_live_gui_automation_with_recording():
                 "window_repositioned", window=win, details={"rect": [60, 60, 600, 450]}
             )
 
-            # 5. Direct UIA Element resolution & Find Editor with live retry
+            # 5. Direct UIA Element resolution & Find Editor
+            root = win.re_resolve_element()
             editor = None
-            deadline = time.monotonic() + 12.0
-            while time.monotonic() < deadline:
+            for cond in [
+                {"name_contains": "Text Editor", "timeout": 2.5},
+                {"control_type_id": 50030, "timeout": 1.5},
+                {"name_contains": "Document", "timeout": 2.0},
+                {"control_type_id": 50004, "timeout": 1.5},
+                {"name_contains": "文字編輯器", "timeout": 1.5},
+                {"name_contains": "文本编辑器", "timeout": 1.5},
+            ]:
                 try:
-                    root = win.re_resolve_element()
-                    for cond in [
-                        {"control_type_id": 50030},  # Edit control (Win32 Notepad / Server)
-                        {"control_type_id": 50004},  # Document control (Win11 Notepad)
-                        {"name_contains": "Text Editor"},
-                        {"name_contains": "Document"},
-                        {"name_contains": "文字編輯器"},
-                        {"name_contains": "文本编辑器"},
-                    ]:
-                        try:
-                            editor = root.find_descendant(**cond, timeout=0.3)
-                            if editor:
-                                break
-                        except Exception:
-                            pass
+                    editor = root.find_descendant(**cond)
                     if editor:
                         break
                 except Exception:
                     pass
-                time.sleep(0.3)
             if not editor:
                 raise RuntimeError("Could not locate Notepad editor control")
 
