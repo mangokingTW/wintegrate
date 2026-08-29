@@ -46,6 +46,10 @@ packages = ["src/wintegrate"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "desktop_only: mark test to run only on Windows Desktop / Client editions",
+    "server_only: mark test to run only on Windows Server editions",
+]
 
 [tool.ruff]
 line-length = 100
