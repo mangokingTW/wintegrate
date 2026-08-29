@@ -186,7 +186,7 @@ def inspect_desktop_tree(max_depth: int = 2) -> dict[str, Any]:
             uia = get_uia()
             cond = uia.CreateTrueCondition()
             # TreeScope_Children = 2
-            children = root.raw.FindAll(2, cond)
+            children = root._element.FindAll(2, cond)
             if children:
                 for i in range(min(children.Length, 15)):
                     c = children.GetElement(i)

@@ -1,7 +1,7 @@
 """Integrated live GUI automation and verification test:
-- Launches Calculator application
+- Launches Notepad application
 - Resizes and repositions window
-- Automates UI calculations using reliable UIA interactions
+- Automates UI text input and focus transitions
 - Records action timeline events and continuous screen video
 - Uses Windows 11 isolated clean-room virtual desktop
 """
@@ -39,11 +39,12 @@ def test_live_gui_automation_with_recording():
     with Session(config) as session:
         timeline.record_action("session_entered", details={"fps": 30})
 
-        # 3. Discover or launch live Calculator process
-        timeline.record_action("launch_app", text="Launching calc.exe")
+        # 3. Discover or launch live Notepad process
+        timeline.record_action("launch_app", text="Launching notepad.exe")
         proc, win = session.launch_and_discover(
-            ["calc.exe"],
+            ["notepad.exe"],
             timeout=12.0,
+            title_pattern=".*Notepad.*|.*記事本.*|.*记事本.*",
         )
 
         timeline.record_action(
@@ -52,31 +53,45 @@ def test_live_gui_automation_with_recording():
 
         try:
             # 4. Move and resize window
-            win.move_and_resize(60, 60, 420, 520)
+            win.move_and_resize(60, 60, 600, 450)
             win.set_foreground()
             timeline.record_action(
-                "window_repositioned", window=win, details={"rect": [60, 60, 420, 520]}
+                "window_repositioned", window=win, details={"rect": [60, 60, 600, 450]}
             )
 
-            # 5. Direct UIA Element resolution
+            # 5. Direct UIA Element resolution & Find Editor
             root = win.re_resolve_element()
+            
+            # Find Editor element
+            editor = None
+            for cond in [
+                {"control_type_id": 50004},  # Document/Text Editor control
+                {"name_contains": "Text Editor"},
+                {"name_contains": "Document"},
+                {"control_type_id": 50030},  # Edit control
+            ]:
+                try:
+                    editor = root.find_descendant(**cond, timeout=1.0)
+                    if editor:
+                        break
+                except Exception:
+                    pass
+            if not editor:
+                raise RuntimeError("Could not locate Notepad editor control")
 
-            # 6. Perform verified calculation: 1 + 2 + 3 = 6 (using invoke for high reliability)
-            timeline.record_action("calc_start", details={"expression": "1 + 2 + 3"})
-            root.find_descendant(automation_id="num1Button").invoke()
-            root.find_descendant(automation_id="plusButton").invoke()
-            root.find_descendant(automation_id="num2Button").invoke()
-            root.find_descendant(automation_id="plusButton").invoke()
-            root.find_descendant(automation_id="num3Button").invoke()
-            root.find_descendant(automation_id="equalButton").invoke()
-            time.sleep(0.3)
-            timeline.record_action("calc_success")
+            # 6. Perform verified typing
+            timeline.record_action("type_start", details={"text": "wintegrate ci\n"})
+            editor.type_verified(
+                "wintegrate ci\n",
+                expected_line_count_delta=1,
+                verify_contains="wintegrate ci",
+            )
+            timeline.record_action("type_success")
 
-            # 7. Assert Calculation Result Buffer
-            res_elem = root.find_descendant(automation_id="CalculatorResults")
-            res_val = res_elem.name
-            assert "6" in res_val
-            timeline.record_action("buffer_verified", details={"result": res_val})
+            # 7. Assert text value
+            val = editor.get_value()
+            assert "wintegrate ci" in val
+            timeline.record_action("buffer_verified", details={"result": val})
 
         finally:
             # 8. Clean up

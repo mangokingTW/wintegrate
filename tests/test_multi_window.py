@@ -1,9 +1,9 @@
 """Comprehensive multi-window switching and concurrent automation test with recording:
-- Launches two distinct Calculator instances (Calculator A & Calculator B)
+- Launches two distinct Notepad instances (Notepad A & Notepad B)
 - Positions them side by side
 - Switches foreground focus alternately between Window A and Window B
-- Interacts with controls in each window
-- Verifies calculation and state isolation (Window A state does not leak into Window B)
+- Types verified distinct text into each window
+- Verifies buffer isolation (Window A text does not leak into Window B)
 - Records full timeline events and continuous screen video
 - Uses Windows 11 isolated clean-room virtual desktop
 """
@@ -15,7 +15,25 @@ from wintegrate import (
     Session,
     SessionConfig,
     TextActionTimelineRecorder,
+    UiaElement,
 )
+
+
+def find_editor(root: UiaElement) -> UiaElement:
+    """Helper to locate Notepad editor control on any OS version/locale."""
+    for cond in [
+        {"control_type_id": 50004},  # Document/Text Editor control
+        {"name_contains": "Text Editor"},
+        {"name_contains": "Document"},
+        {"control_type_id": 50030},  # Edit control
+    ]:
+        try:
+            editor = root.find_descendant(**cond, timeout=1.0)
+            if editor:
+                return editor
+        except Exception:
+            pass
+    raise RuntimeError("Could not locate Notepad editor control")
 
 
 def test_multi_window_switching_and_typing():
@@ -24,7 +42,7 @@ def test_multi_window_switching_and_typing():
 
     timeline = TextActionTimelineRecorder(output_path=artifacts_dir / "timeline_multiwindow.log")
     timeline.record_action(
-        "multi_window_suite_start", text="Testing multi-window switching & interaction"
+        "multi_window_suite_start", text="Testing multi-window switching & typing"
     )
 
     config = SessionConfig(
@@ -37,24 +55,26 @@ def test_multi_window_switching_and_typing():
     )
 
     with Session(config) as session:
-        # 1. Launch Calculator A
-        timeline.record_action("launch_win_a", text="Launching Calculator Window A")
+        # 1. Launch Notepad A
+        timeline.record_action("launch_win_a", text="Launching Notepad Window A")
         proc_a, win_a = session.launch_and_discover(
-            ["calc.exe"],
+            ["notepad.exe"],
             timeout=12.0,
+            title_pattern=".*Notepad.*|.*記事本.*|.*记事本.*",
         )
-        win_a.move_and_resize(50, 50, 420, 520)
+        win_a.move_and_resize(50, 50, 500, 400)
         win_a.set_foreground()
         time.sleep(0.5)
 
-        # 2. Launch Calculator B (exclude win_a.hwnd so discovery never confuses the two)
-        timeline.record_action("launch_win_b", text="Launching Calculator Window B")
+        # 2. Launch Notepad B (exclude win_a.hwnd so discovery never confuses the two)
+        timeline.record_action("launch_win_b", text="Launching Notepad Window B")
         proc_b, win_b = session.launch_and_discover(
-            ["cmd.exe", "/c", "start", "calc.exe"],
+            ["notepad.exe"],
             timeout=12.0,
+            title_pattern=".*Notepad.*|.*記事本.*|.*记事本.*",
             exclude_hwnds={win_a.hwnd},
         )
-        win_b.move_and_resize(500, 50, 420, 520)
+        win_b.move_and_resize(580, 50, 500, 400)
         win_b.set_foreground()
         time.sleep(0.5)
 
@@ -62,36 +82,43 @@ def test_multi_window_switching_and_typing():
             root_a = win_a.re_resolve_element()
             root_b = win_b.re_resolve_element()
 
-            # 3. Focus Window A and Perform Calculation: 7 + 8 = 15
+            editor_a = find_editor(root_a)
+            editor_b = find_editor(root_b)
+
+            # 3. Focus Window A and Type: "Window A Text\n"
             win_a.set_foreground()
             time.sleep(0.3)
             timeline.record_action("focus_win_a", window=win_a)
 
-            root_a.find_descendant(automation_id="num7Button").invoke()
-            root_a.find_descendant(automation_id="plusButton").invoke()
-            root_a.find_descendant(automation_id="num8Button").invoke()
-            root_a.find_descendant(automation_id="equalButton").invoke()
+            editor_a.type_verified(
+                "Window A Text\n",
+                expected_line_count_delta=1,
+                verify_contains="Window A Text",
+            )
             time.sleep(0.3)
-            timeline.record_action("calc_win_a", text="7 + 8")
+            timeline.record_action("typed_win_a", text="Window A Text")
 
-            # 4. Switch to Window B and Perform Calculation: 9 + 9 = 18
+            # 4. Switch to Window B and Type: "Window B Text\n"
             win_b.set_foreground()
             time.sleep(0.3)
             timeline.record_action("focus_win_b", window=win_b)
 
-            root_b.find_descendant(automation_id="num9Button").invoke()
-            root_b.find_descendant(automation_id="plusButton").invoke()
-            root_b.find_descendant(automation_id="num9Button").invoke()
-            root_b.find_descendant(automation_id="equalButton").invoke()
+            editor_b.type_verified(
+                "Window B Text\n",
+                expected_line_count_delta=1,
+                verify_contains="Window B Text",
+            )
             time.sleep(0.3)
-            timeline.record_action("calc_win_b", text="9 + 9")
+            timeline.record_action("typed_win_b", text="Window B Text")
 
             # 5. Assert Final Buffers and Isolation
-            res_a = root_a.find_descendant(automation_id="CalculatorResults").name
-            res_b = root_b.find_descendant(automation_id="CalculatorResults").name
+            res_a = editor_a.get_value()
+            res_b = editor_b.get_value()
 
-            assert "15" in res_a
-            assert "18" in res_b
+            assert "Window A Text" in res_a
+            assert "Window B Text" in res_b
+            assert "Window B Text" not in res_a
+            assert "Window A Text" not in res_b
 
             timeline.record_action("isolation_verified", details={"res_a": res_a, "res_b": res_b})
 
