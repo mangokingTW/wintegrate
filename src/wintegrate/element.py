@@ -18,7 +18,7 @@ from wintegrate.interop import (
     WM_GETTEXT,
     WM_GETTEXTLENGTH,
     attach_to_input_desktop,
-    send_unicode_char,
+    send_char_input,
     user32,
 )
 from wintegrate.text import count_lines, normalize_line_endings
@@ -308,7 +308,7 @@ class UiaElement:
         timeout: float = 8.0,
     ) -> bool:
         """
-        Sends hardware keypresses via native Win32 SendInput KEYEVENTF_UNICODE (x64 / ARM64 universal),
+        Sends hardware keypresses via send_char_input (SendInput + WM_CHAR fallback),
         and asserts verified text mutation.
         """
         self.set_focus()
@@ -317,9 +317,9 @@ class UiaElement:
         initial_text = self.get_value()
         initial_lines = count_lines(initial_text)
 
-        # Send unicode characters using native Win32 SendInput
+        # Send characters with handle target fallback
         for char in text:
-            send_unicode_char(char)
+            send_char_input(char, hwnd_target=self.handle)
             if delay_per_char > 0:
                 time.sleep(delay_per_char)
 

@@ -58,6 +58,12 @@ KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_SCANCODE = 0x0008
 
+# Virtual Key Codes
+VK_RETURN = 0x0D
+VK_TAB = 0x09
+VK_SPACE = 0x20
+VK_BACK = 0x08
+
 
 class RECT(ctypes.Structure):
     _fields_ = [
@@ -173,21 +179,39 @@ user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 user32.SendInput.restype = wintypes.UINT
 
 
-def send_unicode_char(char: str):
-    """Sends a unicode character reliably using native Win32 SendInput (KEYEVENTF_UNICODE)."""
-    val = ord(char)
-    if val == 10:  # LF
-        val = 13  # CR for Enter in Edit controls
-    inp_down = INPUT(
-        type=INPUT_KEYBOARD,
-        u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE, time=0, dwExtraInfo=0)),
-    )
-    inp_up = INPUT(
-        type=INPUT_KEYBOARD,
-        u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
-    )
-    arr = (INPUT * 2)(inp_down, inp_up)
-    user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+def send_char_input(char: str, hwnd_target: int = 0):
+    """
+    Sends character input reliably across both x64 and ARM64 Windows.
+    Uses SendInput with fallback to PostMessageW WM_CHAR if window handle is provided.
+    """
+    if char == "\n" or char == "\r":
+        # Press Enter key via VK_RETURN
+        inp_down = INPUT(
+            type=INPUT_KEYBOARD,
+            u=_INPUT_UNION(ki=KEYBDINPUT(wVk=VK_RETURN, wScan=0x1C, dwFlags=0, time=0, dwExtraInfo=0)),
+        )
+        inp_up = INPUT(
+            type=INPUT_KEYBOARD,
+            u=_INPUT_UNION(ki=KEYBDINPUT(wVk=VK_RETURN, wScan=0x1C, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
+        )
+        arr = (INPUT * 2)(inp_down, inp_up)
+        user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+        if hwnd_target:
+            user32.PostMessageW(hwnd_target, WM_CHAR, 0x0D, 0)
+    else:
+        val = ord(char)
+        inp_down = INPUT(
+            type=INPUT_KEYBOARD,
+            u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE, time=0, dwExtraInfo=0)),
+        )
+        inp_up = INPUT(
+            type=INPUT_KEYBOARD,
+            u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=val, dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
+        )
+        arr = (INPUT * 2)(inp_down, inp_up)
+        user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+        if hwnd_target:
+            user32.PostMessageW(hwnd_target, WM_CHAR, val, 0)
 
 
 def get_input_desktop_handle() -> wintypes.HANDLE | None:
