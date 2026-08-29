@@ -16,6 +16,12 @@ from wintegrate.exceptions import (
     DiagnosticPipelineError,
 )
 from wintegrate.diagnostics import ContinuousRecorder, WindowCensus, WindowSnapshot, CensusDiff
+from wintegrate.recorder import (
+    RecordedAction,
+    TextActionTimelineRecorder,
+    ActionPlayer,
+    inspect_desktop_tree,
+)
 
 __all__ = [
     "Session",
@@ -35,4 +41,8 @@ __all__ = [
     "WindowCensus",
     "WindowSnapshot",
     "CensusDiff",
+    "RecordedAction",
+    "TextActionTimelineRecorder",
+    "ActionPlayer",
+    "inspect_desktop_tree",
 ]
