@@ -18,6 +18,7 @@ from wintegrate.diagnostics import (
     capture_screen_image,
 )
 from wintegrate.element import UiaElement
+from wintegrate.env import env
 from wintegrate.interop import (
     SW_HIDE,
     WNDENUMPROC,
@@ -36,10 +37,31 @@ class SessionConfig:
     artifact_dir: str | Path = "artifacts"
     record_video: bool = True
     fps: int = 30
-    sanitize_runner: bool = False
+    sanitize_runner: bool | str = "auto"
     default_timeout: float = 15.0
-    dismiss_oobe: bool = True
-    isolated_virtual_desktop: bool = False
+    dismiss_oobe: bool | str = "auto"
+    isolated_virtual_desktop: bool | str = "auto"
+
+    @property
+    def should_sanitize_runner(self) -> bool:
+        if isinstance(self.sanitize_runner, str) and self.sanitize_runner.lower() == "auto":
+            return env.is_desktop
+        return bool(self.sanitize_runner)
+
+    @property
+    def should_dismiss_oobe(self) -> bool:
+        if isinstance(self.dismiss_oobe, str) and self.dismiss_oobe.lower() == "auto":
+            return env.is_desktop
+        return bool(self.dismiss_oobe)
+
+    @property
+    def should_isolate_virtual_desktop(self) -> bool:
+        if (
+            isinstance(self.isolated_virtual_desktop, str)
+            and self.isolated_virtual_desktop.lower() == "auto"
+        ):
+            return env.supports_virtual_desktops
+        return bool(self.isolated_virtual_desktop)
 
 
 def sanitize_ci_runner_environment():
@@ -205,16 +227,16 @@ class Session:
         logger.info("Starting Wintegrate UI automation session...")
         attach_to_input_desktop()
 
-        if self.config.dismiss_oobe:
+        if self.config.should_dismiss_oobe:
             try_dismiss_oobe_privacy_screen(timeout=3.0)
 
-        if self.config.isolated_virtual_desktop:
+        if self.config.should_isolate_virtual_desktop:
             self._setup_isolated_virtual_desktop()
 
-        if self.config.sanitize_runner:
+        if self.config.should_sanitize_runner:
             sanitize_ci_runner_environment()
 
-        if self.config.dismiss_oobe:
+        if self.config.should_dismiss_oobe:
             try_dismiss_oobe_privacy_screen(timeout=3.0)
 
         # Capture baseline window state
@@ -296,7 +318,7 @@ class Session:
             self._capture_failure_screenshot()
 
         # Teardown isolated virtual desktop if configured
-        if self.config.isolated_virtual_desktop:
+        if self.config.should_isolate_virtual_desktop:
             self._teardown_isolated_virtual_desktop()
 
         # Flush session logs

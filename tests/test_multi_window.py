@@ -54,8 +54,6 @@ def test_multi_window_switching_and_typing():
         artifact_dir=artifacts_dir,
         record_video=True,
         fps=30,
-        sanitize_runner=False,
-        isolated_virtual_desktop=False,
         default_timeout=15.0,
     )
 

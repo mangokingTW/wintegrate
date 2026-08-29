@@ -26,13 +26,11 @@ def test_live_gui_automation_with_recording():
     timeline = TextActionTimelineRecorder(output_path=artifacts_dir / "timeline.log")
     timeline.record_action("suite_init", text="Starting live GUI automation & recording test")
 
-    # 2. Configure session with continuous screen recording and window census
+    # 2. Configure session with continuous screen recording and adaptive platform auto-isolation
     config = SessionConfig(
         artifact_dir=artifacts_dir,
         record_video=True,
         fps=30,
-        sanitize_runner=False,
-        isolated_virtual_desktop=False,
         default_timeout=15.0,
     )
 

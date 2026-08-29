@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from wintegrate.diagnostics import CensusDiff, ContinuousRecorder, WindowCensus, WindowSnapshot
 from wintegrate.element import UiaElement
+from wintegrate.env import (
+    PlatformCapabilities,
+    desktop_only,
+    env,
+    is_windows_desktop,
+    is_windows_server,
+    server_only,
+)
 from wintegrate.exceptions import (
     ActionVerificationError,
     DiagnosticPipelineError,
@@ -28,6 +36,12 @@ __all__ = [
     "SessionConfig",
     "Window",
     "UiaElement",
+    "env",
+    "PlatformCapabilities",
+    "is_windows_server",
+    "is_windows_desktop",
+    "desktop_only",
+    "server_only",
     "normalize_line_endings",
     "count_lines",
     "WintegrateError",

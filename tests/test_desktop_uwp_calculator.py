@@ -7,11 +7,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from conftest import desktop_only
 from wintegrate import (
     Session,
     SessionConfig,
     TextActionTimelineRecorder,
+    desktop_only,
 )
 
 
