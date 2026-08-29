@@ -33,7 +33,7 @@ jobs:
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-artifacts-x64-py${{ matrix.python-version }}
           path: |
@@ -87,7 +87,7 @@ jobs:
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-artifacts-arm64-py${{ matrix.python-version }}
           path: |
