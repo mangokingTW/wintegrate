@@ -15,10 +15,10 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -29,7 +29,7 @@ jobs:
 
       - name: Run unit & regression tests
         run: |
-          pytest tests/test_text_and_exceptions.py tests/test_census.py -v
+          pytest tests/ -v
 
       - name: Upload diagnostic artifacts on failure
         if: failure()
@@ -45,14 +45,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Note: GitHub Actions setup-python only provides official Windows ARM64 builds for Python 3.11+
+        # GitHub Actions setup-python provides official Windows ARM64 builds for Python 3.11+
         python-version: ["3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -63,7 +63,7 @@ jobs:
 
       - name: Run unit & regression tests
         run: |
-          pytest tests/test_text_and_exceptions.py tests/test_census.py -v
+          pytest tests/ -v
 
       - name: Upload diagnostic artifacts on failure
         if: failure()
