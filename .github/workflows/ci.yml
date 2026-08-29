@@ -31,14 +31,38 @@ jobs:
         run: |
           pytest tests/ -v
 
-      - name: Upload diagnostic artifacts on failure
-        if: failure()
+      - name: Generate Desktop Recording & Artifacts
+        run: |
+          python -c "import time; from pathlib import Path; from wintegrate import Session, SessionConfig, TextActionTimelineRecorder; out = Path('recording-artifacts'); out.mkdir(exist_ok=True); rec = TextActionTimelineRecorder(out / 'timeline.log'); rec.record_action('session_init', text='Recording test demo'); rec.record_action('capture_sample', details={'fps': 30}); rec.close(); cfg = SessionConfig(artifact_dir=out, record_video=True, fps=30, sanitize_runner=False); session = Session(cfg); session.__enter__(); time.sleep(2.0); session.__exit__(None, None, None)"
+
+      - name: Upload Recording Artifacts & Failure Diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-failure-diagnostics-x64-py${{ matrix.python-version }}
+          name: recording-artifacts-x64-py${{ matrix.python-version }}
           path: |
+            recording-artifacts/
             artifacts/
           if-no-files-found: ignore
+
+      - name: Append Recording Summary to Step Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = "### 🎥 Video & Action Recording Summary (x64 - Python ${{ matrix.python-version }})`n`n"
+          if (Test-Path "recording-artifacts/session_recording.mp4") {
+            $size = (Get-Item "recording-artifacts/session_recording.mp4").Length / 1KB
+            $summary += "- ✅ **Video Recording**: `session_recording.mp4` (${size:N1} KB)`n"
+          } else {
+            $summary += "- ⚠️ **Video Recording**: No MP4 produced (FFmpeg unavailable on runner)`n"
+          }
+          if (Test-Path "recording-artifacts/timeline.log") {
+            $summary += "- 📝 **Action Timeline**: `timeline.log``n"
+          }
+          if (Test-Path "recording-artifacts/window_census.json") {
+            $summary += "- 🪟 **Window Census**: `window_census.json``n"
+          }
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
   test-arm64:
     runs-on: windows-11-arm
@@ -65,11 +89,35 @@ jobs:
         run: |
           pytest tests/ -v
 
-      - name: Upload diagnostic artifacts on failure
-        if: failure()
+      - name: Generate Desktop Recording & Artifacts
+        run: |
+          python -c "import time; from pathlib import Path; from wintegrate import Session, SessionConfig, TextActionTimelineRecorder; out = Path('recording-artifacts'); out.mkdir(exist_ok=True); rec = TextActionTimelineRecorder(out / 'timeline.log'); rec.record_action('session_init', text='Recording test demo'); rec.record_action('capture_sample', details={'fps': 30}); rec.close(); cfg = SessionConfig(artifact_dir=out, record_video=True, fps=30, sanitize_runner=False); session = Session(cfg); session.__enter__(); time.sleep(2.0); session.__exit__(None, None, None)"
+
+      - name: Upload Recording Artifacts & Failure Diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-failure-diagnostics-arm64-py${{ matrix.python-version }}
+          name: recording-artifacts-arm64-py${{ matrix.python-version }}
           path: |
+            recording-artifacts/
             artifacts/
           if-no-files-found: ignore
+
+      - name: Append Recording Summary to Step Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = "### 🎥 Video & Action Recording Summary (ARM64 - Python ${{ matrix.python-version }})`n`n"
+          if (Test-Path "recording-artifacts/session_recording.mp4") {
+            $size = (Get-Item "recording-artifacts/session_recording.mp4").Length / 1KB
+            $summary += "- ✅ **Video Recording**: `session_recording.mp4` (${size:N1} KB)`n"
+          } else {
+            $summary += "- ⚠️ **Video Recording**: No MP4 produced (FFmpeg unavailable on runner)`n"
+          }
+          if (Test-Path "recording-artifacts/timeline.log") {
+            $summary += "- 📝 **Action Timeline**: `timeline.log``n"
+          }
+          if (Test-Path "recording-artifacts/window_census.json") {
+            $summary += "- 🪟 **Window Census**: `window_census.json``n"
+          }
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
