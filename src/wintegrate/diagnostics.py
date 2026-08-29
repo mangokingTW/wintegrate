@@ -199,10 +199,18 @@ class ContinuousRecorder:
         if self._proc:
             try:
                 if self._proc.stdin:
-                    self._proc.stdin.close()
+                    try:
+                        self._proc.stdin.close()
+                    except (OSError, BrokenPipeError):
+                        pass
                 self._proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
+            except (subprocess.TimeoutExpired, OSError, BrokenPipeError):
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            except Exception as exc:
+                logger.debug(f"ContinuousRecorder process cleanup warning ({type(exc).__name__}): {exc}")
             finally:
                 self._proc = None
 

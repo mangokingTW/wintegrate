@@ -45,13 +45,15 @@ class SessionConfig:
     @property
     def should_sanitize_runner(self) -> bool:
         if isinstance(self.sanitize_runner, str) and self.sanitize_runner.lower() == "auto":
-            return env.is_desktop
+            is_ci = bool(os.getenv("CI") or os.getenv("GITHUB_ACTIONS"))
+            return env.is_desktop and is_ci
         return bool(self.sanitize_runner)
 
     @property
     def should_dismiss_oobe(self) -> bool:
         if isinstance(self.dismiss_oobe, str) and self.dismiss_oobe.lower() == "auto":
-            return env.is_desktop
+            is_ci = bool(os.getenv("CI") or os.getenv("GITHUB_ACTIONS"))
+            return env.is_desktop and is_ci
         return bool(self.dismiss_oobe)
 
     @property
@@ -67,15 +69,25 @@ class SessionConfig:
 def sanitize_ci_runner_environment():
     """
     Cleans up known GitHub Actions CI runner hazards:
-    1. Terminates background WSL, Windows Terminal, and Edge popups without touching current runner PID.
+    1. Terminates background WSL, Windows Terminal, and Edge popups without touching current runner PID or parents.
     2. Minimizes background windows (excluding current test runner process).
     """
     attach_to_input_desktop()
-    curr_pid = os.getpid()
+    excluded_pids = {os.getpid()}
+    try:
+        import psutil
+
+        p = psutil.Process(os.getpid())
+        for parent in p.parents():
+            excluded_pids.add(parent.pid)
+    except Exception:
+        pass
+
+    pid_list_str = ",".join(str(pid) for pid in excluded_pids)
 
     # 1. Kill noisy background prompts (excluding our own process hierarchy)
     try:
-        ps_cmd = f"Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {curr_pid} }} | Stop-Process -Force -ErrorAction SilentlyContinue"
+        ps_cmd = f"Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
         )

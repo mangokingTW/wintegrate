@@ -6,13 +6,33 @@ import ctypes
 import logging
 from ctypes import wintypes
 
+import sys
+
 logger = logging.getLogger(__name__)
 
 # Native DLL handles
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
-imm32 = ctypes.windll.imm32
-gdi32 = ctypes.windll.gdi32
+if sys.platform == "win32":
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    imm32 = ctypes.windll.imm32
+    gdi32 = ctypes.windll.gdi32
+else:
+    class _MockDll:
+        def __getattr__(self, name):
+            class _MockFunc:
+                def __init__(self):
+                    self.argtypes = []
+                    self.restype = None
+
+                def __call__(self, *args, **kwargs):
+                    return 0
+
+            return _MockFunc()
+
+    user32 = _MockDll()
+    kernel32 = _MockDll()
+    imm32 = _MockDll()
+    gdi32 = _MockDll()
 
 # Window Show / Sizing Constants
 SW_HIDE = 0
@@ -197,6 +217,9 @@ user32.SetActiveWindow.restype = wintypes.HWND
 
 user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
 user32.SetCursorPos.restype = wintypes.BOOL
+
+user32.GetForegroundWindow.argtypes = []
+user32.GetForegroundWindow.restype = wintypes.HWND
 
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 

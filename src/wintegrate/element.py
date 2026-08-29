@@ -12,6 +12,7 @@ import comtypes.client
 from wintegrate.exceptions import (
     ActionVerificationError,
     ElementNotFoundError,
+    FocusStealDetectedError,
     TextMismatchError,
 )
 from wintegrate.interop import (
@@ -351,7 +352,7 @@ class UiaElement:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             cur = self.get_value()
-            if cur == text:
+            if normalize_line_endings(cur) == normalize_line_endings(text):
                 return True
             time.sleep(0.05)
 
@@ -394,11 +395,16 @@ class UiaElement:
         Sends hardware keypresses via send_char_input (SendInput KEYEVENTF_UNICODE),
         and asserts verified text mutation.
         """
-        self.set_focus()
-        time.sleep(0.2)
+        if not self.set_focus(timeout=1.0):
+            raise FocusStealDetectedError(f"Failed to focus element {self} before sending keystrokes")
+        time.sleep(0.1)
 
         initial_text = self.get_value()
-        initial_lines = count_lines(initial_text)
+        initial_lines = count_lines(initial_text) if initial_text else 1
+
+        target_verify_contains = verify_contains
+        if expected_line_count_delta == 0 and target_verify_contains is None:
+            target_verify_contains = text.strip() if text.strip() else text
 
         # Send characters using SendInput
         for char in text:
@@ -409,7 +415,7 @@ class UiaElement:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             current_text = self.get_value()
-            current_lines = count_lines(current_text)
+            current_lines = count_lines(current_text) if current_text else 1
 
             verified = True
             if expected_line_count_delta != 0:
@@ -417,9 +423,9 @@ class UiaElement:
                 if actual_delta != expected_line_count_delta:
                     verified = False
 
-            if verify_contains is not None:
+            if target_verify_contains is not None:
                 norm_current = normalize_line_endings(current_text)
-                norm_expected = normalize_line_endings(verify_contains)
+                norm_expected = normalize_line_endings(target_verify_contains)
                 if norm_expected not in norm_current:
                     verified = False
 
@@ -436,9 +442,18 @@ class UiaElement:
                 val_pat.SetValue(initial_text + text)
                 time.sleep(0.2)
                 current_text = self.get_value()
-                if verify_contains and (
-                    normalize_line_endings(verify_contains) in normalize_line_endings(current_text)
-                ):
+                current_lines = count_lines(current_text) if current_text else 1
+                fallback_verified = True
+                if target_verify_contains is not None:
+                    if (
+                        normalize_line_endings(target_verify_contains)
+                        not in normalize_line_endings(current_text)
+                    ):
+                        fallback_verified = False
+                if expected_line_count_delta != 0:
+                    if current_lines - initial_lines != expected_line_count_delta:
+                        fallback_verified = False
+                if fallback_verified:
                     return True
         except Exception:
             pass
@@ -446,5 +461,5 @@ class UiaElement:
         final_text = self.get_value()
         raise TextMismatchError(
             f"type_verified failed. Expected delta {expected_line_count_delta} lines (had {initial_lines}, got {count_lines(final_text)} lines), "
-            f"contains='{verify_contains}'. Final buffer: '{final_text}'"
+            f"contains='{target_verify_contains}'. Final buffer: '{final_text}'"
         )

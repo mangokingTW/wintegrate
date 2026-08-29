@@ -12,11 +12,14 @@ from typing import Any
 
 from wintegrate.diagnostics import WindowCensus
 from wintegrate.element import UiaElement, get_uia
+from wintegrate.exceptions import ActionVerificationError
 from wintegrate.interop import (
     attach_to_input_desktop,
     get_foreground_window,
     get_window_title,
+    send_char_input,
 )
+from wintegrate.text import normalize_line_endings
 from wintegrate.window import Window
 
 logger = logging.getLogger(__name__)
@@ -160,8 +163,21 @@ class ActionPlayer:
                 elem.type_verified(action.text_content)
             elif action.action_type == "invoke" and elem:
                 elem.invoke()
+            elif action.action_type == "click" and elem:
+                elem.click()
+            elif action.action_type == "key_press" and action.text_content:
+                if elem:
+                    elem.set_focus()
+                for ch in action.text_content:
+                    send_char_input(ch)
             elif action.action_type == "set_focus" and elem:
                 elem.set_focus()
+            elif action.action_type == "assert_text" and elem and action.text_content:
+                val = elem.get_value()
+                if normalize_line_endings(action.text_content) not in normalize_line_endings(val):
+                    raise ActionVerificationError(
+                        f"assert_text failed: '{action.text_content}' not found in '{val}'"
+                    )
 
 
 def inspect_desktop_tree(max_depth: int = 2) -> dict[str, Any]:
