@@ -9,6 +9,10 @@ build/
 .coverage
 htmlcov/
 artifacts/
+recording-artifacts/
+tmp-*/
 *.log
 *.mp4
 *.webp
+*.png
+scratch_debug_*.py
