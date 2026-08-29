@@ -75,16 +75,14 @@ def get_uia() -> IUIAutomation:
 
 class UiaElement:
     """
-    Direct wrapper around raw IUIAutomationElement.
-    Exposes direct UIA patterns and properties without arbitrary control-type wrappers.
+    Thin, robust wrapper directly over IUIAutomationElement COM interface.
+    No fragile UI control class hierarchies.
     """
 
-    def __init__(self, raw_element: IUIAutomationElement):
-        self._element = raw_element
-
-    @property
-    def raw(self) -> IUIAutomationElement:
-        return self._element
+    def __init__(self, element: IUIAutomationElement):
+        if element is None:
+            raise ValueError("IUIAutomationElement cannot be None")
+        self._element = element
 
     @property
     def name(self) -> str:
@@ -143,24 +141,29 @@ class UiaElement:
         uia = get_uia()
         elem = uia.ElementFromHandle(hwnd)
         if not elem:
-            raise ElementNotFoundError(f"Failed to resolve UIA element from HWND {hwnd}")
+            raise ElementNotFoundError(f"Cannot resolve UIA element from HWND: {hwnd}")
+        return cls(elem)
+
+    @classmethod
+    def get_root(cls) -> UiaElement:
+        """Resolves the Desktop RootElement directly."""
+        uia = get_uia()
+        elem = uia.GetRootElement()
+        if not elem:
+            raise ElementNotFoundError("Cannot resolve UIA Desktop RootElement")
         return cls(elem)
 
     @classmethod
     def get_focused(cls) -> UiaElement:
-        """
-        Retrieves the currently focused UIA element directly.
-        Essential fallback for OOBE / CoreWindow webview containers where top-down
-        Descendants enumeration fails.
-        """
+        """Resolves the currently focused UIA element."""
         uia = get_uia()
         elem = uia.GetFocusedElement()
         if not elem:
-            raise ElementNotFoundError("No element currently has UIA focus")
+            raise ElementNotFoundError("Cannot resolve UIA FocusedElement")
         return cls(elem)
 
     def get_parent(self) -> UiaElement | None:
-        """Returns the parent UIA element using ControlViewWalker."""
+        """Navigates to the parent element using UIA ControlViewWalker."""
         try:
             uia = get_uia()
             walker = uia.ControlViewWalker
@@ -215,7 +218,7 @@ class UiaElement:
         control_type_id: int | None = None,
         timeout: float = 5.0,
     ) -> UiaElement:
-        """Finds a descendant matching criteria within a bounded timeout."""
+        """Finds a descendant matching criteria within a bounded timeout, with RawViewWalker fallback."""
         deadline = time.monotonic() + timeout
         uia = get_uia()
 
@@ -260,6 +263,33 @@ class UiaElement:
                                 or name_contains.lower() in c_type_name.lower()
                             ):
                                 return UiaElement(child)
+                except Exception:
+                    pass
+
+            # Fallback for UWP/XAML isolated controls via RawViewWalker
+            if automation_id:
+                try:
+                    walker = uia.RawViewWalker
+
+                    def search_walker(node, depth=0):
+                        if depth > 10 or not node:
+                            return None
+                        try:
+                            if node.CurrentAutomationId == automation_id:
+                                return node
+                        except Exception:
+                            pass
+                        child = walker.GetFirstChildElement(node)
+                        while child:
+                            res = search_walker(child, depth + 1)
+                            if res:
+                                return res
+                            child = walker.GetNextSiblingElement(child)
+                        return None
+
+                    raw_found = search_walker(self._element)
+                    if raw_found:
+                        return UiaElement(raw_found)
                 except Exception:
                     pass
 
