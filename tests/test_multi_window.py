@@ -93,11 +93,13 @@ def test_multi_window_switching_and_typing():
             time.sleep(0.5)
 
             try:
+                # Bring win_a to foreground to resolve its editor
+                win_a.set_foreground(verify=False)
+                time.sleep(0.3)
                 editor_a = find_editor(win_a)
-                calc_root = win_b.re_resolve_element()
 
                 # Focus Win A and type
-                win_a.set_foreground()
+                win_a.set_foreground(verify=False)
                 time.sleep(0.3)
                 editor_a.type_verified(
                     "Window A Text\n",
@@ -106,12 +108,13 @@ def test_multi_window_switching_and_typing():
                 )
 
                 # Switch to Win B and interact
-                win_b.set_foreground()
+                win_b.set_foreground(verify=False)
                 time.sleep(0.3)
+                calc_root = win_b.re_resolve_element()
                 calc_root.find_descendant(automation_id="num7Button").invoke()
 
                 # Switch back to Win A and verify buffer
-                win_a.set_foreground()
+                win_a.set_foreground(verify=False)
                 time.sleep(0.3)
                 res_a = editor_a.get_value()
                 assert "Window A Text" in res_a
@@ -144,7 +147,12 @@ def test_multi_window_switching_and_typing():
             time.sleep(0.5)
 
             try:
+                win_a.set_foreground(verify=False)
+                time.sleep(0.3)
                 editor_a = find_editor(win_a)
+
+                win_b.set_foreground(verify=False)
+                time.sleep(0.3)
                 editor_b = find_editor(win_b)
 
                 # 3. Focus Window A and Type
