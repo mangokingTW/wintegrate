@@ -59,18 +59,24 @@ def test_multi_window_switching_and_typing():
         time.sleep(0.5)
 
         try:
-            # 3. Locate editors
+            # 3. Locate editors using control_type_id=50004 (Document) or edit control fallback
             root_a = win_a.re_resolve_element()
             try:
-                editor_a = root_a.find_descendant(name_contains="Text Editor", timeout=3.0)
+                editor_a = root_a.find_descendant(control_type_id=50004, timeout=3.0)
             except Exception:
-                editor_a = root_a.find_descendant(name_contains="Document", timeout=3.0)
+                try:
+                    editor_a = root_a.find_descendant(control_type_id=50004, timeout=3.0)
+                except Exception:
+                    editor_a = root_a.find_descendant(name_contains="Text Editor", timeout=3.0)
 
             root_b = win_b.re_resolve_element()
             try:
-                editor_b = root_b.find_descendant(name_contains="Text Editor", timeout=3.0)
+                editor_b = root_b.find_descendant(control_type_id=50004, timeout=3.0)
             except Exception:
-                editor_b = root_b.find_descendant(name_contains="Document", timeout=3.0)
+                try:
+                    editor_b = root_b.find_descendant(control_type_id=50004, timeout=3.0)
+                except Exception:
+                    editor_b = root_b.find_descendant(name_contains="Text Editor", timeout=3.0)
 
             # 4. Focus Window A and Type Text A
             win_a.set_foreground()

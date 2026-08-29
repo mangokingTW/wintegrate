@@ -62,9 +62,12 @@ def test_live_gui_automation_with_recording():
             # 5. Direct UIA Element resolution
             root = win.re_resolve_element()
             try:
-                editor = root.find_descendant(name_contains="Text Editor", timeout=5.0)
+                editor = root.find_descendant(control_type_id=50004, timeout=5.0)
             except Exception:
-                editor = root.find_descendant(name_contains="Document", timeout=5.0)
+                try:
+                    editor = root.find_descendant(name_contains="Text Editor", timeout=5.0)
+                except Exception:
+                    editor = root.find_descendant(name_contains="Document", timeout=5.0)
 
             timeline.record_action("editor_located", target=editor)
 

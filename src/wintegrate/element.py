@@ -116,6 +116,13 @@ class UiaElement:
             return ""
 
     @property
+    def control_type_id(self) -> int:
+        try:
+            return self._element.CurrentControlType or 0
+        except Exception:
+            return 0
+
+    @property
     def handle(self) -> int:
         try:
             return self._element.CurrentNativeWindowHandle or 0
@@ -175,6 +182,7 @@ class UiaElement:
         automation_id: str | None = None,
         name_contains: str | None = None,
         name_exact: str | None = None,
+        control_type_id: int | None = None,
         timeout: float = 5.0,
     ) -> UiaElement:
         """Finds a descendant matching criteria within a bounded timeout."""
@@ -192,6 +200,10 @@ class UiaElement:
             if name_exact:
                 prop_id = 30005  # UIA_NamePropertyId
                 cond = uia.CreatePropertyCondition(prop_id, name_exact)
+                conditions.append(cond)
+            if control_type_id:
+                prop_id = 30003  # UIA_ControlTypePropertyId
+                cond = uia.CreatePropertyCondition(prop_id, control_type_id)
                 conditions.append(cond)
 
             if conditions:
@@ -218,7 +230,11 @@ class UiaElement:
                         for i in range(arr.Length):
                             child = arr.GetElement(i)
                             c_name = child.CurrentName or ""
-                            if name_contains.lower() in c_name.lower():
+                            c_type_name = child.CurrentLocalizedControlType or ""
+                            if (
+                                name_contains.lower() in c_name.lower()
+                                or name_contains.lower() in c_type_name.lower()
+                            ):
                                 return UiaElement(child)
                 except Exception:
                     pass
