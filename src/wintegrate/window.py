@@ -172,9 +172,15 @@ class Window:
                         continue
                     return proc, cls(snap.hwnd, snap.pid)
 
-            # Fallback: check all currently visible windows matching criteria
+            # Fallback 1: newly added window that might become visible
+            for snap in diff.added:
+                if snap.hwnd not in excluded:
+                    if compiled_re and compiled_re.search(snap.title):
+                        return proc, cls(snap.hwnd, snap.pid)
+
+            # Fallback 2: check all currently visible windows matching criteria
             for snap in after:
-                if snap.is_visible and snap.hwnd not in excluded:
+                if snap.is_visible and snap.hwnd not in excluded and snap.hwnd not in {b.hwnd for b in before}:
                     if compiled_re and compiled_re.search(snap.title):
                         return proc, cls(snap.hwnd, snap.pid)
 

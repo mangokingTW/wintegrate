@@ -5,6 +5,7 @@
 - Types verified distinct text into each window
 - Verifies buffer isolation (Window A text does not leak into Window B)
 - Records full timeline events and continuous screen video
+- Uses Windows 11 isolated clean-room virtual desktop
 """
 
 import time
@@ -29,6 +30,7 @@ def test_multi_window_switching_and_typing():
         record_video=True,
         fps=30,
         sanitize_runner=True,
+        isolated_virtual_desktop=True,
         default_timeout=15.0,
     )
 

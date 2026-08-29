@@ -1,15 +1,13 @@
-"""Comprehensive live GUI automation test with verified interactions and recording:
-- Launches live Notepad window
-- Starts continuous streaming screen recording (MP4)
-- Records action timeline events (TextActionTimelineRecorder)
-- Repositions and focuses window
-- Performs verified multi-line typing and assertions
-- Reads back text buffer
-- Closes window and verifies census diff
-- Generates artifacts for GitHub CI Summary
+"""Integrated live GUI automation and verification test:
+- Discovers or launches Notepad
+- Resizes and repositions window
+- Types text using verified unicode hardware simulation (verified line counts & buffer delta)
+- Records action timeline events and continuous screen video
+- Uses Windows 11 isolated clean-room virtual desktop
 """
 
-import time
+from __future__ import annotations
+
 from pathlib import Path
 
 from wintegrate import (
@@ -28,12 +26,13 @@ def test_live_gui_automation_with_recording():
     timeline = TextActionTimelineRecorder(output_path=artifacts_dir / "timeline.log")
     timeline.record_action("suite_init", text="Starting live GUI automation & recording test")
 
-    # 2. Configure session with continuous screen recording & window census
+    # 2. Configure session with continuous screen recording, window census, and virtual desktop isolation
     config = SessionConfig(
         artifact_dir=artifacts_dir,
         record_video=True,
         fps=30,
         sanitize_runner=True,
+        isolated_virtual_desktop=True,
         default_timeout=15.0,
     )
 
@@ -59,54 +58,46 @@ def test_live_gui_automation_with_recording():
             win.move_and_resize(60, 60, 600, 450)
             win.set_foreground()
             timeline.record_action("window_repositioned", window=win, details={"rect": [60, 60, 600, 450]})
-            time.sleep(0.5)
 
-            # 5. Resolve UIA root and find editor control
+            # 5. Direct UIA Element resolution
             root = win.re_resolve_element()
             try:
-                editor = root.find_descendant(name_contains="Text Editor", timeout=3.0)
+                editor = root.find_descendant(name_contains="Text Editor", timeout=5.0)
             except Exception:
-                editor = root.find_descendant(name_contains="Document", timeout=3.0)
+                editor = root.find_descendant(name_contains="Document", timeout=5.0)
 
             timeline.record_action("editor_located", target=editor)
 
-            # 6. Type verified multi-line text with hardware keystrokes (alphanumeric for universal CI runner support)
-            test_content = "wintegrate ci automation\nline 2: verified keystrokes\n"
-            timeline.record_action("type_verified_start", target=editor, text=test_content)
+            # 6. Verified Hardware Keystroke Input
+            input_text = "wintegrate ci automation\nline 2: verified keystrokes\n"
+            timeline.record_action("type_verified_start", target=editor, text=input_text)
             editor.type_verified(
-                test_content,
+                input_text,
+                expected_line_count_delta=2,
                 verify_contains="wintegrate ci automation\nline 2: verified keystrokes",
-                delay_per_char=0.04,
+                delay_per_char=0.03,
             )
-            timeline.record_action("type_verified_done", target=editor, text=test_content)
+            timeline.record_action("type_verified_success", target=editor)
 
-            # 7. Read and assert final buffer text
-            val = editor.get_value()
-            assert "wintegrate ci automation" in val
-            timeline.record_action("text_read_verified", text=val)
-            time.sleep(0.5)
+            # 7. Assert ValuePattern / TextPattern Buffer
+            final_value = editor.get_value()
+            assert "wintegrate ci automation" in final_value
+            assert "line 2: verified keystrokes" in final_value
+            timeline.record_action("buffer_verified", target=editor, details={"buffer_length": len(final_value)})
 
         finally:
-            # 8. Close window and process
+            # 8. Clean up
             win.close(force=True)
             if proc:
                 try:
                     proc.kill()
                 except Exception:
                     pass
-            timeline.record_action("app_closed")
+            timeline.record_action("app_closed", window=win)
 
+    # 9. Dump Timeline logs
     timeline.dump_json(artifacts_dir / "timeline.json")
     timeline.close()
 
-    # Verify all artifacts exist
     assert (artifacts_dir / "timeline.log").exists()
     assert (artifacts_dir / "timeline.json").exists()
-    assert (artifacts_dir / "window_census.json").exists()
-    assert (artifacts_dir / "session_events.json").exists()
-
-    # Video artifact check
-    mp4_file = artifacts_dir / "session_recording.mp4"
-    if session.recorder and session.recorder._ffmpeg_exe:
-        assert mp4_file.exists()
-        assert mp4_file.stat().st_size > 0

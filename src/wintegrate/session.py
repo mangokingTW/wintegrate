@@ -1,4 +1,4 @@
-"""Session management, CI environment sanitization, and artifact flushing."""
+"""Session management, CI environment sanitization, virtual desktop isolation, and artifact flushing."""
 
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ class SessionConfig:
     sanitize_runner: bool = True
     default_timeout: float = 15.0
     dismiss_oobe: bool = True
+    isolated_virtual_desktop: bool = False
 
 
 def sanitize_ci_runner_environment():
@@ -128,6 +129,7 @@ class Session:
     """
     Orchestrates test execution environment, continuous video recording,
     pre/post window census diffing, and automatic failure artifact generation.
+    Supports dynamic Windows 11 Virtual Desktop isolation.
     """
 
     def __init__(self, config: SessionConfig | None = None):
@@ -137,6 +139,8 @@ class Session:
         self.initial_census: list[WindowSnapshot] = []
         self.final_census: list[WindowSnapshot] = []
         self.logs: list[dict[str, Any]] = []
+        self._orig_virtual_desktop = None
+        self._test_virtual_desktop = None
 
     def log_event(self, event_type: str, message: str, **kwargs):
         """Records a structured event in session log."""
@@ -152,6 +156,9 @@ class Session:
     def __enter__(self) -> Session:
         logger.info("Starting Wintegrate UI automation session...")
         attach_to_input_desktop()
+
+        if self.config.isolated_virtual_desktop:
+            self._setup_isolated_virtual_desktop()
 
         if self.config.sanitize_runner:
             sanitize_ci_runner_environment()
@@ -171,6 +178,40 @@ class Session:
                 self.log_event("video_recording_started", f"Streaming to {video_path}")
 
         return self
+
+    def _setup_isolated_virtual_desktop(self):
+        """Creates a dedicated Virtual Desktop and switches to it for test isolation."""
+        try:
+            from pyvda import VirtualDesktop
+
+            self._orig_virtual_desktop = VirtualDesktop.current()
+            self._test_virtual_desktop = VirtualDesktop.create()
+            self._test_virtual_desktop.go()
+            time.sleep(0.3)
+            self.log_event(
+                "virtual_desktop_isolated",
+                f"Switched to clean Virtual Desktop {self._test_virtual_desktop.number} (id={self._test_virtual_desktop.id})",
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Failed to initialize virtual desktop isolation ({type(exc).__name__}): {exc}"
+            )
+
+    def _teardown_isolated_virtual_desktop(self):
+        """Restores original Virtual Desktop and destroys temporary test desktop."""
+        if self._orig_virtual_desktop:
+            try:
+                self._orig_virtual_desktop.go()
+                time.sleep(0.2)
+            except Exception as exc:
+                logger.debug(f"Failed to switch back to original desktop: {exc}")
+
+        if self._test_virtual_desktop:
+            try:
+                self._test_virtual_desktop.remove()
+                self.log_event("virtual_desktop_cleaned", "Destroyed test virtual desktop")
+            except Exception as exc:
+                logger.debug(f"Failed to remove test virtual desktop: {exc}")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         logger.info("Tearing down Wintegrate UI automation session...")
@@ -198,6 +239,10 @@ class Session:
         if exc_type is not None:
             logger.error(f"Test failed with {exc_type.__name__}: {exc_val}. Capturing failure artifact.")
             self._capture_failure_screenshot()
+
+        # Teardown isolated virtual desktop if configured
+        if self.config.isolated_virtual_desktop:
+            self._teardown_isolated_virtual_desktop()
 
         # Flush session logs
         self._flush_session_logs()

@@ -30,6 +30,7 @@ dependencies = [
     "comtypes>=1.4.16",
     "pillow>=11.0.0",
     "imageio-ffmpeg>=0.6.0",
+    "pyvda>=0.6.0",
 ]
 
 [project.optional-dependencies]
