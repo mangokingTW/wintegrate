@@ -41,10 +41,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Screen recording, failure screenshots, and the frame pipeline.
+# Screen recording, failure screenshots, and the frame pipeline. PyAV bundles
+# FFmpeg and is the only option with a win_arm64 wheel on PyPI, so recording
+# works out of the box on Windows ARM64 too.
 video = [
     "pillow>=12.3.0",
-    "imageio-ffmpeg>=0.6.0",
+    "av>=15.0.0",
 ]
 # Virtual desktop clean-room isolation. pyvda wraps undocumented COM interfaces
 # whose GUIDs change between Windows builds, which is why it stays optional.

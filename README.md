@@ -59,7 +59,7 @@ Switches foreground focus cleanly using `AttachThreadInput` synchronization betw
 Supports dynamic virtual desktop isolation. When `isolated_virtual_desktop=True`, `wintegrate` creates a clean virtual desktop on the fly, switches to it, executes test operations in isolation away from background noise, and automatically destroys the test desktop on exit.
 
 ### 6. Streaming Video & Diagnostic Pipeline
-- **Low-Memory Streaming Recorder**: Streams desktop frames directly to FFmpeg subprocess (`ContinuousRecorder`) with `stderr` redirected to disk logs.
+- **Low-Memory Streaming Recorder**: `ContinuousRecorder` encodes in-process through PyAV (which bundles FFmpeg), falling back to an external FFmpeg subprocess with `stderr` redirected to disk logs. PyAV is preferred because it is the only FFmpeg on PyPI with a `win_arm64` wheel — recording works out of the box on Windows ARM64, where every ffmpeg-shipping package leaves you to install a binary yourself. Frames carry wall-clock timestamps, so a capture loop that falls behind the nominal frame rate still plays back at real speed.
 - **Automatic Failure Artifacts**: Automatically dumps full-screen screenshots and pre/post `window_census.json` diffs on assertion failure.
 - **Event Timeline Logging**: Logs action timestamps and targets to human-readable `.log` and structured `.json`.
 
@@ -127,7 +127,7 @@ The core install depends on `comtypes` alone. Two optional extras pull in the
 heavier pieces only if you use them:
 
 ```bash
-pip install 'wintegrate[video]'    # screen recording + failure screenshots (Pillow, ffmpeg)
+pip install 'wintegrate[video]'    # screen recording + failure screenshots (Pillow, PyAV)
 pip install 'wintegrate[desktop]'  # virtual desktop clean-room isolation (pyvda)
 pip install 'wintegrate[all]'
 ```
