@@ -464,17 +464,21 @@ class UiaElement:
         initial_text = self.get_value()
         initial_lines = count_lines(initial_text) if initial_text else 1
 
-        # When no explicit post-condition is given, derive one from the typed text.
+        # Always verify the content, deriving the expectation from the typed text when
+        # the caller gave none. A line-count delta on its own only proves that some
+        # newlines arrived: mangled input (ARM64 runners repeat or drop characters
+        # under load, e.g. "pywinauto" landing as "uuuuuuuto") still has the right
+        # line count and would otherwise be reported as success.
         target_verify_contains = verify_contains
-        if expected_line_count_delta == 0 and target_verify_contains is None:
+        if target_verify_contains is None:
             target_verify_contains = text.strip() if text.strip() else text
 
-        # Without a line-count delta, containment alone passes vacuously whenever the
-        # target text already exists in the buffer (replaying an action twice, or an
-        # explicit verify_contains matching pre-existing content while every keystroke
-        # was dropped) — so require a *new* occurrence instead.
+        # Containment alone passes vacuously whenever the target text already exists in
+        # the buffer (replaying an action twice, or an explicit verify_contains matching
+        # pre-existing content while every keystroke was dropped) — require a *new*
+        # occurrence instead. A line-count delta is an independent, additional check.
         required_occurrences = None
-        if expected_line_count_delta == 0 and target_verify_contains is not None:
+        if target_verify_contains:
             norm_initial = normalize_line_endings(initial_text)
             required_occurrences = (
                 norm_initial.count(normalize_line_endings(target_verify_contains)) + 1
