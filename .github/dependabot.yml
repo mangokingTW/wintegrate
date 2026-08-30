@@ -9,6 +9,21 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+    groups:
+      # codeql-action/init, /analyze and /upload-sarif are one product and refuse
+      # to run against each other's versions ("Loaded a configuration file for
+      # version X, but running version Y"). Bumped separately, every one of those
+      # PRs fails CI; grouped, they move together and pass.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
+      # Everything else in one weekly PR: separate PRs for routine action bumps
+      # cost more review attention than they carry information.
+      actions:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "github/codeql-action*"
 
   # Runtime and dev dependencies from pyproject.toml. The core install is
   # comtypes alone; the rest arrive through the optional extras.
