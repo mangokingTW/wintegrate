@@ -11,12 +11,25 @@ from ctypes import wintypes
 
 logger = logging.getLogger(__name__)
 
-# Native DLL handles
+# Native DLL handles.
+#
+# Deliberately NOT ctypes.windll: that is a process-wide cache handing every
+# importer the same WinDLL, whose function pointers are also cached — so the
+# argtypes pinned below would be visible to every other ctypes user in the
+# process. Since ctypes checks pointer arguments by type identity rather than
+# layout, an unrelated library passing its own byte-identical INPUT struct to
+# SendInput would then fail with "expected LP_INPUT instance instead of
+# LP_Input", raised from inside that library and looking like its bug.
+# (Reported against 0.1.0 by a caller using pydirectinput alongside wintegrate.)
+#
+# Private WinDLL instances get their own function-pointer cache, so these pins
+# stay inside wintegrate while still persisting across our own calls.
 if sys.platform == "win32":
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
-    imm32 = ctypes.windll.imm32
-    gdi32 = ctypes.windll.gdi32
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    imm32 = ctypes.WinDLL("imm32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    ole32 = ctypes.WinDLL("ole32", use_last_error=True)
 else:
 
     class _UnsupportedPlatformFunc:
@@ -46,6 +59,7 @@ else:
     kernel32 = _UnsupportedPlatformDll("kernel32")
     imm32 = _UnsupportedPlatformDll("imm32")
     gdi32 = _UnsupportedPlatformDll("gdi32")
+    ole32 = _UnsupportedPlatformDll("ole32")
 
 # Window Show / Sizing Constants
 SW_HIDE = 0
@@ -369,7 +383,7 @@ def _send_input_checked(arr, label: str) -> bool:
     count = len(arr)
     sent = user32.SendInput(count, arr, ctypes.sizeof(INPUT))
     if sent != count:
-        err = kernel32.GetLastError()
+        err = ctypes.get_last_error()
         logger.warning(
             f"SendInput injected {sent}/{count} events for {label} (GetLastError={err}); "
             "input was blocked — the foreground window may run at a higher integrity level"
@@ -835,13 +849,13 @@ def get_parent_pid_map() -> dict[int, int]:
     """Returns {pid: parent_pid} for every process, via a Toolhelp snapshot."""
     snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if not snapshot or snapshot == INVALID_HANDLE_VALUE:
-        raise OSError(f"CreateToolhelp32Snapshot failed (GetLastError={kernel32.GetLastError()})")
+        raise OSError(f"CreateToolhelp32Snapshot failed (GetLastError={ctypes.get_last_error()})")
     try:
         entry = PROCESSENTRY32W()
         entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
         parents: dict[int, int] = {}
         if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
-            raise OSError(f"Process32FirstW failed (GetLastError={kernel32.GetLastError()})")
+            raise OSError(f"Process32FirstW failed (GetLastError={ctypes.get_last_error()})")
         while True:
             parents[entry.th32ProcessID] = entry.th32ParentProcessID
             if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
