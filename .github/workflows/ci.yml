@@ -3,8 +3,10 @@ name: CI UI Automation Tests
 on:
   push:
     branches: [ main ]
+  # Every pull request, not just those targeting main: a stacked PR based on
+  # another feature branch would otherwise get no CI at all, and could only be
+  # verified after its base was merged.
   pull_request:
-    branches: [ main ]
 
 jobs:
   lint:
