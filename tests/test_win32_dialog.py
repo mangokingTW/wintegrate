@@ -158,9 +158,8 @@ def test_send_keys_named_keys_reach_the_dialog(dialog):
     edit = control(dialog, ID_EDIT)
     edit.type_verified("abc", verify_contains="abc")
 
-    # Collapse the focus selection before editing, or the next key replaces everything.
-    edit.send_keys("{END}")
-    edit.send_keys("{BACKSPACE}")
+    # One spec so focus is set once: {END} collapses selection, {BACKSPACE} deletes the last character.
+    edit.send_keys("{END}{BACKSPACE}")
     time.sleep(0.2)
     assert edit.get_value() == "ab"
 
