@@ -58,6 +58,12 @@ class Window:
     def is_visible(self) -> bool:
         return bool(user32.IsWindowVisible(self.hwnd))
 
+    def exists(self, require_visible: bool = True) -> bool:
+        """Returns whether this window handle is still a live (and optionally visible) window."""
+        if not user32.IsWindow(self.hwnd):
+            return False
+        return bool(user32.IsWindowVisible(self.hwnd)) if require_visible else True
+
     def re_resolve_element(self) -> UiaElement:
         """Always resolves a fresh UIA element directly from the HWND."""
         return UiaElement.from_handle(self.hwnd)
