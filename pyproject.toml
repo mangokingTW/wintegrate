@@ -4,13 +4,23 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wintegrate"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "CI-first Windows UI automation library designed for unattended headless/CI runners."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-    { name = "wintegrate contributors" }
+    { name = "Mango Yen", email = "mango.yen.tw@gmail.com" }
+]
+keywords = [
+    "windows",
+    "ui-automation",
+    "uia",
+    "ci",
+    "testing",
+    "gui-testing",
+    "arm64",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -33,6 +43,12 @@ dependencies = [
     "psutil>=7.2.2",
     "pyvda>=0.6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mangokingTW/wintegrate"
+Repository = "https://github.com/mangokingTW/wintegrate"
+Issues = "https://github.com/mangokingTW/wintegrate/issues"
+Changelog = "https://github.com/mangokingTW/wintegrate/releases"
 
 [project.optional-dependencies]
 dev = [

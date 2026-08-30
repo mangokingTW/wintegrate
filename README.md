@@ -44,15 +44,12 @@ Replaced DirectX scan-code simulation with native Win32 `SendInput` utilizing `K
 ### 3. Multi-Window Isolation & Discovery Exclusion
 Supports launching and discovering multiple concurrent instances of the same application without PID/HWND collisions:
 ```python
-# Launch Window A
-proc_a, win_a = session.launch_and_discover(["notepad.exe"], title_pattern=".*Notepad.*")
-
-# Launch Window B (exclude win_a.hwnd so discovery guarantees finding the new window)
-proc_b, win_b = session.launch_and_discover(
-    ["notepad.exe"],
-    title_pattern=".*Notepad.*",
-    exclude_hwnds={win_a.hwnd},
-)
+with session.app(NOTEPAD) as app_a:
+    # exclude_hwnds guarantees discovery finds the new window, not the existing one.
+    # fresh=False: the leftover sweep would otherwise kill Window A.
+    with session.app(NOTEPAD, fresh=False, exclude_hwnds={app_a.window.hwnd}) as app_b:
+        app_a.find_text_input().type_verified("Window A\n", expected_line_count_delta=1)
+        app_b.find_text_input().type_verified("Window B\n", expected_line_count_delta=1)
 ```
 
 ### 4. Non-Invasive Thread Input Focus (`AttachThreadInput`)
@@ -95,30 +92,26 @@ with Session(SessionConfig()) as session:
 ## Quickstart
 
 ```python
-from wintegrate import Session, SessionConfig
+from wintegrate import NOTEPAD, Session, SessionConfig
 
 config = SessionConfig(
     artifact_dir="./ci-artifacts",
     record_video=True,
     fps=30,
-    sanitize_runner=True,
-    isolated_virtual_desktop=False, # Set True for dynamic clean-room desktop
 )
 
 with Session(config) as session:
-    proc, win = session.launch_and_discover(["notepad.exe"], title_pattern=".*Notepad.*")
-    try:
-        root = win.re_resolve_element()
-        editor = root.find_descendant(name_contains="Text Editor")
-        
+    # Managed lifecycle: locale-independent discovery, single-instance safety,
+    # generous cold-start timeout, and guaranteed cleanup on exit.
+    with session.app(NOTEPAD) as app:
+        editor = app.find_text_input()
+
         # Types hardware keystrokes and verifies line count delta & text content
         editor.type_verified(
             "Hello from CI\nSecond line\n",
             expected_line_count_delta=2,
             verify_contains="Hello from CI\nSecond line",
         )
-    finally:
-        win.close(force=True)
 ```
 
 ---
@@ -127,6 +120,14 @@ with Session(config) as session:
 
 ```bash
 pip install wintegrate
+# or
+uv add wintegrate
+```
+
+Pre-release versions (`0.1.0aN`) are not installed by default — ask for them explicitly:
+```bash
+pip install --pre wintegrate
+uv add --prerelease=allow wintegrate
 ```
 
 Or install from source with development dependencies:
@@ -135,6 +136,9 @@ git clone https://github.com/mangokingTW/wintegrate.git
 cd wintegrate
 pip install -e .[dev]
 ```
+
+Windows only: the package imports on other platforms (so cross-platform tooling and
+`env` checks work), but every Win32/UIA call raises a clear unsupported-platform error.
 
 ---
 

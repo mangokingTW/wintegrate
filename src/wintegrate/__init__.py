@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
+
+try:
+    __version__ = _version("wintegrate")
+except PackageNotFoundError:  # running from a source tree without an install
+    __version__ = "0.0.0.dev0"
+
 from wintegrate.apps import CALCULATOR, NOTEPAD, AppHandle, AppSpec
 from wintegrate.diagnostics import CensusDiff, ContinuousRecorder, WindowCensus, WindowSnapshot
 from wintegrate.element import UiaElement
@@ -33,6 +41,7 @@ from wintegrate.text import count_lines, normalize_line_endings
 from wintegrate.window import Window
 
 __all__ = [
+    "__version__",
     "Session",
     "SessionConfig",
     "Window",

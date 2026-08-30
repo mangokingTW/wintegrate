@@ -1,0 +1,80 @@
+name: Publish to PyPI
+
+# Publishes on a GitHub Release, or on demand via workflow_dispatch (TestPyPI by
+# default there, so a dry run never burns a real version number).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Package index to publish to
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Verify metadata and long description render
+        run: |
+          python -m pip install twine
+          python -m twine check --strict dist/*
+
+      # A release tag must match the version in pyproject.toml, otherwise the
+      # published artifact silently disagrees with the tag people cite.
+      - name: Check tag matches package version
+        if: github.event_name == 'release'
+        run: |
+          VERSION=$(python -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "pyproject version: $VERSION / tag: $TAG"
+          test "$VERSION" = "$TAG"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write # OIDC token for Trusted Publishing; no API token stored
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: build
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # OIDC token for Trusted Publishing; no API token stored
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
