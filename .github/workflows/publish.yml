@@ -31,12 +31,11 @@ jobs:
 
       - name: Build sdist and wheel
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --require-hashes -r .github/requirements/publish.txt
           python -m build
 
       - name: Verify metadata and long description render
         run: |
-          python -m pip install twine
           python -m twine check --strict dist/*
 
       # A release tag must match the version in pyproject.toml, otherwise the
@@ -54,9 +53,17 @@ jobs:
       # `gh attestation verify <file> --repo mangokingTW/wintegrate`, which is
       # evidence about provenance that no amount of reading the source provides.
       - name: Attest build provenance
+        id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: "dist/*"
+
+      # The attestation also lives in GitHub's attestations API, but that is not
+      # visible to tools that inspect release assets — OpenSSF Scorecard's
+      # Signed-Releases check among them. Publishing the bundle under the name
+      # SLSA tooling expects lets those verify a release without the API.
+      - name: Attach provenance bundle to the artifacts
+        run: cp "${{ steps.attest.outputs.bundle-path }}" dist/multiple.intoto.jsonl
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
@@ -74,9 +81,34 @@ jobs:
         with:
           name: dist
           path: dist/
+      # PyPI accepts only sdists and wheels, so the provenance bundle — which
+      # rides along in the same artifact for the release-assets job — has to go
+      # before the upload. This job works on its own copy, so removing it here
+      # does not affect the release assets.
+      - name: Drop the provenance bundle from the upload set
+        run: rm -f dist/multiple.intoto.jsonl
+
       # attestations: true makes the action mint PEP 740 attestations and upload
       # them alongside the files, so PyPI itself shows each release as verified
       # against this repository and workflow.
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           attestations: true
+
+  attach-release-assets:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # uploading assets to the release this workflow was triggered by
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
+        with:
+          name: dist
+          path: dist/
+      # A release with no downloadable assets cannot be verified by anything that
+      # does not query PyPI, and Scorecard reports "no releases found" for it.
+      - name: Upload distributions and provenance to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber

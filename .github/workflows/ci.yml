@@ -27,8 +27,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install ruff
+          # Hash-pinned: a compromised or yanked release of the linter cannot
+          # silently enter the build.
+          python -m pip install --require-hashes -r .github/requirements/lint.txt
 
       - name: Run Ruff Lint & Format Check
         run: |
