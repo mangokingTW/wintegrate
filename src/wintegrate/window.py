@@ -169,9 +169,21 @@ class Window:
         title_exact: str | None = None,
         title_pattern: str | None = None,
         class_name: str | None = None,
+        pid: int | None = None,
         timeout: float = 5.0,
     ) -> Window:
-        """Finds an existing top-level window by title, regex pattern, or class name."""
+        """
+        Finds an existing visible top-level window matching ALL supplied criteria.
+
+        Criteria are combined with AND: `find(title_pattern="Settings",
+        class_name="#32770")` returns the dialog whose title matches, not merely the
+        first `#32770` on the desktop. Pass `pid` to restrict the search to one
+        process — the reliable way to target a window whose title is localized,
+        empty, or duplicated across applications.
+        """
+        if not any([title_exact, title_pattern, class_name, pid]):
+            raise ValueError("Window.find requires at least one search criterion")
+
         deadline = time.monotonic() + timeout
         compiled_re = re.compile(title_pattern, re.IGNORECASE) if title_pattern else None
 
@@ -180,16 +192,20 @@ class Window:
             for snap in snapshots:
                 if not snap.is_visible:
                     continue
-                if title_exact and snap.title == title_exact:
-                    return cls(snap.hwnd, snap.pid)
-                if compiled_re and compiled_re.search(snap.title):
-                    return cls(snap.hwnd, snap.pid)
-                if class_name and snap.class_name.lower() == class_name.lower():
-                    return cls(snap.hwnd, snap.pid)
+                if title_exact is not None and snap.title != title_exact:
+                    continue
+                if compiled_re and not compiled_re.search(snap.title):
+                    continue
+                if class_name and snap.class_name.lower() != class_name.lower():
+                    continue
+                if pid is not None and snap.pid != pid:
+                    continue
+                return cls(snap.hwnd, snap.pid)
             time.sleep(0.1)
 
         raise WindowDiscoveryTimeoutError(
-            f"Window not found (title_exact={title_exact}, title_pattern={title_pattern}, class_name={class_name})"
+            f"Window not found (title_exact={title_exact}, title_pattern={title_pattern}, "
+            f"class_name={class_name}, pid={pid})"
         )
 
     @classmethod

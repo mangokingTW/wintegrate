@@ -239,9 +239,33 @@ user32.GetForegroundWindow.restype = wintypes.HWND
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 
+def _send_input_checked(arr, label: str) -> bool:
+    """
+    Sends an INPUT array and reports events the system refused to inject.
+
+    SendInput returns how many events it actually queued; a lower count means the
+    input was blocked (UIPI from a higher-integrity foreground window, a locked
+    workstation, or the thread not being attached to the input desktop). Ignoring
+    the return value turns that into silently missing keystrokes.
+    """
+    count = len(arr)
+    sent = user32.SendInput(count, arr, ctypes.sizeof(INPUT))
+    if sent != count:
+        err = kernel32.GetLastError()
+        logger.warning(
+            f"SendInput injected {sent}/{count} events for {label} (GetLastError={err}); "
+            "input was blocked — the foreground window may run at a higher integrity level"
+        )
+        return False
+    return True
+
+
 def send_char_input(char: str):
     """
     Sends character input reliably using native Win32 SendInput (KEYEVENTF_UNICODE).
+
+    Note: KEYEVENTF_UNICODE injects the character directly and does NOT pass through
+    an IME. Automating IME composition requires scan-code input instead.
     """
     if char == "\n" or char == "\r":
         # Press Enter key via VK_RETURN
@@ -260,7 +284,7 @@ def send_char_input(char: str):
             ),
         )
         arr = (INPUT * 2)(inp_down, inp_up)
-        user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+        _send_input_checked(arr, "VK_RETURN")
     else:
         val = ord(char)
         inp_down = INPUT(
@@ -282,7 +306,7 @@ def send_char_input(char: str):
             ),
         )
         arr = (INPUT * 2)(inp_down, inp_up)
-        user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+        _send_input_checked(arr, repr(char))
 
 
 def send_mouse_click(x: int, y: int):

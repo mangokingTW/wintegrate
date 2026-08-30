@@ -249,7 +249,17 @@ class UiaElement:
         control_type_id: int | None = None,
         timeout: float = 5.0,
     ) -> UiaElement:
-        """Finds a descendant matching criteria within a bounded timeout, with RawViewWalker fallback."""
+        """
+        Finds a descendant matching ALL supplied criteria within a bounded timeout,
+        with a RawViewWalker fallback for UWP/XAML islands.
+
+        Criteria are combined with AND: `find_descendant(name_contains="Browse",
+        control_type_id=50000)` returns a Button whose name contains "Browse", never
+        merely the first Button in the tree. `name_contains` is a case-insensitive
+        substring match on the element's Name only — UIA property conditions cannot
+        express substring matching, so it is applied as a filter over the candidates
+        selected by the other criteria.
+        """
         deadline = time.monotonic() + timeout
         uia = get_uia()
 
@@ -272,37 +282,42 @@ class UiaElement:
                 cond = uia.CreatePropertyCondition(prop_id, control_type_id)
                 conditions.append(cond)
 
-            if conditions:
-                if len(conditions) == 1:
+            if conditions or name_contains:
+                if not conditions:
+                    full_cond = uia.CreateTrueCondition()
+                elif len(conditions) == 1:
                     full_cond = conditions[0]
                 else:
                     full_cond = uia.CreateAndConditionFromArray(conditions)
-                try:
-                    found = self._element.FindFirst(TreeScope_Descendants, full_cond)
-                    if found:
-                        return UiaElement(found)
-                except Exception:
-                    pass
 
-            if name_contains:
-                true_cond = uia.CreateTrueCondition()
-                try:
-                    arr = self._element.FindAll(TreeScope_Descendants, true_cond)
-                    if arr:
-                        for i in range(arr.Length):
-                            child = arr.GetElement(i)
-                            c_name = child.CurrentName or ""
-                            c_type_name = child.CurrentLocalizedControlType or ""
-                            if (
-                                name_contains.lower() in c_name.lower()
-                                or name_contains.lower() in c_type_name.lower()
-                            ):
-                                return UiaElement(child)
-                except Exception:
-                    pass
+                if name_contains is None:
+                    # Every criterion is expressible as a UIA condition.
+                    try:
+                        found = self._element.FindFirst(TreeScope_Descendants, full_cond)
+                        if found:
+                            return UiaElement(found)
+                    except Exception:
+                        pass
+                else:
+                    # Enumerate the candidates the conditions already narrowed down,
+                    # then apply the substring filter on top (AND, not fallback).
+                    needle = name_contains.lower()
+                    try:
+                        arr = self._element.FindAll(TreeScope_Descendants, full_cond)
+                        if arr:
+                            for i in range(arr.Length):
+                                child = arr.GetElement(i)
+                                try:
+                                    c_name = child.CurrentName or ""
+                                except Exception:
+                                    continue
+                                if needle in c_name.lower():
+                                    return UiaElement(child)
+                    except Exception:
+                        pass
 
             # Fallback for UWP/XAML isolated controls via RawViewWalker
-            if automation_id:
+            if automation_id and name_contains is None:
                 try:
                     walker = uia.RawViewWalker
 
@@ -449,17 +464,21 @@ class UiaElement:
         initial_text = self.get_value()
         initial_lines = count_lines(initial_text) if initial_text else 1
 
-        # When no explicit post-condition is given, derive one from the typed text.
+        # Always verify the content, deriving the expectation from the typed text when
+        # the caller gave none. A line-count delta on its own only proves that some
+        # newlines arrived: mangled input (ARM64 runners repeat or drop characters
+        # under load, e.g. "pywinauto" landing as "uuuuuuuto") still has the right
+        # line count and would otherwise be reported as success.
         target_verify_contains = verify_contains
-        if expected_line_count_delta == 0 and target_verify_contains is None:
+        if target_verify_contains is None:
             target_verify_contains = text.strip() if text.strip() else text
 
-        # Without a line-count delta, containment alone passes vacuously whenever the
-        # target text already exists in the buffer (replaying an action twice, or an
-        # explicit verify_contains matching pre-existing content while every keystroke
-        # was dropped) — so require a *new* occurrence instead.
+        # Containment alone passes vacuously whenever the target text already exists in
+        # the buffer (replaying an action twice, or an explicit verify_contains matching
+        # pre-existing content while every keystroke was dropped) — require a *new*
+        # occurrence instead. A line-count delta is an independent, additional check.
         required_occurrences = None
-        if expected_line_count_delta == 0 and target_verify_contains is not None:
+        if target_verify_contains:
             norm_initial = normalize_line_endings(initial_text)
             required_occurrences = (
                 norm_initial.count(normalize_line_endings(target_verify_contains)) + 1

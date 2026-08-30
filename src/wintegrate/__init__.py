@@ -30,6 +30,15 @@ from wintegrate.exceptions import (
     WindowDiscoveryTimeoutError,
     WintegrateError,
 )
+from wintegrate.interop import (
+    get_foreground_window,
+    get_process_image_name,
+    get_window_class,
+    get_window_pid,
+    get_window_title,
+    send_char_input,
+    send_mouse_click,
+)
 from wintegrate.recorder import (
     ActionPlayer,
     RecordedAction,
@@ -58,6 +67,13 @@ __all__ = [
     "server_only",
     "normalize_line_endings",
     "count_lines",
+    "send_char_input",
+    "send_mouse_click",
+    "get_foreground_window",
+    "get_process_image_name",
+    "get_window_class",
+    "get_window_pid",
+    "get_window_title",
     "WintegrateError",
     "WindowDiscoveryTimeoutError",
     "ElementNotFoundError",
