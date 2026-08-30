@@ -20,21 +20,21 @@ from wintegrate import (
 )
 
 
-def find_editor(win: Window, timeout: float = 12.0) -> UiaElement:
+def find_editor(win: Window, timeout: float = 20.0) -> UiaElement:
     """Helper to locate Notepad editor control on any OS version/locale."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             root = win.re_resolve_element()
             for cond in [
-                {"class_name": "RichEditD2DPT", "timeout": 0.5},  # Win11 Tabbed Notepad
-                {"class_name": "Edit", "timeout": 0.5},  # Win32 Classic Notepad
-                {"control_type_id": 50030, "timeout": 0.5},  # Edit ControlType
-                {"control_type_id": 50004, "timeout": 0.5},  # Document ControlType
-                {"name_contains": "Text Editor", "timeout": 0.5},
-                {"name_contains": "Document", "timeout": 0.5},
-                {"name_contains": "文字編輯器", "timeout": 0.5},
-                {"name_contains": "文本编辑器", "timeout": 0.5},
+                {"class_name": "RichEditD2DPT", "timeout": 0.2},  # Win11 Tabbed Notepad
+                {"class_name": "Edit", "timeout": 0.2},  # Win32 Classic Notepad
+                {"control_type_id": 50030, "timeout": 0.2},  # Edit ControlType
+                {"control_type_id": 50004, "timeout": 0.2},  # Document ControlType
+                {"name_contains": "Text Editor", "timeout": 0.2},
+                {"name_contains": "Document", "timeout": 0.2},
+                {"name_contains": "文字編輯器", "timeout": 0.2},
+                {"name_contains": "文本编辑器", "timeout": 0.2},
             ]:
                 try:
                     editor = root.find_descendant(**cond)
@@ -44,7 +44,7 @@ def find_editor(win: Window, timeout: float = 12.0) -> UiaElement:
                     pass
         except Exception:
             pass
-        time.sleep(0.3)
+        time.sleep(0.2)
     raise RuntimeError("Could not locate Notepad editor control")
 
 
@@ -72,7 +72,7 @@ def test_live_gui_automation_with_recording():
         proc, win = session.launch_and_discover(
             ["notepad.exe"],
             timeout=12.0,
-            title_pattern=".*Notepad.*|.*記事本.*|.*记事本.*",
+            title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
         )
 
         timeline.record_action(

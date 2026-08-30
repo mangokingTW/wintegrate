@@ -175,29 +175,35 @@ class Window:
         deadline = time.monotonic() + timeout
         compiled_re = re.compile(title_pattern, re.IGNORECASE) if title_pattern else None
 
+        def is_ignorable_helper(snap) -> bool:
+            title = snap.title.lower()
+            cls_name = snap.class_name.lower()
+            if "gdi+ window" in title or "gdi+ hook window class" in cls_name:
+                return True
+            if "msctfime ui" in title or "msctfime ui" in cls_name:
+                return True
+            if "default ime" in title or "ime" == cls_name:
+                return True
+            return False
+
         while time.monotonic() < deadline:
             after = WindowCensus.capture()
             diff = WindowCensus.diff(before, after)
 
             # Look for newly added visible top-level windows
             for snap in diff.added:
-                if snap.is_visible and snap.hwnd not in excluded:
+                if snap.is_visible and snap.hwnd not in excluded and not is_ignorable_helper(snap):
                     if compiled_re and not compiled_re.search(snap.title):
                         continue
                     return proc, cls(snap.hwnd, snap.pid)
 
-            # Fallback 1: newly added window that might become visible
-            for snap in diff.added:
-                if snap.hwnd not in excluded:
-                    if compiled_re and compiled_re.search(snap.title):
-                        return proc, cls(snap.hwnd, snap.pid)
-
-            # Fallback 2: check all currently visible windows matching criteria
+            # Fallback: check all currently visible windows matching criteria
             for snap in after:
                 if (
                     snap.is_visible
                     and snap.hwnd not in excluded
                     and snap.hwnd not in {b.hwnd for b in before}
+                    and not is_ignorable_helper(snap)
                 ):
                     if compiled_re and compiled_re.search(snap.title):
                         return proc, cls(snap.hwnd, snap.pid)
