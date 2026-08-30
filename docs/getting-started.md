@@ -82,10 +82,12 @@ call when you just need characters in a field.
 `send_physical_keys` delivers scan codes, which is the only input an IME
 intercepts. Reach for it when the IME itself is what you are testing.
 
-!!! warning "Focus selects the field"
-    Focusing a classic Win32 `EDIT` selects its entire contents, and `send_keys`
-    focuses first — so a bare `{BACKSPACE}` clears the field rather than deleting
-    one character. Collapse the selection with `{END}` or `{HOME}` first.
+!!! warning "Collapse the selection before a destructive key"
+    Focusing a classic Win32 `EDIT` through UIA selects its entire contents;
+    arriving by click places the caret instead. `send_keys` focuses first and does
+    both, so whether a bare `{BACKSPACE}` clears the field or deletes one
+    character is timing-dependent. Send `{HOME}` or `{END}` first and the question
+    stops mattering.
 
 ## Dialog controls
 

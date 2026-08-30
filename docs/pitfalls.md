@@ -61,11 +61,17 @@ Unicode injection hands the codepoint straight to the control. An IME never sees
 it, so composition never starts and no candidate window appears. Testing IME
 behaviour requires scan-code input (`send_physical_keys`).
 
-## Focusing an EDIT selects all of it
+## The selection state after focus is undefined
 
-Standard Win32 behaviour, and it surprises everyone: after focus, the next
-keystroke *replaces* the field. Since `send_keys` focuses first, `{BACKSPACE}`
-clears the field. Collapse the selection first.
+Focusing a Win32 `EDIT` through UIA selects its entire contents, so the next
+keystroke *replaces* the field. Arriving by click instead places the caret and
+selects nothing. `set_focus` does both — UIA `SetFocus`, then a click — and which
+one wins is timing-dependent: the same test produced an empty field on x64 and
+`ab` on ARM64.
+
+So never send a bare destructive key after focusing. Collapse the selection
+explicitly first — `{HOME}` or `{END}` — and the behaviour stops depending on
+which path won.
 
 Also: `Ctrl+A` does **not** select all in a classic `EDIT` — that is RichEdit. An
 assertion built on it passes for the wrong reason. Use `{HOME}` then `+{END}`.
