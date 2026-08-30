@@ -17,6 +17,7 @@ from wintegrate.diagnostics import (
     WindowCensus,
     WindowSnapshot,
     capture_screen_image,
+    capture_window_image,
 )
 from wintegrate.element import UiaElement
 from wintegrate.env import env, is_ci
@@ -359,13 +360,38 @@ class Session:
         except Exception as exc:
             logger.error(f"Failed to dump window census ({type(exc).__name__}): {exc}")
 
+    def capture_screenshot(
+        self,
+        name: str,
+        window: Window | None = None,
+        all_monitors: bool = True,
+    ) -> Path:
+        """
+        Saves a screenshot into the session's artifact directory and returns its path.
+
+        Use this to record what the screen looked like at a point you care about —
+        the failure screenshot only exists when something raised, and by then the
+        state that explains it may be gone.
+
+        Pass `window` to capture that window alone, including anything covering it.
+        Otherwise the whole virtual desktop is captured; `all_monitors=False`
+        narrows that to the primary display.
+        """
+        self.artifact_dir.mkdir(parents=True, exist_ok=True)
+        path = self.artifact_dir / (name if name.lower().endswith(".png") else f"{name}.png")
+
+        img = capture_window_image(window.hwnd) if window else capture_screen_image(all_monitors)
+        img.save(path)
+        self.log_event("screenshot", f"Captured {path.name}", size=list(img.size))
+        logger.info(f"Saved screenshot to {path}")
+        return path
+
     def _capture_failure_screenshot(self):
         try:
-            self.artifact_dir.mkdir(parents=True, exist_ok=True)
-            screenshot_path = self.artifact_dir / "failure_screenshot.png"
-            img = capture_screen_image()
-            img.save(screenshot_path)
-            logger.info(f"Saved failure screenshot to {screenshot_path}")
+            # all_monitors: the window under test is not always on the primary
+            # display, and a primary-only capture of a failure elsewhere is worse
+            # than none — it looks like evidence.
+            self.capture_screenshot("failure_screenshot", all_monitors=True)
         except Exception as exc:
             logger.error(f"Failed to capture failure screenshot ({type(exc).__name__}): {exc}")
 

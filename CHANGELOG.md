@@ -5,6 +5,31 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [0.1.3] — 2026-08-30
+
+### Added
+
+- **Screenshots on demand.** Screenshot capture existed but only fired
+  automatically on failure, was not exported, and covered the primary display
+  only. Now:
+  - `Session.capture_screenshot(name, window=None)` — saves into the session's
+    artifact directory and returns the path
+  - `Window.capture(path)` and `UiaElement.capture(path)`
+  - `capture_screen_image(all_monitors=True)` and `capture_window_image(hwnd)`,
+    both exported from the package root
+- Window captures use `PrintWindow`, so they include parts of the window other
+  windows are covering — on CI that is often the popup that broke the run, and a
+  cropped screenshot would show the intruder rather than the window under test.
+  `PrintWindow` returns black for some DWM/XAML windows, so the result is checked
+  and falls back to cropping; a black rectangle would be an artifact that looks
+  like evidence and shows nothing.
+
+### Changed
+
+- The automatic failure screenshot now captures the whole virtual desktop. The
+  window under test is not always on the primary display, and a primary-only
+  capture of a failure elsewhere is worse than none.
+
 ## [0.1.2] — 2026-08-30
 
 ### Fixed

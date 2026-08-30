@@ -17,6 +17,15 @@ from pathlib import Path
 from wintegrate.exceptions import DiagnosticPipelineError
 from wintegrate.interop import (
     BITMAPINFOHEADER,
+    PW_RENDERFULLCONTENT,
+    RECT,
+    SM_CXSCREEN,
+    SM_CXVIRTUALSCREEN,
+    SM_CYSCREEN,
+    SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN,
+    SM_YVIRTUALSCREEN,
+    SRCCOPY,
     WNDENUMPROC,
     attach_to_input_desktop,
     gdi32,
@@ -44,17 +53,9 @@ def _load_pil_image():
     return Image
 
 
-def capture_screen_image():
-    """Captures the current primary display using GDI BitBlt into a PIL Image."""
+def _dib_to_image(hdc_mem, hbmp, w: int, h: int):
+    """Reads a device-independent bitmap out of a memory DC into a PIL Image."""
     Image = _load_pil_image()
-    w = user32.GetSystemMetrics(0)
-    h = user32.GetSystemMetrics(1)
-    hdc_screen = user32.GetDC(0)
-    hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
-    hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
-    gdi32.SelectObject(hdc_mem, hbmp)
-    gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, 0, 0, 0x00CC0020)
-
     bmi = BITMAPINFOHEADER()
     bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
     bmi.biWidth = w
@@ -64,12 +65,94 @@ def capture_screen_image():
     bmi.biCompression = 0
     buf = ctypes.create_string_buffer(w * h * 4)
     gdi32.GetDIBits(hdc_mem, hbmp, 0, h, buf, ctypes.byref(bmi), 0)
-
-    gdi32.DeleteDC(hdc_mem)
-    user32.ReleaseDC(0, hdc_screen)
-    gdi32.DeleteObject(hbmp)
-
     return Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
+
+
+def capture_screen_image(all_monitors: bool = False):
+    """
+    Captures the desktop into a PIL Image.
+
+    By default this is the primary display. `all_monitors=True` captures the whole
+    virtual desktop instead — on a multi-monitor runner the window under test is
+    quite often not on the primary one, and a primary-only screenshot of a failure
+    that happened elsewhere is worse than none, because it looks like evidence.
+    """
+    if all_monitors:
+        x = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        y = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        w = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        h = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+    else:
+        x = y = 0
+        w = user32.GetSystemMetrics(SM_CXSCREEN)
+        h = user32.GetSystemMetrics(SM_CYSCREEN)
+
+    hdc_screen = user32.GetDC(0)
+    hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+    hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+    gdi32.SelectObject(hdc_mem, hbmp)
+    # Source origin is the virtual-screen origin, which is negative when a monitor
+    # sits left of or above the primary one.
+    gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY)
+    try:
+        return _dib_to_image(hdc_mem, hbmp, w, h)
+    finally:
+        gdi32.DeleteDC(hdc_mem)
+        user32.ReleaseDC(0, hdc_screen)
+        gdi32.DeleteObject(hbmp)
+
+
+def _looks_blank(img) -> bool:
+    """True when the image has no non-black pixel at all."""
+    # getbbox() bounds the non-zero region and returns None for an all-black image.
+    return img.getbbox() is None
+
+
+def capture_window_image(hwnd: int):
+    """
+    Captures a single window into a PIL Image, including parts of it that other
+    windows are covering.
+
+    Cropping a screenshot would capture whatever is on top — on CI that is often
+    the very popup that broke the test, so the evidence shows the intruder rather
+    than the window under test. PrintWindow asks the window to render itself
+    instead.
+
+    PrintWindow returns an all-black bitmap for some DWM-composited and XAML
+    windows, so the result is checked and falls back to cropping the desktop.
+    Returning a black rectangle would be the worst outcome: an artifact that looks
+    like a capture and shows nothing.
+    """
+    rect = RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        raise DiagnosticPipelineError(f"GetWindowRect failed for hwnd {hwnd}")
+    w = rect.right - rect.left
+    h = rect.bottom - rect.top
+    if w <= 0 or h <= 0:
+        raise DiagnosticPipelineError(f"Window {hwnd} has an empty rectangle ({w}x{h})")
+
+    hdc_screen = user32.GetDC(0)
+    hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+    hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+    gdi32.SelectObject(hdc_mem, hbmp)
+    try:
+        ok = user32.PrintWindow(hwnd, hdc_mem, PW_RENDERFULLCONTENT)
+        img = _dib_to_image(hdc_mem, hbmp, w, h) if ok else None
+    finally:
+        gdi32.DeleteDC(hdc_mem)
+        user32.ReleaseDC(0, hdc_screen)
+        gdi32.DeleteObject(hbmp)
+
+    if img is not None and not _looks_blank(img):
+        return img
+
+    logger.debug(
+        f"PrintWindow gave no usable content for hwnd {hwnd}; cropping the desktop instead"
+    )
+    x0 = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+    y0 = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+    desktop = capture_screen_image(all_monitors=True)
+    return desktop.crop((rect.left - x0, rect.top - y0, rect.right - x0, rect.bottom - y0))
 
 
 def resolve_ffmpeg_exe() -> str | None:

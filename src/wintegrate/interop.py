@@ -99,6 +99,19 @@ IMC_SETCONVERSIONMODE = 0x0002
 IMC_GETOPENSTATUS = 0x0005
 IMC_SETOPENSTATUS = 0x0006
 
+# GetSystemMetrics indices
+SM_CXSCREEN = 0
+SM_CYSCREEN = 1
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+
+# PrintWindow flags
+PW_RENDERFULLCONTENT = 0x00000002
+
+SRCCOPY = 0x00CC0020
+
 # Desktop / Access Rights
 DESKTOP_ALL = 0x01FF
 HWND_BROADCAST = 0xFFFF
@@ -348,6 +361,11 @@ imm32.ImmGetCompositionStringW.argtypes = [
 imm32.ImmGetCompositionStringW.restype = ctypes.c_long
 imm32.ImmGetDefaultIMEWnd.argtypes = [wintypes.HWND]
 imm32.ImmGetDefaultIMEWnd.restype = wintypes.HWND
+
+user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+user32.PrintWindow.restype = wintypes.BOOL
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+user32.GetWindowRect.restype = wintypes.BOOL
 
 kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
 kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
