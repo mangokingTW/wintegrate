@@ -13,12 +13,17 @@ from wintegrate.exceptions import ElementNotFoundError, WindowDiscoveryTimeoutEr
 from wintegrate.interop import (
     SW_RESTORE,
     attach_to_input_desktop,
+    get_composition_string,
     get_foreground_window,
+    get_ime_status,
+    get_keyboard_layout,
     get_process_image_name,
     get_window_class,
     get_window_pid,
     get_window_title,
     kernel32,
+    set_ime_conversion,
+    set_ime_open,
     user32,
 )
 
@@ -57,6 +62,38 @@ class Window:
     @property
     def is_visible(self) -> bool:
         return bool(user32.IsWindowVisible(self.hwnd))
+
+    def get_ime_status(self) -> dict[str, object]:
+        """
+        Reads this window's IME state: `has_context`, `is_open`, `conversion`,
+        `sentence`, `native_mode`, `full_shape`.
+
+        `has_context` is False for a modern XAML/WinUI control, which routes text
+        services through TSF rather than IMM32 — that means "ask TSF", not "IME off".
+        """
+        return get_ime_status(self.hwnd)
+
+    def set_ime_open(self, is_open: bool) -> bool:
+        """Opens or closes this window's IME. False when it has no IMM32 context."""
+        return set_ime_open(self.hwnd, is_open)
+
+    def set_ime_conversion(self, conversion: int, sentence: int = 0) -> bool:
+        """Sets this window's IME conversion mode (see the IME_CMODE_* flags)."""
+        return set_ime_conversion(self.hwnd, conversion, sentence)
+
+    def get_composition_string(self) -> str:
+        """Returns the IME's in-progress composition text for this window ("" when idle)."""
+        return get_composition_string(self.hwnd)
+
+    @property
+    def keyboard_layout(self) -> int:
+        """The active keyboard layout (HKL) of the thread that owns this window."""
+        return get_keyboard_layout(self.hwnd)
+
+    @property
+    def keyboard_language_id(self) -> int:
+        """The LANGID (low word of the HKL) of this window's keyboard layout."""
+        return self.keyboard_layout & 0xFFFF
 
     def exists(self, require_visible: bool = True) -> bool:
         """Returns whether this window handle is still a live (and optionally visible) window."""

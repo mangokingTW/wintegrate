@@ -29,6 +29,8 @@ from wintegrate.exceptions import WindowDiscoveryTimeoutError
 
 APP = Path(__file__).parent / "win32_dialog_app.py"
 
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="drives a live Win32 dialog")
+
 
 @pytest.fixture
 def dialog():

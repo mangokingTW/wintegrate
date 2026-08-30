@@ -112,6 +112,28 @@ VK_SHIFT = 0x10
 VK_CONTROL = 0x11
 VK_MENU = 0x12  # Alt
 
+# IME control keys. These reach the IME itself rather than the focused control.
+VK_KANA = 0x15  # also VK_HANGUL
+VK_IME_ON = 0x16
+VK_KANJI = 0x19  # also VK_HANJA
+VK_IME_OFF = 0x1A
+VK_CONVERT = 0x1C
+VK_NONCONVERT = 0x1D
+VK_PROCESSKEY = 0xE5  # what an IME reports while it owns a keystroke
+
+# ImmGetConversionStatus mode flags
+IME_CMODE_ALPHANUMERIC = 0x0000
+IME_CMODE_NATIVE = 0x0001
+IME_CMODE_KATAKANA = 0x0002
+IME_CMODE_FULLSHAPE = 0x0008
+IME_CMODE_ROMAN = 0x0010
+
+# ImmGetCompositionString index
+GCS_COMPSTR = 0x0008
+GCS_RESULTSTR = 0x0800
+
+MAPVK_VK_TO_VSC = 0
+
 # Named keys accepted inside braces by send_keys, e.g. "{ENTER}", "{TAB 3}".
 # Names are matched case-insensitively.
 KEY_NAMES: dict[str, int] = {
@@ -140,6 +162,15 @@ KEY_NAMES: dict[str, int] = {
     "ALT": VK_MENU,
     "APPS": 0x5D,  # context-menu key
     "PRTSC": 0x2C,
+    # IME control keys
+    "IME_ON": VK_IME_ON,
+    "IME_OFF": VK_IME_OFF,
+    "KANA": VK_KANA,
+    "HANGUL": VK_KANA,
+    "KANJI": VK_KANJI,
+    "HANJA": VK_KANJI,
+    "CONVERT": VK_CONVERT,
+    "NONCONVERT": VK_NONCONVERT,
     **{f"F{i}": 0x6F + i for i in range(1, 25)},  # F1..F24 -> 0x70..0x87
 }
 
@@ -262,6 +293,43 @@ user32.SendInput.restype = wintypes.UINT
 
 user32.VkKeyScanW.argtypes = [wintypes.WCHAR]
 user32.VkKeyScanW.restype = ctypes.c_short
+
+user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+user32.MapVirtualKeyW.restype = wintypes.UINT
+user32.GetKeyboardLayout.argtypes = [wintypes.DWORD]
+user32.GetKeyboardLayout.restype = wintypes.HKL
+user32.ActivateKeyboardLayout.argtypes = [wintypes.HKL, wintypes.UINT]
+user32.ActivateKeyboardLayout.restype = wintypes.HKL
+user32.LoadKeyboardLayoutW.argtypes = [wintypes.LPCWSTR, wintypes.UINT]
+user32.LoadKeyboardLayoutW.restype = wintypes.HKL
+user32.GetKeyboardLayoutList.argtypes = [ctypes.c_int, ctypes.POINTER(wintypes.HKL)]
+user32.GetKeyboardLayoutList.restype = ctypes.c_int
+
+imm32.ImmGetContext.argtypes = [wintypes.HWND]
+imm32.ImmGetContext.restype = wintypes.HANDLE
+imm32.ImmReleaseContext.argtypes = [wintypes.HWND, wintypes.HANDLE]
+imm32.ImmReleaseContext.restype = wintypes.BOOL
+imm32.ImmGetOpenStatus.argtypes = [wintypes.HANDLE]
+imm32.ImmGetOpenStatus.restype = wintypes.BOOL
+imm32.ImmSetOpenStatus.argtypes = [wintypes.HANDLE, wintypes.BOOL]
+imm32.ImmSetOpenStatus.restype = wintypes.BOOL
+imm32.ImmGetConversionStatus.argtypes = [
+    wintypes.HANDLE,
+    ctypes.POINTER(wintypes.DWORD),
+    ctypes.POINTER(wintypes.DWORD),
+]
+imm32.ImmGetConversionStatus.restype = wintypes.BOOL
+imm32.ImmSetConversionStatus.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+imm32.ImmSetConversionStatus.restype = wintypes.BOOL
+imm32.ImmGetCompositionStringW.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.LPVOID,
+    wintypes.DWORD,
+]
+imm32.ImmGetCompositionStringW.restype = ctypes.c_long
+imm32.ImmGetDefaultIMEWnd.argtypes = [wintypes.HWND]
+imm32.ImmGetDefaultIMEWnd.restype = wintypes.HWND
 
 kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
 kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
@@ -462,6 +530,181 @@ def send_keys(spec: str, delay_per_key: float = 0.02) -> bool:
         if delay_per_key > 0:
             time.sleep(delay_per_key)
     return ok
+
+
+def send_scan_key(vk: int, keyup: bool = False, extended: bool = False) -> INPUT:
+    """
+    Builds a keystroke carried by its scan code rather than its virtual key.
+
+    An IME sits below the virtual-key layer: it watches physical key events and
+    maps them through its own layout. Synthesizing a Unicode codepoint
+    (KEYEVENTF_UNICODE) or a bare virtual key hands the character straight to the
+    focused control, so composition never starts. Scan codes are the only input
+    path an IME actually processes.
+    """
+    scan = user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
+    flags = KEYEVENTF_SCANCODE
+    if keyup:
+        flags |= KEYEVENTF_KEYUP
+    if extended or vk in _EXTENDED_VKS:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    return INPUT(
+        type=INPUT_KEYBOARD,
+        u=_INPUT_UNION(ki=KEYBDINPUT(wVk=0, wScan=scan, dwFlags=flags, time=0, dwExtraInfo=0)),
+    )
+
+
+def send_physical_keys(text: str, delay_per_key: float = 0.03) -> bool:
+    """
+    Types `text` as physical key presses, so an active IME sees and composes them.
+
+    Each character is mapped to a virtual key for the current keyboard layout
+    (VkKeyScanW) and delivered by scan code, with Shift held where the layout
+    requires it. Use this — not `send_char_input` — whenever the IME is the thing
+    under test; use `send_char_input` when you only need the characters to land.
+
+    Returns False if the system refused to inject any of the events.
+    """
+    ok = True
+    for ch in text:
+        vk_scan = user32.VkKeyScanW(ch)
+        if vk_scan == -1:
+            logger.warning(
+                f"Character {ch!r} is not reachable on the active keyboard layout; "
+                "sending it as Unicode instead, which bypasses the IME"
+            )
+            send_char_input(ch)
+            continue
+        vk = vk_scan & 0xFF
+        shift_state = (vk_scan >> 8) & 0xFF
+        modifiers = []
+        if shift_state & 0x01:
+            modifiers.append(VK_SHIFT)
+        if shift_state & 0x02:
+            modifiers.append(VK_CONTROL)
+        if shift_state & 0x04:
+            modifiers.append(VK_MENU)
+
+        events = [send_scan_key(m) for m in modifiers]
+        events += [send_scan_key(vk), send_scan_key(vk, keyup=True)]
+        events += [send_scan_key(m, keyup=True) for m in reversed(modifiers)]
+        arr = (INPUT * len(events))(*events)
+        ok = _send_input_checked(arr, f"physical {ch!r}") and ok
+        if delay_per_key > 0:
+            time.sleep(delay_per_key)
+    return ok
+
+
+def get_ime_status(hwnd: int) -> dict[str, object]:
+    """
+    Reads the IME state attached to a window: open/closed and conversion mode.
+
+    `has_context` is False when the window has no IMM32 context at all — which is
+    the normal answer for a modern XAML/WinUI control, where text services run
+    through TSF instead. Treat a False there as "ask TSF", not as "IME is off".
+    """
+    himc = imm32.ImmGetContext(hwnd)
+    if not himc:
+        return {
+            "has_context": False,
+            "is_open": None,
+            "conversion": None,
+            "sentence": None,
+        }
+    try:
+        is_open = bool(imm32.ImmGetOpenStatus(himc))
+        conversion = wintypes.DWORD()
+        sentence = wintypes.DWORD()
+        if imm32.ImmGetConversionStatus(himc, ctypes.byref(conversion), ctypes.byref(sentence)):
+            conv, sent = conversion.value, sentence.value
+        else:
+            conv, sent = None, None
+        return {
+            "has_context": True,
+            "is_open": is_open,
+            "conversion": conv,
+            "sentence": sent,
+            "native_mode": None if conv is None else bool(conv & IME_CMODE_NATIVE),
+            "full_shape": None if conv is None else bool(conv & IME_CMODE_FULLSHAPE),
+        }
+    finally:
+        imm32.ImmReleaseContext(hwnd, himc)
+
+
+def set_ime_open(hwnd: int, is_open: bool) -> bool:
+    """Opens or closes the IME for a window. False when the window has no IMM32 context."""
+    himc = imm32.ImmGetContext(hwnd)
+    if not himc:
+        return False
+    try:
+        return bool(imm32.ImmSetOpenStatus(himc, bool(is_open)))
+    finally:
+        imm32.ImmReleaseContext(hwnd, himc)
+
+
+def set_ime_conversion(hwnd: int, conversion: int, sentence: int = 0) -> bool:
+    """Sets the IME conversion mode (see the IME_CMODE_* flags)."""
+    himc = imm32.ImmGetContext(hwnd)
+    if not himc:
+        return False
+    try:
+        return bool(imm32.ImmSetConversionStatus(himc, conversion, sentence))
+    finally:
+        imm32.ImmReleaseContext(hwnd, himc)
+
+
+def get_composition_string(hwnd: int, index: int = GCS_COMPSTR) -> str:
+    """
+    Returns the IME's in-progress composition string for a window ("" when idle).
+
+    This is the direct evidence that keystrokes reached the IME rather than the
+    control: mid-composition the characters live here, not in the control's value.
+    """
+    himc = imm32.ImmGetContext(hwnd)
+    if not himc:
+        return ""
+    try:
+        size = imm32.ImmGetCompositionStringW(himc, index, None, 0)
+        if size <= 0:
+            return ""
+        buf = ctypes.create_unicode_buffer(size // 2 + 1)
+        imm32.ImmGetCompositionStringW(himc, index, buf, size)
+        return buf.value
+    finally:
+        imm32.ImmReleaseContext(hwnd, himc)
+
+
+def get_keyboard_layout(hwnd: int | None = None) -> int:
+    """
+    Returns the active keyboard layout (HKL) for a window's thread, or this thread's.
+
+    Per-window IME state is a property of the *thread* owning the window, which is
+    why this takes an hwnd rather than assuming the caller's thread.
+    """
+    if hwnd is None:
+        return int(user32.GetKeyboardLayout(0) or 0)
+    thread_id = user32.GetWindowThreadProcessId(hwnd, None)
+    return int(user32.GetKeyboardLayout(thread_id) or 0)
+
+
+def get_keyboard_layout_list() -> list[int]:
+    """Returns every keyboard layout (HKL) currently loaded in the session."""
+    count = user32.GetKeyboardLayoutList(0, None)
+    if count <= 0:
+        return []
+    arr = (wintypes.HKL * count)()
+    got = user32.GetKeyboardLayoutList(count, arr)
+    return [int(arr[i]) for i in range(got)]
+
+
+def activate_keyboard_layout(hkl: int, flags: int = 0) -> int:
+    """Activates a keyboard layout for the calling thread; returns the previous HKL."""
+    return int(user32.ActivateKeyboardLayout(wintypes.HKL(hkl), flags) or 0)
+
+
+def load_keyboard_layout(layout_id: str, flags: int = 1) -> int:
+    """Loads a layout by identifier (e.g. "00000404" for zh-TW); returns its HKL."""
+    return int(user32.LoadKeyboardLayoutW(layout_id, flags) or 0)
 
 
 def send_mouse_click(x: int, y: int):

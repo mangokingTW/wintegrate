@@ -21,8 +21,13 @@ import sys
 import time
 from ctypes import wintypes
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+# Guarded so the module's constants stay importable off-Windows, where test
+# collection still has to succeed even though the dialog itself cannot run.
+if sys.platform == "win32":
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+else:  # pragma: no cover - collection-only path
+    user32 = kernel32 = None
 
 # Window styles
 WS_CHILD = 0x40000000
