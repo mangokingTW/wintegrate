@@ -1,0 +1,60 @@
+name: Docs
+
+# Builds on every pull request so a broken reference is caught in review, and
+# deploys only from main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install docs tooling
+        run: python -m pip install --require-hashes -r .github/requirements/docs.txt
+
+      # --strict fails the build on a broken link or an unresolved reference, so
+      # the API page cannot quietly drift away from the code it documents.
+      # mkdocstrings reads src/ directly (paths: [src] in mkdocs.yml) rather than
+      # installing the package: this is a Windows library being documented on a
+      # Linux runner, and it imports there precisely so this works.
+      - name: Build
+        run: mkdocs build --strict
+
+      - name: Upload artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: site/
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
