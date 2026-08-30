@@ -359,6 +359,8 @@ imm32.ImmGetCompositionStringW.argtypes = [
     wintypes.DWORD,
 ]
 imm32.ImmGetCompositionStringW.restype = ctypes.c_long
+imm32.ImmIsIME.argtypes = [wintypes.HKL]
+imm32.ImmIsIME.restype = wintypes.BOOL
 imm32.ImmGetDefaultIMEWnd.argtypes = [wintypes.HWND]
 imm32.ImmGetDefaultIMEWnd.restype = wintypes.HWND
 
@@ -652,11 +654,18 @@ def get_ime_status(hwnd: int) -> dict[str, object]:
     `has_context` is False when the window has no IMM32 context at all — which is
     the normal answer for a modern XAML/WinUI control, where text services run
     through TSF instead. Treat a False there as "ask TSF", not as "IME is off".
+
+    `layout_has_ime` answers the question `has_context` cannot: whether the
+    thread's active keyboard layout is an IME at all. A Bopomofo layout swallows
+    unshifted letters into composition whether or not IMM32 hands out a context,
+    so "no context" and "no IME" are different facts and a caller needs both.
     """
+    layout_is_ime = layout_has_ime(get_keyboard_layout(hwnd))
     himc = imm32.ImmGetContext(hwnd)
     if not himc:
         return {
             "has_context": False,
+            "layout_has_ime": layout_is_ime,
             "is_open": None,
             "conversion": None,
             "sentence": None,
@@ -671,6 +680,7 @@ def get_ime_status(hwnd: int) -> dict[str, object]:
             conv, sent = None, None
         return {
             "has_context": True,
+            "layout_has_ime": layout_is_ime,
             "is_open": is_open,
             "conversion": conv,
             "sentence": sent,
@@ -722,6 +732,14 @@ def get_composition_string(hwnd: int, index: int = GCS_COMPSTR) -> str:
         return buf.value
     finally:
         imm32.ImmReleaseContext(hwnd, himc)
+
+
+def layout_has_ime(hkl: int) -> bool:
+    """Whether a keyboard layout is an IME (Bopomofo, Japanese, Hangul, ...)."""
+    try:
+        return bool(imm32.ImmIsIME(wintypes.HKL(hkl)))
+    except Exception:
+        return False
 
 
 def get_keyboard_layout(hwnd: int | None = None) -> int:

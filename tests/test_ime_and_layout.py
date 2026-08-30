@@ -8,6 +8,15 @@ What they cannot cover on a CI runner is *composition itself* — that needs a
 Chinese/Japanese IME installed and selected, which the hosted images do not have.
 The layout-dependent assertions here are therefore about the API being wired
 correctly, not about a specific IME's behaviour.
+
+Nor do they assert interception, though it is real: on a zh-TW ARM64 desktop,
+send_physical_keys("hello") into the fixture's EDIT produces "" under layout
+0x04040404 and "hello" under 0x04090409. Whether the Bopomofo layout actually
+swallows those letters depends on its conversion mode at that moment, and the
+mode cannot be forced from here — the control routes text services through TSF,
+so IMM32 hands out no context for set_ime_conversion to act on. An assertion
+about it would be a coin flip on the machine's current IME state, which is the
+environment dependency `latin_dialog` exists to remove.
 """
 
 from __future__ import annotations
@@ -101,19 +110,52 @@ def test_keyboard_layout_list_contains_the_active_layout(dialog):
     assert dialog.keyboard_layout in layouts
 
 
-def test_physical_keys_deliver_text(dialog):
+@pytest.fixture
+def latin_dialog(dialog):
+    """The fixture dialog with a plain Latin layout active.
+
+    A scan code means whatever the active layout says it means. On a zh-TW
+    desktop the Bopomofo layout reads unshifted letters as phonetic keys and
+    swallows them into composition, so send_physical_keys("hello") leaves the
+    field empty — the IME working as designed, not the injection failing.
+    Pinning the layout keeps the two tests below about "do scan codes arrive"
+    rather than "does this machine happen to have no IME installed".
+    """
+    original = dialog.keyboard_layout
+    dialog.set_keyboard_layout_verified("00000409")
+    yield dialog
+    try:
+        dialog.set_keyboard_layout_verified(f"{original & 0xFFFF:08x}")
+    except Exception:
+        pass
+
+
+def test_physical_keys_deliver_text(latin_dialog):
     """The scan-code path types real characters — the path an IME can intercept."""
-    dialog.set_foreground(verify=False)
-    edit = edit_of(dialog)
+    latin_dialog.set_foreground(verify=False)
+    edit = edit_of(latin_dialog)
     assert edit.send_physical_keys("hello") is True
     time.sleep(0.3)
     assert edit.get_value() == "hello"
 
 
-def test_physical_keys_handle_shifted_characters(dialog):
+def test_physical_keys_handle_shifted_characters(latin_dialog):
     """Shift state comes from the layout, so capitals must survive the round trip."""
-    dialog.set_foreground(verify=False)
-    edit = edit_of(dialog)
+    latin_dialog.set_foreground(verify=False)
+    edit = edit_of(latin_dialog)
     edit.send_physical_keys("Ab")
     time.sleep(0.3)
     assert edit.get_value() == "Ab"
+
+
+def test_layout_status_distinguishes_no_context_from_no_ime(dialog):
+    """`has_context=False` must not be readable as "there is no IME here".
+
+    A modern control routes text services through TSF, so IMM32 hands out no
+    context even while a Bopomofo layout is actively swallowing keystrokes.
+    Reporting has_context alone would tell a caller the opposite of the truth,
+    which is why get_ime_status also carries the layout's own answer.
+    """
+    status = dialog.get_ime_status()
+    assert "layout_has_ime" in status
+    assert status["layout_has_ime"] == dialog.keyboard_layout_has_ime

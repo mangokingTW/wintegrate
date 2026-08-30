@@ -10,7 +10,11 @@ from pathlib import Path
 
 from wintegrate.diagnostics import WindowCensus, capture_window_image
 from wintegrate.element import UiaElement
-from wintegrate.exceptions import ElementNotFoundError, WindowDiscoveryTimeoutError
+from wintegrate.exceptions import (
+    ActionVerificationError,
+    ElementNotFoundError,
+    WindowDiscoveryTimeoutError,
+)
 from wintegrate.interop import (
     SW_RESTORE,
     attach_to_input_desktop,
@@ -23,6 +27,8 @@ from wintegrate.interop import (
     get_window_pid,
     get_window_title,
     kernel32,
+    layout_has_ime,
+    load_keyboard_layout,
     set_ime_conversion,
     set_ime_open,
     user32,
@@ -85,6 +91,45 @@ class Window:
     def get_composition_string(self) -> str:
         """Returns the IME's in-progress composition text for this window ("" when idle)."""
         return get_composition_string(self.hwnd)
+
+    def set_keyboard_layout_verified(self, layout_id: str, timeout: float = 3.0) -> int:
+        """
+        Switches this window's thread to a keyboard layout and confirms it took.
+
+        `layout_id` is the eight-hex-digit identifier — "00000409" for en-US,
+        "00000404" for zh-TW. Returns the resulting HKL.
+
+        Necessary because the active layout changes what a keystroke *means*: with
+        a Bopomofo layout, unshifted letters are phonetic keys that the IME
+        swallows into composition, so scan-code input that is completely correct
+        produces an empty field. A test that assumes the machine's layout passes or
+        fails on where it happens to run.
+
+        The switch is requested, not commanded: only the owning thread can change
+        its own layout, so this posts WM_INPUTLANGCHANGEREQUEST and then verifies.
+        """
+        hkl = load_keyboard_layout(layout_id)
+        if not hkl:
+            raise ActionVerificationError(f"Could not load keyboard layout {layout_id!r}")
+
+        WM_INPUTLANGCHANGEREQUEST = 0x0050
+        INPUTLANGCHANGE_SYSCHARSET = 0x0001
+        user32.PostMessageW(self.hwnd, WM_INPUTLANGCHANGEREQUEST, INPUTLANGCHANGE_SYSCHARSET, hkl)
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.keyboard_layout == hkl:
+                return hkl
+            time.sleep(0.1)
+        raise ActionVerificationError(
+            f"Window did not switch to layout {layout_id!r} within {timeout}s "
+            f"(still 0x{self.keyboard_layout:X})"
+        )
+
+    @property
+    def keyboard_layout_has_ime(self) -> bool:
+        """Whether this window's active layout is an IME, which changes what keys mean."""
+        return layout_has_ime(self.keyboard_layout)
 
     @property
     def keyboard_layout(self) -> int:

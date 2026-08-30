@@ -61,6 +61,42 @@ Unicode injection hands the codepoint straight to the control. An IME never sees
 it, so composition never starts and no candidate window appears. Testing IME
 behaviour requires scan-code input (`send_physical_keys`).
 
+## A scan code means whatever the active layout says it means
+
+The flip side of the above, and it looks exactly like a bug. On a zh-TW desktop
+with Bopomofo active, `send_physical_keys("hello")` leaves the field **empty** —
+the letters became phonetic keys and went into composition. The same call on the
+same control under en-US types `hello`. Nothing was dropped; the IME took them,
+which is the whole point of the scan-code path.
+
+So a test that types Latin text through `send_physical_keys` and asserts the
+result is really asserting that whoever runs it has no IME installed. Pin the
+layout first:
+
+```python
+window.set_keyboard_layout_verified("00000409")  # en-US
+```
+
+The `_verified` matters: a layout change is a *request* posted to another
+thread, so it is not in effect when the call returns. This one loads the layout,
+posts `WM_INPUTLANGCHANGEREQUEST`, and polls until the thread reports it.
+
+## `has_context: False` does not mean "no IME here"
+
+`get_ime_status()` reports `has_context` from IMM32, and a modern control routes
+text services through TSF instead — so IMM32 hands out no context *even while an
+IME is actively swallowing keystrokes*. Read that field alone and you conclude
+the opposite of the truth.
+
+Read `layout_has_ime` alongside it (or `window.keyboard_layout_has_ime`), which
+asks the thread's active layout directly via `ImmIsIME`.
+
+Note that neither field predicts interception on its own: whether a Bopomofo
+layout swallows a given letter also depends on its conversion mode at that
+moment, and with no IMM32 context there is nothing for `set_ime_conversion` to
+act on. If you need deterministic Latin input, switch the layout rather than
+trying to talk the IME out of it.
+
 ## The selection state after focus is undefined
 
 Focusing a Win32 `EDIT` through UIA selects its entire contents, so the next
