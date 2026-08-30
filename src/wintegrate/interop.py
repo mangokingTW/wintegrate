@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import sys
 import time
 from ctypes import wintypes
@@ -261,6 +262,11 @@ user32.SendInput.restype = wintypes.UINT
 
 user32.VkKeyScanW.argtypes = [wintypes.WCHAR]
 user32.VkKeyScanW.restype = ctypes.c_short
+
+kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.CloseHandle.restype = wintypes.BOOL
 
 user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 user32.AttachThreadInput.restype = wintypes.BOOL
@@ -561,6 +567,66 @@ def get_process_image_name(pid: int) -> str:
         return ""
     finally:
         kernel32.CloseHandle(handle)
+
+
+TH32CS_SNAPPROCESS = 0x00000002
+INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+
+class PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", wintypes.DWORD),
+        ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD),
+        ("pcPriClassBase", wintypes.LONG),
+        ("dwFlags", wintypes.DWORD),
+        ("szExeFile", wintypes.WCHAR * 260),
+    ]
+
+
+def get_parent_pid_map() -> dict[int, int]:
+    """Returns {pid: parent_pid} for every process, via a Toolhelp snapshot."""
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == INVALID_HANDLE_VALUE:
+        raise OSError(f"CreateToolhelp32Snapshot failed (GetLastError={kernel32.GetLastError()})")
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        parents: dict[int, int] = {}
+        if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            raise OSError(f"Process32FirstW failed (GetLastError={kernel32.GetLastError()})")
+        while True:
+            parents[entry.th32ProcessID] = entry.th32ParentProcessID
+            if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                break
+        return parents
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
+def get_ancestor_pids(pid: int | None = None) -> set[int]:
+    """
+    Returns `pid` plus every ancestor PID, walking parent links from a snapshot.
+
+    PIDs are recycled, so a stale parent link can point at an unrelated process and
+    in principle form a cycle; the walk is bounded and cycle-guarded rather than
+    trusting the chain to terminate.
+    """
+    pid = os.getpid() if pid is None else pid
+    parents = get_parent_pid_map()
+    chain = {pid}
+    current = pid
+    for _ in range(64):
+        parent = parents.get(current)
+        if not parent or parent in chain:
+            break
+        chain.add(parent)
+        current = parent
+    return chain
 
 
 def get_foreground_window() -> int:

@@ -119,10 +119,21 @@ with Session(config) as session:
 ## Installation
 
 ```bash
-pip install wintegrate
-# or
+pip install wintegrate          # core: window/element automation, verified input
 uv add wintegrate
 ```
+
+The core install depends on `comtypes` alone. Two optional extras pull in the
+heavier pieces only if you use them:
+
+```bash
+pip install 'wintegrate[video]'    # screen recording + failure screenshots (Pillow, ffmpeg)
+pip install 'wintegrate[desktop]'  # virtual desktop clean-room isolation (pyvda)
+pip install 'wintegrate[all]'
+```
+
+Using a feature without its extra raises an error naming the extra to install, so a
+missing dependency never turns into a silently skipped diagnostic.
 
 Pre-release versions (`0.1.0aN`) are not installed by default — ask for them explicitly:
 ```bash

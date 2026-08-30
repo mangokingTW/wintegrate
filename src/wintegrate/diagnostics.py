@@ -13,8 +13,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PIL import Image
-
+from wintegrate.exceptions import DiagnosticPipelineError
 from wintegrate.interop import (
     BITMAPINFOHEADER,
     WNDENUMPROC,
@@ -29,9 +28,24 @@ from wintegrate.interop import (
 
 logger = logging.getLogger(__name__)
 
+_PILLOW_HINT = (
+    "Screen capture needs Pillow, which ships in the optional 'video' extra: "
+    "pip install 'wintegrate[video]'"
+)
 
-def capture_screen_image() -> Image.Image:
+
+def _load_pil_image():
+    """Imports PIL.Image on demand so the core install does not require Pillow."""
+    try:
+        from PIL import Image
+    except ImportError as exc:  # pragma: no cover - depends on install extras
+        raise DiagnosticPipelineError(_PILLOW_HINT) from exc
+    return Image
+
+
+def capture_screen_image():
     """Captures the current primary display using GDI BitBlt into a PIL Image."""
+    Image = _load_pil_image()
     w = user32.GetSystemMetrics(0)
     h = user32.GetSystemMetrics(1)
     hdc_screen = user32.GetDC(0)
