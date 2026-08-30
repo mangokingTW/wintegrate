@@ -276,6 +276,9 @@ class UiaElement:
         With `required=False` the call returns None instead of raising when nothing
         matches — the presence check to use in place of a raise/except pair.
         """
+        if not any((automation_id, name_exact, class_name, control_type_id, name_contains)):
+            raise ValueError("At least one search criterion must be specified")
+
         deadline = time.monotonic() + timeout
         uia = get_uia()
 
@@ -298,89 +301,88 @@ class UiaElement:
                 cond = uia.CreatePropertyCondition(prop_id, control_type_id)
                 conditions.append(cond)
 
-            if conditions or name_contains:
-                if not conditions:
-                    full_cond = uia.CreateTrueCondition()
-                elif len(conditions) == 1:
-                    full_cond = conditions[0]
-                else:
-                    full_cond = uia.CreateAndConditionFromArray(conditions)
+            if not conditions:
+                full_cond = uia.CreateTrueCondition()
+            elif len(conditions) == 1:
+                full_cond = conditions[0]
+            else:
+                full_cond = uia.CreateAndConditionFromArray(conditions)
 
-                if name_contains is None:
-                    # Every criterion is expressible as a UIA condition.
-                    try:
-                        found = self._element.FindFirst(TreeScope_Descendants, full_cond)
-                        if found:
-                            return UiaElement(found)
-                    except Exception:
-                        pass
-                else:
-                    # Enumerate the candidates the conditions already narrowed down,
-                    # then apply the substring filter on top (AND, not fallback).
-                    needle = name_contains.lower()
-                    try:
-                        arr = self._element.FindAll(TreeScope_Descendants, full_cond)
-                        if arr:
-                            for i in range(arr.Length):
-                                child = arr.GetElement(i)
-                                try:
-                                    c_name = child.CurrentName or ""
-                                except Exception:
-                                    continue
-                                if needle in c_name.lower():
-                                    return UiaElement(child)
-                    except Exception:
-                        pass
-
-            # Fallback for UWP/XAML islands and nested Win32 child HWND boundaries via RawViewWalker
-            try:
-                walker = uia.RawViewWalker
-
-                def matches_node(node) -> bool:
-                    try:
-                        if automation_id and node.CurrentAutomationId != automation_id:
-                            return False
-                        if class_name and node.CurrentClassName != class_name:
-                            return False
-                        if control_type_id and node.CurrentControlType != control_type_id:
-                            return False
-                        if name_exact and (node.CurrentName or "") != name_exact:
-                            return False
-                        if (
-                            name_contains
-                            and name_contains.lower() not in (node.CurrentName or "").lower()
-                        ):
-                            return False
-                        return True
-                    except Exception:
-                        return False
-
-                def search_walker(node, depth=0):
-                    if depth > 15 or not node:
-                        return None
-                    try:
-                        if node != self._element and matches_node(node):
-                            return node
-                    except Exception:
-                        pass
-                    try:
-                        child = walker.GetFirstChildElement(node)
-                        while child:
-                            res = search_walker(child, depth + 1)
-                            if res:
-                                return res
-                            child = walker.GetNextSiblingElement(child)
-                    except Exception:
-                        pass
-                    return None
-
-                raw_found = search_walker(self._element)
-                if raw_found:
-                    return UiaElement(raw_found)
-            except Exception:
-                pass
+            if name_contains is None:
+                # Every criterion is expressible as a UIA condition.
+                try:
+                    found = self._element.FindFirst(TreeScope_Descendants, full_cond)
+                    if found:
+                        return UiaElement(found)
+                except Exception:
+                    pass
+            else:
+                # Enumerate the candidates the conditions already narrowed down,
+                # then apply the substring filter on top (AND, not fallback).
+                needle = name_contains.lower()
+                try:
+                    arr = self._element.FindAll(TreeScope_Descendants, full_cond)
+                    if arr:
+                        for i in range(arr.Length):
+                            child = arr.GetElement(i)
+                            try:
+                                c_name = child.CurrentName or ""
+                            except Exception:
+                                continue
+                            if needle in c_name.lower():
+                                return UiaElement(child)
+                except Exception:
+                    pass
 
             time.sleep(0.1)
+
+        # Single-pass fallback for UWP/XAML islands and nested Win32 child HWND boundaries via RawViewWalker
+        try:
+            walker = uia.RawViewWalker
+
+            def matches_node(node) -> bool:
+                try:
+                    if automation_id and node.CurrentAutomationId != automation_id:
+                        return False
+                    if class_name and node.CurrentClassName != class_name:
+                        return False
+                    if control_type_id and node.CurrentControlType != control_type_id:
+                        return False
+                    if name_exact and (node.CurrentName or "") != name_exact:
+                        return False
+                    if (
+                        name_contains
+                        and name_contains.lower() not in (node.CurrentName or "").lower()
+                    ):
+                        return False
+                    return True
+                except Exception:
+                    return False
+
+            def search_walker(node, depth=0):
+                if depth > 15 or not node:
+                    return None
+                try:
+                    if not uia.CompareElements(node, self._element) and matches_node(node):
+                        return node
+                except Exception:
+                    pass
+                try:
+                    child = walker.GetFirstChildElement(node)
+                    while child:
+                        res = search_walker(child, depth + 1)
+                        if res:
+                            return res
+                        child = walker.GetNextSiblingElement(child)
+                except Exception:
+                    pass
+                return None
+
+            raw_found = search_walker(self._element)
+            if raw_found:
+                return UiaElement(raw_found)
+        except Exception:
+            pass
 
         if not required:
             return None
