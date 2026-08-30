@@ -91,15 +91,22 @@ def test_checkbox_toggle_pattern(dialog):
 def test_combobox_expand_collapse_and_selection(dialog):
     combo = control(dialog, ID_COMBO)
     assert combo.expand_collapse_state == 0
+    # A Win32 combo reports its selection through its value, not through
+    # SelectionPattern: the list items only exist while the dropdown is open.
+    assert combo.get_value() == "Alpha layout"
 
     combo.expand_verified(True)
     assert combo.expand_collapse_state == 1
 
+    items = combo.find_all(control_type_id=50007)  # UIA ListItem
+    assert [i.name for i in items] == ["Alpha layout", "Beta layout", "Gamma layout"]
+
+    items[1].select_verified()
+    time.sleep(0.2)
+    assert combo.get_value() == "Beta layout"
+
     combo.expand_verified(False)
     assert combo.expand_collapse_state == 0
-
-    selected = combo.get_selection()
-    assert selected and selected[0].name == "Alpha layout"
 
 
 def test_listbox_children_and_selection(dialog):
@@ -123,12 +130,26 @@ def test_find_all_filters_by_control_type_and_name(dialog):
     assert [b.name for b in browse] == ["Browse"]
 
 
-def test_send_keys_reaches_the_dialog(dialog):
+def test_send_keys_named_keys_reach_the_dialog(dialog):
     edit = control(dialog, ID_EDIT)
     edit.type_verified("abc", verify_contains="abc")
 
-    # Ctrl+A then Delete clears the field: proves modifiers and named keys both land.
-    edit.send_keys("^a")
+    edit.send_keys("{BACKSPACE}")
+    time.sleep(0.2)
+    assert edit.get_value() == "ab"
+
+
+def test_send_keys_modifiers_reach_the_dialog(dialog):
+    """Shift+End selects to the end of the field, so Delete then clears it.
+
+    Ctrl+A is deliberately not used: a plain Win32 EDIT does not implement
+    select-all, so it would prove nothing about whether modifiers were delivered.
+    """
+    edit = control(dialog, ID_EDIT)
+    edit.type_verified("hello", verify_contains="hello")
+
+    edit.send_keys("{HOME}")
+    edit.send_keys("+{END}")
     edit.send_keys("{DELETE}")
     time.sleep(0.2)
     assert edit.get_value() == ""
