@@ -135,12 +135,6 @@ pip install 'wintegrate[all]'
 Using a feature without its extra raises an error naming the extra to install, so a
 missing dependency never turns into a silently skipped diagnostic.
 
-Pre-release versions (`0.1.0aN`) are not installed by default — ask for them explicitly:
-```bash
-pip install --pre wintegrate
-uv add --prerelease=allow wintegrate
-```
-
 Or install from source with development dependencies:
 ```bash
 git clone https://github.com/mangokingTW/wintegrate.git

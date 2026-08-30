@@ -1,17 +1,11 @@
 name: Publish to PyPI
 
-# Publishes on a GitHub Release, or on demand via workflow_dispatch (TestPyPI by
-# default there, so a dry run never burns a real version number).
+# Publishes on a GitHub Release. workflow_dispatch is kept for a manual re-run of
+# a release that failed after the tag was already cut.
 on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      target:
-        description: Package index to publish to
-        type: choice
-        options: [testpypi, pypi]
-        default: testpypi
 
 jobs:
   build:
@@ -49,25 +43,8 @@ jobs:
           name: dist
           path: dist/
 
-  publish-testpypi:
-    needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
-    runs-on: ubuntu-latest
-    environment: testpypi
-    permissions:
-      id-token: write # OIDC token for Trusted Publishing; no API token stored
-    steps:
-      - uses: actions/download-artifact@v6
-        with:
-          name: dist
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-
   publish-pypi:
     needs: build
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
