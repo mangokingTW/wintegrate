@@ -1,0 +1,43 @@
+name: CodeQL
+
+# GitHub's own static analysis. Results land in the repository's Security tab, so
+# anyone can read an impartial weakness report rather than take the author's word
+# for it. It finds security *weaknesses* -- injection, unsafe deserialization,
+# path traversal -- not malice, which build provenance covers instead.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # Every PR, docs and packaging included: Scorecard's SAST check credits a
+    # project only when its recent PRs ran a static analyser, so a doc-only PR
+    # that skipped CodeQL would drag the score down.
+  schedule:
+    # Weekly, so new queries reach existing code without a push.
+    - cron: "27 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        with:
+          languages: python
+          # security-extended adds the lower-severity queries the default suite
+          # leaves out; this codebase is small enough that the extra runtime and
+          # the extra findings are both manageable.
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4

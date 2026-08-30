@@ -7,14 +7,25 @@ on:
     types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # attest signs a provenance statement for the artifacts; id-token mints
+      # the signing token for it.
+      attestations: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
 
@@ -38,7 +49,16 @@ jobs:
           echo "pyproject version: $VERSION / tag: $TAG"
           test "$VERSION" = "$TAG"
 
-      - uses: actions/upload-artifact@v6
+      # Signs a statement that these exact files were built from this commit by
+      # this workflow run. Anyone can then check a download with
+      # `gh attestation verify <file> --repo mangokingTW/wintegrate`, which is
+      # evidence about provenance that no amount of reading the source provides.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: "dist/*"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
           name: dist
           path: dist/
@@ -50,8 +70,13 @@ jobs:
     permissions:
       id-token: write # OIDC token for Trusted Publishing; no API token stored
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v6
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # attestations: true makes the action mint PEP 740 attestations and upload
+      # them alongside the files, so PyPI itself shows each release as verified
+      # against this repository and workflow.
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          attestations: true

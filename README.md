@@ -6,6 +6,9 @@ A Python library for driving Windows GUIs **from CI**, where no human is watchin
 [![Python 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://pypi.org/project/wintegrate/)
 [![Architecture x64 | ARM64](https://img.shields.io/badge/architecture-x64%20%7C%20ARM64-brightgreen)](https://github.com/mangokingTW/wintegrate)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![PyPI](https://img.shields.io/pypi/v/wintegrate)](https://pypi.org/project/wintegrate/)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/mangokingTW/wintegrate/badge)](https://scorecard.dev/viewer/?uri=github.com/mangokingTW/wintegrate)
+[![CodeQL](https://github.com/mangokingTW/wintegrate/actions/workflows/codeql.yml/badge.svg)](https://github.com/mangokingTW/wintegrate/actions/workflows/codeql.yml)
 
 ---
 
@@ -158,6 +161,24 @@ Run static code analysis & formatting check:
 ```powershell
 ruff check src/ tests/
 ```
+
+---
+
+## Verifying a release
+
+Releases are built by a GitHub Actions workflow and published to PyPI through
+Trusted Publishing — no API token exists to be stolen. Every file carries PEP 740
+attestations (visible on the PyPI page) and GitHub build provenance:
+
+```bash
+gh attestation verify wintegrate-<version>-py3-none-any.whl --repo mangokingTW/wintegrate
+```
+
+A pass proves the file was built by this repository from a specific commit.
+
+This library synthesizes input, reads window contents, captures the screen, and
+can terminate processes — see [SECURITY.md](SECURITY.md) for what that means when
+running it unattended, and for how to report a vulnerability privately.
 
 ---
 
