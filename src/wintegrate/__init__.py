@@ -11,7 +11,14 @@ except PackageNotFoundError:  # running from a source tree without an install
     __version__ = "0.0.0.dev0"
 
 from wintegrate.apps import CALCULATOR, NOTEPAD, AppHandle, AppSpec
-from wintegrate.diagnostics import CensusDiff, ContinuousRecorder, WindowCensus, WindowSnapshot
+from wintegrate.diagnostics import (
+    CensusDiff,
+    ContinuousRecorder,
+    WindowCensus,
+    WindowSnapshot,
+    capture_screen_image,
+    capture_window_image,
+)
 from wintegrate.element import UiaElement
 from wintegrate.env import (
     PlatformCapabilities,
@@ -104,6 +111,8 @@ __all__ = [
     "FocusStealDetectedError",
     "DiagnosticPipelineError",
     "ContinuousRecorder",
+    "capture_screen_image",
+    "capture_window_image",
     "WindowCensus",
     "WindowSnapshot",
     "CensusDiff",

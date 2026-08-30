@@ -368,6 +368,36 @@ class UiaElement:
             f"name_exact={name_exact}, class_name={class_name}, control_type_id={control_type_id})"
         )
 
+    def capture(self, path=None):
+        """
+        Captures the screen region this element occupies and returns a PIL Image.
+        Saves to `path` when given.
+
+        Cropped from a desktop capture rather than rendered: an element is not a
+        window, so there is nothing to ask to draw itself.
+        """
+        from pathlib import Path as _Path
+
+        from wintegrate.diagnostics import capture_screen_image
+        from wintegrate.interop import SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN
+
+        left, top, right, bottom = self.bounding_rectangle
+        if right <= left or bottom <= top:
+            raise ActionVerificationError(
+                f"Element {self} has an empty bounding rectangle ({left},{top},{right},{bottom})"
+            )
+        x0 = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        y0 = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        img = capture_screen_image(all_monitors=True).crop(
+            (left - x0, top - y0, right - x0, bottom - y0)
+        )
+        if path is not None:
+            path = _Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(path)
+            logger.info(f"Saved element capture to {path}")
+        return img
+
     def exists(self) -> bool:
         """
         Returns whether this element is still alive in the UI tree.

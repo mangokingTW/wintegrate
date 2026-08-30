@@ -6,8 +6,9 @@ import logging
 import re
 import subprocess
 import time
+from pathlib import Path
 
-from wintegrate.diagnostics import WindowCensus
+from wintegrate.diagnostics import WindowCensus, capture_window_image
 from wintegrate.element import UiaElement
 from wintegrate.exceptions import ElementNotFoundError, WindowDiscoveryTimeoutError
 from wintegrate.interop import (
@@ -94,6 +95,23 @@ class Window:
     def keyboard_language_id(self) -> int:
         """The LANGID (low word of the HKL) of this window's keyboard layout."""
         return self.keyboard_layout & 0xFFFF
+
+    def capture(self, path: str | Path | None = None):
+        """
+        Captures just this window, including anything covering it, and returns a
+        PIL Image. Saves to `path` when given.
+
+        Prefer this over a full screenshot when diagnosing a specific window: the
+        thing that broke the run is often the popup on top of it, and a desktop
+        capture shows that instead of the window you were driving.
+        """
+        img = capture_window_image(self.hwnd)
+        if path is not None:
+            path = Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            img.save(path)
+            logger.info(f"Saved window capture to {path}")
+        return img
 
     def exists(self, require_visible: bool = True) -> bool:
         """Returns whether this window handle is still a live (and optionally visible) window."""

@@ -89,6 +89,24 @@ intercepts. Reach for it when the IME itself is what you are testing.
     character is timing-dependent. Send `{HOME}` or `{END}` first and the question
     stops mattering.
 
+## Screenshots
+
+```python
+session.capture_screenshot("after-login")            # whole virtual desktop
+session.capture_screenshot("dialog", window=dialog)  # that window only
+window.capture("window.png")
+element.capture("control.png")
+```
+
+A window capture uses `PrintWindow`, so it includes the parts of the window that
+other windows are covering. On CI the thing on top is frequently the popup that
+broke the run, and a cropped screenshot would show the intruder instead of the
+window you were driving.
+
+A failure screenshot is still written automatically when the `Session` block
+raises — but only then, which is why an explicit call is worth having: by the time
+something fails, the state that explains it is often gone.
+
 ## Dialog controls
 
 ```python
