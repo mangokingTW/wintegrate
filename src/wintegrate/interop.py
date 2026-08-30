@@ -499,8 +499,7 @@ def parse_key_spec(spec: str) -> list[tuple[str, object, tuple[int, ...]]]:
                     # Unbounded, this builds one action per repeat: "{TAB 99999999999}"
                     # exhausts memory instead of reporting a typo.
                     raise ValueError(
-                        f"Repeat count {repeat} in {body!r} exceeds the maximum of "
-                        f"{MAX_KEY_REPEAT}"
+                        f"Repeat count {repeat} in {body!r} exceeds the maximum of {MAX_KEY_REPEAT}"
                     )
             vk = KEY_NAMES.get(name.upper())
             if vk is None:
