@@ -130,10 +130,27 @@ def test_find_all_filters_by_control_type_and_name(dialog):
     assert [b.name for b in browse] == ["Browse"]
 
 
+def test_focusing_an_edit_selects_its_contents(dialog):
+    """Focus selects the whole field, so the next keystroke replaces it, not appends.
+
+    This is standard Win32 EDIT behaviour and it bites callers: `send_keys`
+    focuses first, so a bare `{BACKSPACE}` clears the field instead of deleting
+    one character. Collapse the selection with `{END}` (or `{HOME}`) first.
+    """
+    edit = control(dialog, ID_EDIT)
+    edit.type_verified("abc", verify_contains="abc")
+
+    edit.send_keys("{BACKSPACE}")
+    time.sleep(0.2)
+    assert edit.get_value() == ""
+
+
 def test_send_keys_named_keys_reach_the_dialog(dialog):
     edit = control(dialog, ID_EDIT)
     edit.type_verified("abc", verify_contains="abc")
 
+    # Collapse the focus selection before editing, or the next key replaces everything.
+    edit.send_keys("{END}")
     edit.send_keys("{BACKSPACE}")
     time.sleep(0.2)
     assert edit.get_value() == "ab"
