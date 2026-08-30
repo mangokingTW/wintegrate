@@ -78,6 +78,7 @@ def test_multi_window_switching_and_typing():
         win_a.move_and_resize(50, 50, 500, 400)
         win_a.set_foreground(verify=False)
         time.sleep(0.5)
+        editor_a = find_editor(win_a)
 
         if env.is_desktop:
             # 2. On Desktop (Win11), launch Calculator as distinct top-level Window B
@@ -93,11 +94,6 @@ def test_multi_window_switching_and_typing():
             time.sleep(0.5)
 
             try:
-                # Bring win_a to foreground to resolve its editor
-                win_a.set_foreground(verify=False)
-                time.sleep(0.3)
-                editor_a = find_editor(win_a)
-
                 # Focus Win A and type
                 win_a.set_foreground(verify=False)
                 time.sleep(0.3)
@@ -145,18 +141,11 @@ def test_multi_window_switching_and_typing():
             win_b.move_and_resize(580, 50, 500, 400)
             win_b.set_foreground(verify=False)
             time.sleep(0.5)
+            editor_b = find_editor(win_b)
 
             try:
-                win_a.set_foreground(verify=False)
-                time.sleep(0.3)
-                editor_a = find_editor(win_a)
-
-                win_b.set_foreground(verify=False)
-                time.sleep(0.3)
-                editor_b = find_editor(win_b)
-
                 # 3. Focus Window A and Type
-                win_a.set_foreground()
+                win_a.set_foreground(verify=False)
                 time.sleep(0.3)
                 editor_a.type_verified(
                     "Window A Text\n",
@@ -165,7 +154,7 @@ def test_multi_window_switching_and_typing():
                 )
 
                 # 4. Switch to Window B and Type
-                win_b.set_foreground()
+                win_b.set_foreground(verify=False)
                 time.sleep(0.3)
                 editor_b.type_verified(
                     "Window B Text\n",
