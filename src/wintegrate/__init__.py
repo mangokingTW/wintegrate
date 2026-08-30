@@ -11,6 +11,13 @@ except PackageNotFoundError:  # running from a source tree without an install
     __version__ = "0.0.0.dev0"
 
 from wintegrate.apps import CALCULATOR, NOTEPAD, AppHandle, AppSpec
+from wintegrate.controls import (
+    DataGrid,
+    DataGridCell,
+    DataGridRow,
+    TreeView,
+    TreeViewItem,
+)
 from wintegrate.diagnostics import (
     CensusDiff,
     ContinuousRecorder,
@@ -74,6 +81,11 @@ __all__ = [
     "Window",
     "UiaElement",
     "AppSpec",
+    "DataGrid",
+    "DataGridRow",
+    "DataGridCell",
+    "TreeView",
+    "TreeViewItem",
     "AppHandle",
     "NOTEPAD",
     "CALCULATOR",

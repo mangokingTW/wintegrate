@@ -37,11 +37,24 @@ logger = logging.getLogger(__name__)
 # UIA control pattern ids. Declared here rather than imported from comtypes.gen so a
 # comtypes build missing one name cannot take down the whole UIA initialization.
 UIA_SelectionPatternId = 10001
+UIA_ScrollPatternId = 10004
 UIA_ExpandCollapsePatternId = 10005
+UIA_GridPatternId = 10006
+UIA_GridItemPatternId = 10007
 UIA_SelectionItemPatternId = 10010
+UIA_TablePatternId = 10012
+UIA_TableItemPatternId = 10013
 UIA_TogglePatternId = 10015
+UIA_ScrollItemPatternId = 10017
+UIA_ItemContainerPatternId = 10019
+UIA_VirtualizedItemPatternId = 10020
 
 TreeScope_Children = 2
+
+# UIA control types used to recognise grid and tree structure.
+UIA_DataItemControlTypeId = 50029
+UIA_TreeItemControlTypeId = 50024
+UIA_HeaderItemControlTypeId = 50035
 
 _uia = None
 
@@ -629,6 +642,95 @@ class UiaElement:
         raise ActionVerificationError(
             f"Element {self} did not reach expand state {want} within {timeout}s"
         )
+
+    # --- Virtualization countermeasures ---
+
+    def scroll_into_view(self) -> bool:
+        """
+        Brings this element into its container's viewport via ScrollItemPattern.
+
+        Returns False when the element does not support the pattern, which is not
+        an error: a control that never scrolls has nothing to do here.
+        """
+        pat = self._pattern(UIA_ScrollItemPatternId, "IUIAutomationScrollItemPattern")
+        if pat is None:
+            return False
+        try:
+            pat.ScrollIntoView()
+            return True
+        except Exception as exc:
+            logger.debug(f"ScrollIntoView failed on {self} ({type(exc).__name__}): {exc}")
+            return False
+
+    def realize(self) -> bool:
+        """
+        Materializes a virtualized item so it exists in the UIA tree.
+
+        WPF and WinUI collections only create peers for the rows currently on
+        screen; everything else is a placeholder that answers property queries but
+        cannot be invoked or selected. Realize() forces creation. Returns False
+        when the element is not virtualized — the common case, and not a problem.
+        """
+        pat = self._pattern(UIA_VirtualizedItemPatternId, "IUIAutomationVirtualizedItemPattern")
+        if pat is None:
+            return False
+        try:
+            pat.Realize()
+            return True
+        except Exception as exc:
+            logger.debug(f"Realize failed on {self} ({type(exc).__name__}): {exc}")
+            return False
+
+    def ensure_available(self) -> UiaElement:
+        """
+        Makes this element ready to interact with: realize it if virtualized, then
+        scroll it into view. Safe to call on any element; returns self for chaining.
+        """
+        self.realize()
+        self.scroll_into_view()
+        return self
+
+    def find_item_by_property(
+        self, property_id: int, value, start_after: UiaElement | None = None
+    ) -> UiaElement | None:
+        """
+        Finds a child through ItemContainerPattern, which searches the container's
+        own data rather than the visual tree.
+
+        This is the way to reach an item that virtualization has kept out of the
+        tree entirely: `find_descendant` cannot see it, because as far as UIA is
+        concerned it does not exist yet.
+        """
+        pat = self._pattern(UIA_ItemContainerPatternId, "IUIAutomationItemContainerPattern")
+        if pat is None:
+            return None
+        try:
+            after = start_after._element if start_after else None
+            found = pat.FindItemByProperty(after, property_id, value)
+            return UiaElement(found) if found else None
+        except Exception as exc:
+            logger.debug(f"FindItemByProperty failed on {self} ({type(exc).__name__}): {exc}")
+            return None
+
+    # --- Typed control views ---
+
+    def as_data_grid(self):
+        """Views this element as a DataGrid. Raises if it exposes no Grid pattern."""
+        from wintegrate.controls import DataGrid
+
+        return DataGrid(self)
+
+    def as_tree_view(self):
+        """Views this element as a TreeView."""
+        from wintegrate.controls import TreeView
+
+        return TreeView(self)
+
+    def as_tree_item(self):
+        """Views this element as a single TreeView item."""
+        from wintegrate.controls import TreeViewItem
+
+        return TreeViewItem(self)
 
     def send_physical_keys(self, text: str, delay_per_key: float = 0.03) -> bool:
         """
