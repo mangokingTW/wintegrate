@@ -17,22 +17,33 @@ if sys.platform == "win32":
     gdi32 = ctypes.windll.gdi32
 else:
 
-    class _MockDll:
+    class _UnsupportedPlatformFunc:
+        """Importable placeholder for a Win32 API: any call fails fast off-Windows."""
+
+        def __init__(self, dll_name: str, func_name: str):
+            self._label = f"{dll_name}.{func_name}"
+            self.argtypes = []
+            self.restype = None
+
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                f"wintegrate requires Windows: {self._label} is unavailable on this platform"
+            )
+
+    class _UnsupportedPlatformDll:
+        def __init__(self, name: str):
+            self._name = name
+            self._funcs: dict[str, _UnsupportedPlatformFunc] = {}
+
         def __getattr__(self, name):
-            class _MockFunc:
-                def __init__(self):
-                    self.argtypes = []
-                    self.restype = None
+            if name.startswith("_"):
+                raise AttributeError(name)
+            return self._funcs.setdefault(name, _UnsupportedPlatformFunc(self._name, name))
 
-                def __call__(self, *args, **kwargs):
-                    return 0
-
-            return _MockFunc()
-
-    user32 = _MockDll()
-    kernel32 = _MockDll()
-    imm32 = _MockDll()
-    gdi32 = _MockDll()
+    user32 = _UnsupportedPlatformDll("user32")
+    kernel32 = _UnsupportedPlatformDll("kernel32")
+    imm32 = _UnsupportedPlatformDll("imm32")
+    gdi32 = _UnsupportedPlatformDll("gdi32")
 
 # Window Show / Sizing Constants
 SW_HIDE = 0
@@ -173,7 +184,11 @@ class INPUT(ctypes.Structure):
     ]
 
 
-WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+if sys.platform == "win32":
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+else:
+    # Importable stand-in; EnumWindows callbacks are never invoked off-Windows.
+    WNDENUMPROC = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
 
 # Explicit signatures
 user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]

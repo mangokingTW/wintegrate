@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import sys
 from dataclasses import dataclass
@@ -68,6 +69,16 @@ def detect_capabilities() -> PlatformCapabilities:
 
 # Process-wide capabilities singleton
 env = detect_capabilities()
+
+
+def _env_flag(name: str) -> bool:
+    val = os.getenv(name)
+    return val is not None and val.strip().lower() not in ("", "0", "false", "no")
+
+
+def is_ci() -> bool:
+    """Returns True when running under a CI service (CI / GITHUB_ACTIONS truthy)."""
+    return _env_flag("CI") or _env_flag("GITHUB_ACTIONS")
 
 
 def is_windows_server() -> bool:

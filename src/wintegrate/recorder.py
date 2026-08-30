@@ -170,14 +170,27 @@ class ActionPlayer:
                     elem.set_focus()
                 for ch in action.text_content:
                     send_char_input(ch)
-            elif action.action_type == "set_focus" and elem:
-                elem.set_focus()
+            elif action.action_type in ("set_focus", "window_focus"):
+                if elem:
+                    elem.set_focus()
+                elif not action.window_title:
+                    logger.warning(
+                        f"Skipping '{action.action_type}' action: no target element resolved "
+                        "and no window_title to focus"
+                    )
+                # else: the window was already brought to the foreground above
             elif action.action_type == "assert_text" and elem and action.text_content:
                 val = elem.get_value()
                 if normalize_line_endings(action.text_content) not in normalize_line_endings(val):
                     raise ActionVerificationError(
                         f"assert_text failed: '{action.text_content}' not found in '{val}'"
                     )
+            else:
+                logger.warning(
+                    f"Skipping action '{action.action_type}' (unsupported type, unresolved "
+                    f"target element, or missing text_content; "
+                    f"id='{action.target_automation_id}', name='{action.target_name}')"
+                )
 
 
 def inspect_desktop_tree(max_depth: int = 2) -> dict[str, Any]:
