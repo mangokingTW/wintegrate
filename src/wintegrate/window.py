@@ -29,10 +29,13 @@ logger = logging.getLogger(__name__)
 # localized control names are needed.
 DEFAULT_TEXT_INPUT_LADDER: tuple[dict, ...] = (
     {"class_name": "RichEditD2DPT"},  # Win11 tabbed Notepad
-    {"class_name": "NotepadTextBox"},  # Win11 Notepad (formatting rewrite)
     {"class_name": "Edit"},  # classic Win32 edit control
     {"control_type_id": 50030},  # UIA Document
     {"control_type_id": 50004},  # UIA Edit
+    # Note: "NotepadTextBox" is deliberately absent — it is the *container* hwnd
+    # around the RichEdit child, so it wins the race while the child is still
+    # materializing, and its get_value() is always empty (verification can never
+    # pass against it).
 )
 
 
