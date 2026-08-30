@@ -5,6 +5,27 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [Unreleased]
+
+### Added
+
+- `Window.set_keyboard_layout_verified(layout_id)` — switches the window's thread
+  to a keyboard layout and polls until it takes. A layout change is a request
+  posted to another thread, so it is not in effect when the call returns; code
+  that assumed otherwise typed into whichever layout won the race.
+- `get_ime_status()` now reports `layout_has_ime`, and `Window` exposes
+  `keyboard_layout_has_ime`. The status previously could not distinguish "no IME
+  here" from "the IME is running through TSF" — a modern control gives IMM32 no
+  context, so `has_context` is `False` in both cases while keystrokes are being
+  swallowed.
+- `layout_has_ime(hkl)` in `wintegrate.interop`.
+
+### Fixed
+
+- The scan-code input tests pinned themselves to a Latin layout. Under Bopomofo
+  they were failing on ARM64 because `send_physical_keys` was working correctly:
+  the IME took the unshifted letters, which is the reason that input path exists.
+
 ## [0.1.3] — 2026-08-30
 
 ### Added

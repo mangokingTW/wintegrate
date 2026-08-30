@@ -48,6 +48,8 @@ Generated from the source, so it cannot drift from the code.
 
 ::: wintegrate.interop.get_keyboard_layout_list
 
+::: wintegrate.interop.layout_has_ime
+
 ## Diagnostics
 
 ::: wintegrate.diagnostics.ContinuousRecorder
