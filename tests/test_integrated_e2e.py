@@ -67,19 +67,21 @@ def test_live_gui_automation_with_recording():
     with Session(config) as session:
         timeline.record_action("session_entered", details={"fps": 30})
 
-        # 3. Discover or launch live Notepad process
+        # 3. Discover or launch live Notepad process (cold Store-app starts on ARM64
+        # runners regularly exceed 12s, so give discovery generous headroom)
         timeline.record_action("launch_app", text="Launching notepad.exe")
-        proc, win = session.launch_and_discover(
-            ["notepad.exe"],
-            timeout=12.0,
-            title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
-        )
-
-        timeline.record_action(
-            "window_discovered", window=win, details={"hwnd": win.hwnd, "pid": win.pid}
-        )
-
+        proc = None
+        win = None
         try:
+            proc, win = session.launch_and_discover(
+                ["notepad.exe"],
+                timeout=30.0,
+                title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
+            )
+            timeline.record_action(
+                "window_discovered", window=win, details={"hwnd": win.hwnd, "pid": win.pid}
+            )
+
             # 4. Move and resize window
             win.move_and_resize(60, 60, 600, 450)
             win.set_foreground(verify=False)
@@ -107,7 +109,8 @@ def test_live_gui_automation_with_recording():
 
         finally:
             # 8. Clean up
-            win.close(force=True)
+            if win:
+                win.close(force=True)
             if proc:
                 try:
                     proc.kill()

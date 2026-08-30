@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import sys
 import time
 
-import comtypes
-import comtypes.client
+if sys.platform == "win32":
+    import comtypes
+    import comtypes.client
+else:
+    comtypes = None
 
 from wintegrate.exceptions import (
     ActionVerificationError,
@@ -27,40 +31,47 @@ from wintegrate.text import count_lines, normalize_line_endings
 
 logger = logging.getLogger(__name__)
 
-# Ensure thread is attached to input desktop and COM is initialized
-attach_to_input_desktop()
-try:
-    ctypes.windll.ole32.CoInitializeEx(None, 0x2)  # COINIT_MULTITHREADED = 0x2
-except Exception:
-    pass
+_uia = None
 
-# Load UIAutomationClient type library via comtypes
-try:
-    comtypes.client.GetModule("UIAutomationCore.dll")
-    from comtypes.gen.UIAutomationClient import (
-        CUIAutomation,
-        IUIAutomation,
-        IUIAutomationElement,
-        IUIAutomationInvokePattern,
-        IUIAutomationTextPattern,
-        IUIAutomationValuePattern,
-        TreeScope_Descendants,
-        UIA_InvokePatternId,
-        UIA_TextPatternId,
-        UIA_ValuePatternId,
-    )
+if comtypes is not None:
+    # Ensure thread is attached to input desktop and COM is initialized
+    attach_to_input_desktop()
+    try:
+        ctypes.windll.ole32.CoInitializeEx(None, 0x2)  # COINIT_MULTITHREADED = 0x2
+    except Exception:
+        pass
 
-    _uia = comtypes.client.CreateObject(CUIAutomation, interface=IUIAutomation)
-except Exception as exc:
-    logger.warning(
-        f"Failed to initialize UIAutomationCore COM module ({type(exc).__name__}): {exc}"
-    )
-    _uia = None
+    # Load UIAutomationClient type library via comtypes
+    try:
+        comtypes.client.GetModule("UIAutomationCore.dll")
+        from comtypes.gen.UIAutomationClient import (
+            CUIAutomation,
+            IUIAutomation,
+            IUIAutomationElement,
+            IUIAutomationInvokePattern,
+            IUIAutomationTextPattern,
+            IUIAutomationValuePattern,
+            TreeScope_Descendants,
+            UIA_InvokePatternId,
+            UIA_TextPatternId,
+            UIA_ValuePatternId,
+        )
+
+        _uia = comtypes.client.CreateObject(CUIAutomation, interface=IUIAutomation)
+    except Exception as exc:
+        logger.warning(
+            f"Failed to initialize UIAutomationCore COM module ({type(exc).__name__}): {exc}"
+        )
+        _uia = None
 
 
 def get_uia() -> IUIAutomation:
     """Returns the process-wide IUIAutomation singleton."""
     global _uia
+    if comtypes is None:
+        raise RuntimeError(
+            "wintegrate requires Windows: UI Automation (comtypes) is unavailable on this platform"
+        )
     if _uia is None:
         attach_to_input_desktop()
         try:
@@ -395,18 +406,42 @@ class UiaElement:
         Sends hardware keypresses via send_char_input (SendInput KEYEVENTF_UNICODE),
         and asserts verified text mutation.
         """
-        if not self.set_focus(timeout=1.0):
-            raise FocusStealDetectedError(
-                f"Failed to focus element {self} before sending keystrokes"
+        # Foreground contention (first-run popups, notification toasts) is usually
+        # transient, so retry focus a few times before declaring a steal.
+        focus_ok = False
+        for _ in range(3):
+            if self.set_focus(timeout=2.0):
+                focus_ok = True
+                break
+            time.sleep(0.3)
+        if not focus_ok:
+            # Focus verification needs a native handle or an automation id to compare
+            # against; without either it can never confirm, so falling through to text
+            # verification is the only meaningful check available.
+            if self.handle or self.automation_id:
+                raise FocusStealDetectedError(
+                    f"Failed to focus element {self} before sending keystrokes"
+                )
+            logger.warning(
+                f"Focus verification is not possible for {self} (no native window handle "
+                "or automation id); proceeding and relying on text verification"
             )
         time.sleep(0.1)
 
         initial_text = self.get_value()
         initial_lines = count_lines(initial_text) if initial_text else 1
 
+        # When no explicit post-condition is given, derive one from the typed text and
+        # require a *new* occurrence of it: containment alone passes vacuously whenever
+        # the same text already exists in the buffer (e.g. replaying an action twice).
         target_verify_contains = verify_contains
+        required_occurrences = None
         if expected_line_count_delta == 0 and target_verify_contains is None:
             target_verify_contains = text.strip() if text.strip() else text
+            norm_initial = normalize_line_endings(initial_text)
+            required_occurrences = (
+                norm_initial.count(normalize_line_endings(target_verify_contains)) + 1
+            )
 
         # Send characters using SendInput
         for char in text:
@@ -428,7 +463,10 @@ class UiaElement:
             if target_verify_contains is not None:
                 norm_current = normalize_line_endings(current_text)
                 norm_expected = normalize_line_endings(target_verify_contains)
-                if norm_expected not in norm_current:
+                if required_occurrences is not None:
+                    if norm_current.count(norm_expected) < required_occurrences:
+                        verified = False
+                elif norm_expected not in norm_current:
                     verified = False
 
             if verified:
@@ -447,9 +485,12 @@ class UiaElement:
                 current_lines = count_lines(current_text) if current_text else 1
                 fallback_verified = True
                 if target_verify_contains is not None:
-                    if normalize_line_endings(target_verify_contains) not in normalize_line_endings(
-                        current_text
-                    ):
+                    norm_current = normalize_line_endings(current_text)
+                    norm_expected = normalize_line_endings(target_verify_contains)
+                    if required_occurrences is not None:
+                        if norm_current.count(norm_expected) < required_occurrences:
+                            fallback_verified = False
+                    elif norm_expected not in norm_current:
                         fallback_verified = False
                 if expected_line_count_delta != 0:
                     if current_lines - initial_lines != expected_line_count_delta:

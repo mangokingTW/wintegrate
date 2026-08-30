@@ -18,7 +18,7 @@ from wintegrate.diagnostics import (
     capture_screen_image,
 )
 from wintegrate.element import UiaElement
-from wintegrate.env import env
+from wintegrate.env import env, is_ci
 from wintegrate.interop import (
     SW_HIDE,
     WNDENUMPROC,
@@ -40,20 +40,18 @@ class SessionConfig:
     sanitize_runner: bool | str = "auto"
     default_timeout: float = 15.0
     dismiss_oobe: bool | str = "auto"
-    isolated_virtual_desktop: bool = False
+    isolated_virtual_desktop: bool | str = "auto"
 
     @property
     def should_sanitize_runner(self) -> bool:
         if isinstance(self.sanitize_runner, str) and self.sanitize_runner.lower() == "auto":
-            is_ci = bool(os.getenv("CI") or os.getenv("GITHUB_ACTIONS"))
-            return env.is_desktop and is_ci
+            return env.is_desktop and is_ci()
         return bool(self.sanitize_runner)
 
     @property
     def should_dismiss_oobe(self) -> bool:
         if isinstance(self.dismiss_oobe, str) and self.dismiss_oobe.lower() == "auto":
-            is_ci = bool(os.getenv("CI") or os.getenv("GITHUB_ACTIONS"))
-            return env.is_desktop and is_ci
+            return env.is_desktop and is_ci()
         return bool(self.dismiss_oobe)
 
     @property
@@ -62,7 +60,10 @@ class SessionConfig:
             isinstance(self.isolated_virtual_desktop, str)
             and self.isolated_virtual_desktop.lower() == "auto"
         ):
-            return env.supports_virtual_desktops
+            # Isolate interactive desktops so tests never inject input into the
+            # user's live session; CI runners are disposable and skip the desktop
+            # switch (it is slow, notably on ARM64 runners).
+            return env.supports_virtual_desktops and not is_ci()
         return bool(self.isolated_virtual_desktop)
 
 
@@ -80,14 +81,20 @@ def sanitize_ci_runner_environment():
         p = psutil.Process(os.getpid())
         for parent in p.parents():
             excluded_pids.add(parent.pid)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            f"Parent-process exclusion degraded ({type(exc).__name__}: {exc}); "
+            "only the current PID is protected from sanitization"
+        )
 
     pid_list_str = ",".join(str(pid) for pid in excluded_pids)
 
     # 1. Kill noisy background prompts (excluding our own process hierarchy)
     try:
-        ps_cmd = f"Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
+        # Notepad/Calculator are swept because Store apps are single-instance: an
+        # instance leaked by an earlier test makes the next launch open a tab in the
+        # old window instead of a new top-level window, breaking window discovery.
+        ps_cmd = f"Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2','notepad','CalculatorApp','Calculator' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
         )

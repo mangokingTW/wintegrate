@@ -1,5 +1,5 @@
 """Comprehensive multi-window switching and concurrent automation test with recording:
-- Launches two distinct Notepad instances (Notepad A & Notepad B)
+- Launches two distinct top-level windows (Notepad + Calculator on Desktop, dual Notepad on Server)
 - Positions them side by side
 - Switches foreground focus alternately between Window A and Window B
 - Types verified distinct text into each window
@@ -72,29 +72,31 @@ def test_multi_window_switching_and_typing():
         timeline.record_action("launch_win_a", text="Launching Notepad Window A")
         proc_a, win_a = session.launch_and_discover(
             ["notepad.exe"],
-            timeout=12.0,
+            timeout=30.0,
             title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
         )
-        win_a.move_and_resize(50, 50, 500, 400)
-        win_a.set_foreground(verify=False)
-        time.sleep(0.5)
-        editor_a = find_editor(win_a)
-
-        if env.is_desktop:
-            # 2. On Desktop (Win11), launch Calculator as distinct top-level Window B
-            timeline.record_action("launch_win_b", text="Launching Calculator Window B")
-            proc_b, win_b = session.launch_and_discover(
-                ["calc.exe"],
-                timeout=12.0,
-                title_pattern="(?i)calculator|小算盤|计算器",
-                exclude_hwnds={win_a.hwnd},
-            )
-            win_b.move_and_resize(580, 50, 420, 500)
-            win_b.set_foreground(verify=False)
+        proc_b = None
+        win_b = None
+        try:
+            win_a.move_and_resize(50, 50, 500, 400)
+            win_a.set_foreground(verify=False)
             time.sleep(0.5)
+            editor_a = find_editor(win_a)
 
-            try:
-                # Focus Win A and type
+            if env.is_desktop:
+                # 2. On Desktop (Win11), launch Calculator as distinct top-level Window B
+                timeline.record_action("launch_win_b", text="Launching Calculator Window B")
+                proc_b, win_b = session.launch_and_discover(
+                    ["calc.exe"],
+                    timeout=30.0,
+                    title_pattern="(?i)calculator|小算盤|计算器",
+                    exclude_hwnds={win_a.hwnd},
+                )
+                win_b.move_and_resize(580, 50, 420, 500)
+                win_b.set_foreground(verify=False)
+                time.sleep(0.5)
+
+                # 3. Focus Window A and type
                 win_a.set_foreground(verify=False)
                 time.sleep(0.3)
                 editor_a.type_verified(
@@ -103,47 +105,39 @@ def test_multi_window_switching_and_typing():
                     verify_contains="Window A Text",
                 )
 
-                # Switch to Win B and interact
+                # 4. Switch to Window B, drive it, and verify its own state changed
                 win_b.set_foreground(verify=False)
                 time.sleep(0.3)
                 calc_root = win_b.re_resolve_element()
                 calc_root.find_descendant(automation_id="num7Button").invoke()
+                display = calc_root.find_descendant(automation_id="CalculatorResults", timeout=5.0)
+                assert "7" in display.name
 
-                # Switch back to Win A and verify buffer
+                # 5. Switch back to Window A and assert isolation in both directions
                 win_a.set_foreground(verify=False)
                 time.sleep(0.3)
                 res_a = editor_a.get_value()
                 assert "Window A Text" in res_a
+                assert "7" not in res_a
 
-                timeline.record_action("isolation_verified", details={"res_a": res_a})
-            finally:
-                win_a.close(force=True)
-                win_b.close(force=True)
-                if proc_a:
-                    try:
-                        proc_a.kill()
-                    except Exception:
-                        pass
-                if proc_b:
-                    try:
-                        proc_b.kill()
-                    except Exception:
-                        pass
-        else:
-            # 2. On Server, launch second Win32 Notepad Window B
-            timeline.record_action("launch_win_b", text="Launching Notepad Window B")
-            proc_b, win_b = session.launch_and_discover(
-                ["notepad.exe"],
-                timeout=12.0,
-                title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
-                exclude_hwnds={win_a.hwnd},
-            )
-            win_b.move_and_resize(580, 50, 500, 400)
-            win_b.set_foreground(verify=False)
-            time.sleep(0.5)
-            editor_b = find_editor(win_b)
+                timeline.record_action(
+                    "isolation_verified",
+                    details={"res_a": res_a, "calc_display": display.name},
+                )
+            else:
+                # 2. On Server, launch second Win32 Notepad Window B
+                timeline.record_action("launch_win_b", text="Launching Notepad Window B")
+                proc_b, win_b = session.launch_and_discover(
+                    ["notepad.exe"],
+                    timeout=30.0,
+                    title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
+                    exclude_hwnds={win_a.hwnd},
+                )
+                win_b.move_and_resize(580, 50, 500, 400)
+                win_b.set_foreground(verify=False)
+                time.sleep(0.5)
+                editor_b = find_editor(win_b)
 
-            try:
                 # 3. Focus Window A and Type
                 win_a.set_foreground(verify=False)
                 time.sleep(0.3)
@@ -173,17 +167,17 @@ def test_multi_window_switching_and_typing():
                 timeline.record_action(
                     "isolation_verified", details={"res_a": res_a, "res_b": res_b}
                 )
-            finally:
-                win_a.close(force=True)
-                win_b.close(force=True)
-                if proc_a:
+        finally:
+            for w in (win_a, win_b):
+                if w:
                     try:
-                        proc_a.kill()
+                        w.close(force=True)
                     except Exception:
                         pass
-                if proc_b:
+            for p in (proc_a, proc_b):
+                if p:
                     try:
-                        proc_b.kill()
+                        p.kill()
                     except Exception:
                         pass
 
