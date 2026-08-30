@@ -26,6 +26,20 @@ from wintegrate import (
 
 APP = Path(__file__).parent / "win32_dialog_app.py"
 
+# CI uploads this directory, so a human can look at what the capture APIs actually
+# produced. The assertions below can only tell you an image has content — they
+# cannot tell you it shows the right thing, and a desktop shrunk to a window's
+# dimensions would satisfy every one of them.
+SAMPLES = Path("recording-artifacts") / "capture-samples"
+
+
+def save_sample(img, name: str) -> Path:
+    SAMPLES.mkdir(parents=True, exist_ok=True)
+    path = SAMPLES / f"{name}.png"
+    img.save(path)
+    return path
+
+
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="captures a live Win32 window")
 
 
@@ -53,6 +67,7 @@ def assert_has_content(img, label: str):
 def test_desktop_capture_has_content():
     img = capture_screen_image()
     assert_has_content(img, "primary display")
+    save_sample(img, "desktop-primary")
 
 
 def test_virtual_desktop_capture_covers_at_least_the_primary_display():
@@ -61,6 +76,7 @@ def test_virtual_desktop_capture_covers_at_least_the_primary_display():
     assert_has_content(virtual, "virtual desktop")
     assert virtual.size[0] >= primary.size[0]
     assert virtual.size[1] >= primary.size[1]
+    save_sample(virtual, "desktop-all-monitors")
 
 
 def test_window_capture_matches_the_window_rect(dialog):
@@ -73,6 +89,7 @@ def test_window_capture_matches_the_window_rect(dialog):
     left, top, right, bottom = root.bounding_rectangle
     assert abs(img.size[0] - (right - left)) <= 2
     assert abs(img.size[1] - (bottom - top)) <= 2
+    save_sample(img, "window-printwindow")
 
 
 def test_window_capture_saves_to_a_path(dialog, tmp_path):
@@ -88,6 +105,7 @@ def test_element_capture_is_the_size_of_the_element(dialog, tmp_path):
 
     out = tmp_path / "listbox.png"
     img = listbox.capture(out)
+    save_sample(img, "element-listbox")
 
     assert out.exists()
     assert_has_content(img, "element capture")
