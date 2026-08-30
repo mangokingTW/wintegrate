@@ -6,9 +6,12 @@ parse_key_spec is pure, so the grammar is pinned here without touching Win32.
 from __future__ import annotations
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from wintegrate.interop import (
     KEY_NAMES,
+    MAX_KEY_REPEAT,
     VK_CONTROL,
     VK_MENU,
     VK_RETURN,
@@ -69,3 +72,49 @@ def test_ime_control_keys_are_addressable(name, vk):
     """IME control keys reach the IME itself rather than the focused control."""
     assert KEY_NAMES[name] == vk
     assert parse_key_spec("{" + name + "}") == [("vk", vk, ())]
+
+
+# --- Property-based coverage -------------------------------------------------
+#
+# The three defects fixed in 0.1.2 (unbounded repeat counts, negative counts
+# silently expanding to nothing, Python integer-literal syntax leaking into the
+# grammar) are exactly what a fuzzer looks for in a parser: crashes, hangs, and
+# silent no-ops. Hypothesis gets at the same class of bug from inside the normal
+# test run, which is a better fit than a fuzzing harness for a pure-Python
+# function of this size.
+
+
+@given(st.text(max_size=60))
+@settings(max_examples=500, deadline=None)
+def test_never_raises_anything_other_than_value_error(spec):
+    """Malformed input is a caller error, and must arrive as one."""
+    try:
+        parse_key_spec(spec)
+    except ValueError:
+        pass
+
+
+@given(st.text(max_size=60))
+@settings(max_examples=500, deadline=None)
+def test_output_cannot_be_amplified_beyond_the_repeat_cap(spec):
+    """No input expands without bound: that is the OOM the repeat cap closes."""
+    try:
+        actions = parse_key_spec(spec)
+    except ValueError:
+        return
+    assert len(actions) <= len(spec) * MAX_KEY_REPEAT
+
+
+@given(st.text(alphabet=st.characters(blacklist_characters="{}^+%"), max_size=40))
+@settings(max_examples=300, deadline=None)
+def test_plain_text_round_trips_character_for_character(text):
+    """Text with no syntax in it is typed exactly as given, in order."""
+    actions = parse_key_spec(text)
+    assert actions == [("char", ch, ()) for ch in text]
+
+
+@given(st.sampled_from(sorted(KEY_NAMES)), st.integers(min_value=1, max_value=MAX_KEY_REPEAT))
+@settings(max_examples=200, deadline=None)
+def test_any_named_key_repeats_exactly_as_requested(name, count):
+    actions = parse_key_spec("{" + f"{name} {count}" + "}")
+    assert actions == [("vk", KEY_NAMES[name], ())] * count

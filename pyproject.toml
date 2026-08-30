@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wintegrate"
-version = "0.1.1"
+version = "0.1.2"
 description = "CI-first Windows UI automation library designed for unattended headless/CI runners."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -58,6 +58,7 @@ all = [
 ]
 dev = [
     "wintegrate[all]",
+    "hypothesis>=6.140.3",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.5",

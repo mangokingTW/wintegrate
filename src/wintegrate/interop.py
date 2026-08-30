@@ -191,6 +191,10 @@ KEY_NAMES: dict[str, int] = {
 # Keys that must carry KEYEVENTF_EXTENDEDKEY to be delivered correctly.
 _EXTENDED_VKS = {0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x25, 0x26, 0x27, 0x28, 0x5D, 0x2C}
 
+# A repeat count above this is a typo rather than an intent: even at the default
+# 20 ms per key, a thousand keystrokes already takes 20 seconds to send.
+MAX_KEY_REPEAT = 1000
+
 # Modifier prefixes, following the pywinauto/SendKeys convention.
 _MODIFIER_PREFIXES = {"^": VK_CONTROL, "+": VK_SHIFT, "%": VK_MENU}
 
@@ -478,11 +482,26 @@ def parse_key_spec(spec: str) -> list[tuple[str, object, tuple[int, ...]]]:
                 raise ValueError(f"Empty '{{}}' in key spec: {spec!r}")
             name, _, count_str = body.partition(" ")
             repeat = 1
-            if count_str.strip():
-                try:
-                    repeat = int(count_str)
-                except ValueError as exc:
-                    raise ValueError(f"Invalid repeat count in {body!r}") from exc
+            count_str = count_str.strip()
+            if count_str:
+                # Deliberately not int(): it accepts "+3", "-5" and "1_000_000",
+                # inheriting Python's literal syntax into a grammar that never
+                # promised it. A negative count also used to parse cleanly and
+                # then expand to nothing — a keystroke silently not sent.
+                if not count_str.isdigit():
+                    raise ValueError(
+                        f"Invalid repeat count {count_str!r} in {body!r}: expected digits only"
+                    )
+                repeat = int(count_str)
+                if repeat < 1:
+                    raise ValueError(f"Repeat count in {body!r} must be at least 1")
+                if repeat > MAX_KEY_REPEAT:
+                    # Unbounded, this builds one action per repeat: "{TAB 99999999999}"
+                    # exhausts memory instead of reporting a typo.
+                    raise ValueError(
+                        f"Repeat count {repeat} in {body!r} exceeds the maximum of "
+                        f"{MAX_KEY_REPEAT}"
+                    )
             vk = KEY_NAMES.get(name.upper())
             if vk is None:
                 raise ValueError(
