@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # The workflows pin every action by commit SHA, which is what keeps a
+  # compromised tag from silently entering the build — but a pin also freezes
+  # security fixes. Dependabot moves the pin forward as a reviewable PR.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+
+  # Runtime and dev dependencies from pyproject.toml. The core install is
+  # comtypes alone; the rest arrive through the optional extras.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
