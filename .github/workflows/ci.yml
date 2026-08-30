@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v6
@@ -115,6 +115,16 @@ jobs:
           # 4. Sweep existing background popups
           Get-Process -Name "wsl","wslhost","WindowsTerminal","msedge","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           $global:LASTEXITCODE = 0
+
+      # Python 3.12+ ships pre-installed in the windows-11-arm image's tool cache,
+      # but 3.11 does not: setup-python downloads and installs it on every run
+      # (~90s). Cache the installed toolchain so later runs restore it instead.
+      - name: Cache Python ${{ matrix.python-version }} toolchain
+        if: matrix.python-version == '3.11'
+        uses: actions/cache@v4
+        with:
+          path: C:\hostedtoolcache\windows\Python\3.11*
+          key: python-toolchain-winarm64-${{ matrix.python-version }}
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
