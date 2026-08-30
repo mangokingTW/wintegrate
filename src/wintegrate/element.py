@@ -23,6 +23,7 @@ from wintegrate.interop import (
     WM_GETTEXT,
     WM_GETTEXTLENGTH,
     attach_to_input_desktop,
+    ole32,
     send_char_input,
     send_keys,
     send_mouse_click,
@@ -48,7 +49,7 @@ if comtypes is not None:
     # Ensure thread is attached to input desktop and COM is initialized
     attach_to_input_desktop()
     try:
-        ctypes.windll.ole32.CoInitializeEx(None, 0x2)  # COINIT_MULTITHREADED = 0x2
+        ole32.CoInitializeEx(None, 0x2)  # COINIT_MULTITHREADED = 0x2
     except Exception:
         pass
 
@@ -86,7 +87,7 @@ def get_uia() -> IUIAutomation:
     if _uia is None:
         attach_to_input_desktop()
         try:
-            ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+            ole32.CoInitializeEx(None, 0x2)
         except Exception:
             pass
         comtypes.client.GetModule("UIAutomationCore.dll")

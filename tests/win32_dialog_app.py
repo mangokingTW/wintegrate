@@ -24,8 +24,10 @@ from ctypes import wintypes
 # Guarded so the module's constants stay importable off-Windows, where test
 # collection still has to succeed even though the dialog itself cannot run.
 if sys.platform == "win32":
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
+    # Private handles for the same reason wintegrate uses them: this module
+    # pins argtypes, and ctypes.windll would publish those to the whole process.
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 else:  # pragma: no cover - collection-only path
     user32 = kernel32 = None
 
@@ -87,7 +89,7 @@ def _create(cls: str, text: str, style: int, x: int, y: int, w: int, h: int, par
         None,
     )
     if not hwnd:
-        raise OSError(f"CreateWindowExW({cls!r}) failed: {kernel32.GetLastError()}")
+        raise OSError(f"CreateWindowExW({cls!r}) failed: {ctypes.get_last_error()}")
     return hwnd
 
 
@@ -132,7 +134,7 @@ def build_dialog() -> int:
         None,
     )
     if not dlg:
-        raise OSError(f"Could not create #32770 dialog: {kernel32.GetLastError()}")
+        raise OSError(f"Could not create #32770 dialog: {ctypes.get_last_error()}")
 
     _create("EDIT", "", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, 20, 20, 300, 24, dlg, ID_EDIT)
     _create("BUTTON", "Browse", WS_TABSTOP | BS_PUSHBUTTON, 340, 20, 120, 26, dlg, ID_BROWSE)
