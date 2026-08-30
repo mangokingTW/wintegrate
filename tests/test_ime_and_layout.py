@@ -103,6 +103,7 @@ def test_keyboard_layout_list_contains_the_active_layout(dialog):
 
 def test_physical_keys_deliver_text(dialog):
     """The scan-code path types real characters — the path an IME can intercept."""
+    dialog.set_foreground(verify=False)
     edit = edit_of(dialog)
     assert edit.send_physical_keys("hello") is True
     time.sleep(0.3)
@@ -111,6 +112,7 @@ def test_physical_keys_deliver_text(dialog):
 
 def test_physical_keys_handle_shifted_characters(dialog):
     """Shift state comes from the layout, so capitals must survive the round trip."""
+    dialog.set_foreground(verify=False)
     edit = edit_of(dialog)
     edit.send_physical_keys("Ab")
     time.sleep(0.3)
