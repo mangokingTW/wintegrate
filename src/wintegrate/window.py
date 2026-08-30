@@ -9,11 +9,12 @@ import time
 
 from wintegrate.diagnostics import WindowCensus
 from wintegrate.element import UiaElement
-from wintegrate.exceptions import WindowDiscoveryTimeoutError
+from wintegrate.exceptions import ElementNotFoundError, WindowDiscoveryTimeoutError
 from wintegrate.interop import (
     SW_RESTORE,
     attach_to_input_desktop,
     get_foreground_window,
+    get_process_image_name,
     get_window_class,
     get_window_pid,
     get_window_title,
@@ -22,6 +23,17 @@ from wintegrate.interop import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Locale-independent search ladder for an application's primary text-input element:
+# window classes and UIA control types don't change with the UI language, so no
+# localized control names are needed.
+DEFAULT_TEXT_INPUT_LADDER: tuple[dict, ...] = (
+    {"class_name": "RichEditD2DPT"},  # Win11 tabbed Notepad
+    {"class_name": "NotepadTextBox"},  # Win11 Notepad (formatting rewrite)
+    {"class_name": "Edit"},  # classic Win32 edit control
+    {"control_type_id": 50030},  # UIA Document
+    {"control_type_id": 50004},  # UIA Edit
+)
 
 
 class Window:
@@ -46,6 +58,32 @@ class Window:
     def re_resolve_element(self) -> UiaElement:
         """Always resolves a fresh UIA element directly from the HWND."""
         return UiaElement.from_handle(self.hwnd)
+
+    def find_text_input(
+        self, timeout: float = 20.0, ladder: tuple[dict, ...] | list[dict] | None = None
+    ) -> UiaElement:
+        """
+        Locates this window's primary text-input element using a locale-independent
+        ladder of window classes and UIA control types (see DEFAULT_TEXT_INPUT_LADDER).
+        """
+        conds = tuple(ladder) if ladder else DEFAULT_TEXT_INPUT_LADDER
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                root = self.re_resolve_element()
+                for cond in conds:
+                    try:
+                        el = root.find_descendant(timeout=0.2, **cond)
+                        if el:
+                            return el
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            time.sleep(0.2)
+        raise ElementNotFoundError(
+            f"No text-input element found in window '{self.title}' within {timeout}s"
+        )
 
     def move_to_current_desktop(self):
         """Moves this window to the currently active virtual desktop if pyvda is available."""
@@ -158,10 +196,17 @@ class Window:
         timeout: float = 10.0,
         title_pattern: str | None = None,
         exclude_hwnds: set[int] | None = None,
+        process_names: tuple[str, ...] | list[str] | None = None,
+        window_classes: tuple[str, ...] | list[str] | None = None,
     ) -> tuple[subprocess.Popen, Window]:
         """
         Launches an application and discovers its top-level window by diffing pre/post snapshots.
         Solves launcher PID != window PID issue and allows excluding existing HWNDs.
+
+        Matching prefers locale-independent identities: `window_classes` (window class
+        names) and `process_names` (executable basenames of the window's owning
+        process). `title_pattern` remains as a last-resort fallback; a candidate
+        window is accepted when ANY provided criterion matches.
         """
         attach_to_input_desktop()
         before = WindowCensus.capture()
@@ -174,6 +219,18 @@ class Window:
 
         deadline = time.monotonic() + timeout
         compiled_re = re.compile(title_pattern, re.IGNORECASE) if title_pattern else None
+        proc_names = {p.lower() for p in process_names} if process_names else None
+        classes = set(window_classes) if window_classes else None
+        has_criteria = bool(compiled_re or proc_names or classes)
+
+        def matches(snap) -> bool:
+            if classes and snap.class_name in classes:
+                return True
+            if proc_names and get_process_image_name(snap.pid) in proc_names:
+                return True
+            if compiled_re and compiled_re.search(snap.title):
+                return True
+            return False
 
         def is_ignorable_helper(snap) -> bool:
             title = snap.title.lower()
@@ -193,7 +250,7 @@ class Window:
             # Look for newly added visible top-level windows
             for snap in diff.added:
                 if snap.is_visible and snap.hwnd not in excluded and not is_ignorable_helper(snap):
-                    if compiled_re and not compiled_re.search(snap.title):
+                    if has_criteria and not matches(snap):
                         continue
                     return proc, cls(snap.hwnd, snap.pid)
 
@@ -205,7 +262,7 @@ class Window:
                     and snap.hwnd not in {b.hwnd for b in before}
                     and not is_ignorable_helper(snap)
                 ):
-                    if compiled_re and compiled_re.search(snap.title):
+                    if has_criteria and matches(snap):
                         return proc, cls(snap.hwnd, snap.pid)
 
             time.sleep(0.1)

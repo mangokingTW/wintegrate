@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from wintegrate.apps import CALCULATOR, NOTEPAD, AppHandle, AppSpec
 from wintegrate.diagnostics import CensusDiff, ContinuousRecorder, WindowCensus, WindowSnapshot
 from wintegrate.element import UiaElement
 from wintegrate.env import (
@@ -36,6 +37,10 @@ __all__ = [
     "SessionConfig",
     "Window",
     "UiaElement",
+    "AppSpec",
+    "AppHandle",
+    "NOTEPAD",
+    "CALCULATOR",
     "env",
     "PlatformCapabilities",
     "is_windows_server",

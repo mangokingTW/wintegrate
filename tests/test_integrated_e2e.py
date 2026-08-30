@@ -1,9 +1,8 @@
 """Integrated live GUI automation and verification test:
-- Launches Notepad application
+- Launches Notepad via the managed app-lifecycle API (session.app)
 - Resizes and repositions window
 - Automates UI text input and focus transitions
 - Records action timeline events and continuous screen video
-- Uses Windows 11 isolated clean-room virtual desktop
 """
 
 from __future__ import annotations
@@ -12,40 +11,11 @@ import time
 from pathlib import Path
 
 from wintegrate import (
+    NOTEPAD,
     Session,
     SessionConfig,
     TextActionTimelineRecorder,
-    UiaElement,
-    Window,
 )
-
-
-def find_editor(win: Window, timeout: float = 20.0) -> UiaElement:
-    """Helper to locate Notepad editor control on any OS version/locale."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            root = win.re_resolve_element()
-            for cond in [
-                {"class_name": "RichEditD2DPT", "timeout": 0.2},  # Win11 Tabbed Notepad
-                {"class_name": "Edit", "timeout": 0.2},  # Win32 Classic Notepad
-                {"control_type_id": 50030, "timeout": 0.2},  # Edit ControlType
-                {"control_type_id": 50004, "timeout": 0.2},  # Document ControlType
-                {"name_contains": "Text Editor", "timeout": 0.2},
-                {"name_contains": "Document", "timeout": 0.2},
-                {"name_contains": "文字編輯器", "timeout": 0.2},
-                {"name_contains": "文本编辑器", "timeout": 0.2},
-            ]:
-                try:
-                    editor = root.find_descendant(**cond)
-                    if editor:
-                        return editor
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        time.sleep(0.2)
-    raise RuntimeError("Could not locate Notepad editor control")
 
 
 def test_live_gui_automation_with_recording():
@@ -67,17 +37,11 @@ def test_live_gui_automation_with_recording():
     with Session(config) as session:
         timeline.record_action("session_entered", details={"fps": 30})
 
-        # 3. Discover or launch live Notepad process (cold Store-app starts on ARM64
-        # runners regularly exceed 12s, so give discovery generous headroom)
+        # 3. Launch Notepad with managed lifecycle: locale-independent discovery,
+        # fresh-instance sweep on CI, and guaranteed cleanup on context exit.
         timeline.record_action("launch_app", text="Launching notepad.exe")
-        proc = None
-        win = None
-        try:
-            proc, win = session.launch_and_discover(
-                ["notepad.exe"],
-                timeout=30.0,
-                title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
-            )
+        with session.app(NOTEPAD, timeout=30.0) as app:
+            win = app.window
             timeline.record_action(
                 "window_discovered", window=win, details={"hwnd": win.hwnd, "pid": win.pid}
             )
@@ -90,8 +54,8 @@ def test_live_gui_automation_with_recording():
                 "window_repositioned", window=win, details={"rect": [60, 60, 600, 450]}
             )
 
-            # 5. Direct UIA Element resolution & Find Editor
-            editor = find_editor(win)
+            # 5. Locate the editor via the locale-independent text-input ladder
+            editor = app.find_text_input()
 
             # 6. Perform verified typing
             timeline.record_action("type_start", details={"text": "wintegrate ci\n"})
@@ -107,16 +71,8 @@ def test_live_gui_automation_with_recording():
             assert "wintegrate ci" in val
             timeline.record_action("buffer_verified", details={"result": val})
 
-        finally:
-            # 8. Clean up
-            if win:
-                win.close(force=True)
-            if proc:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-            timeline.record_action("app_closed", window=win)
+        # 8. Cleanup happened on context exit
+        timeline.record_action("app_closed")
 
     # 9. Dump Timeline logs
     timeline.dump_json(artifacts_dir / "timeline.json")

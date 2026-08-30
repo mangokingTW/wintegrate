@@ -357,6 +357,39 @@ def get_window_pid(hwnd: int) -> int:
     return pid.value
 
 
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.QueryFullProcessImageNameW.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.LPWSTR,
+    ctypes.POINTER(wintypes.DWORD),
+]
+kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def get_process_image_name(pid: int) -> str:
+    """
+    Returns the executable basename (lowercase, e.g. 'notepad.exe') for a PID,
+    or "" if the process cannot be opened. Locale-independent, unlike window titles.
+    """
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(buf))
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return buf.value.rsplit("\\", 1)[-1].lower()
+        return ""
+    except Exception:
+        return ""
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def get_foreground_window() -> int:
     """Gets the HWND of the current foreground window."""
     return user32.GetForegroundWindow()
