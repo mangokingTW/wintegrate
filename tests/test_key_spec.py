@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from wintegrate.interop import (
+    KEY_NAMES,
     VK_CONTROL,
     VK_MENU,
     VK_RETURN,
@@ -58,3 +59,13 @@ def test_mixed_text_and_keys():
 def test_invalid_specs_raise(spec):
     with pytest.raises(ValueError):
         parse_key_spec(spec)
+
+
+@pytest.mark.parametrize(
+    "name,vk",
+    [("IME_ON", 0x16), ("IME_OFF", 0x1A), ("KANJI", 0x19), ("HANGUL", 0x15), ("CONVERT", 0x1C)],
+)
+def test_ime_control_keys_are_addressable(name, vk):
+    """IME control keys reach the IME itself rather than the focused control."""
+    assert KEY_NAMES[name] == vk
+    assert parse_key_spec("{" + name + "}") == [("vk", vk, ())]

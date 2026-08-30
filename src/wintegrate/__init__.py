@@ -32,7 +32,11 @@ from wintegrate.exceptions import (
 )
 from wintegrate.interop import (
     KEY_NAMES,
+    get_composition_string,
     get_foreground_window,
+    get_ime_status,
+    get_keyboard_layout,
+    get_keyboard_layout_list,
     get_process_image_name,
     get_window_class,
     get_window_pid,
@@ -41,7 +45,10 @@ from wintegrate.interop import (
     send_char_input,
     send_keys,
     send_mouse_click,
+    send_physical_keys,
     send_vk_input,
+    set_ime_conversion,
+    set_ime_open,
 )
 from wintegrate.recorder import (
     ActionPlayer,
@@ -74,6 +81,13 @@ __all__ = [
     "send_char_input",
     "send_keys",
     "send_vk_input",
+    "send_physical_keys",
+    "get_ime_status",
+    "set_ime_open",
+    "set_ime_conversion",
+    "get_composition_string",
+    "get_keyboard_layout",
+    "get_keyboard_layout_list",
     "parse_key_spec",
     "KEY_NAMES",
     "send_mouse_click",

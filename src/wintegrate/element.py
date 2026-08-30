@@ -26,6 +26,7 @@ from wintegrate.interop import (
     send_char_input,
     send_keys,
     send_mouse_click,
+    send_physical_keys,
     user32,
 )
 from wintegrate.text import count_lines, normalize_line_endings
@@ -574,6 +575,19 @@ class UiaElement:
         raise ActionVerificationError(
             f"Element {self} did not reach expand state {want} within {timeout}s"
         )
+
+    def send_physical_keys(self, text: str, delay_per_key: float = 0.03) -> bool:
+        """
+        Focuses this element and types `text` as physical (scan-code) key presses,
+        which an active IME sees and composes.
+
+        `type_verified` and `send_char_input` inject Unicode codepoints, which reach
+        the control without passing through the IME — fine for getting characters in,
+        useless when the IME itself is under test.
+        """
+        self.set_focus(verify=False)
+        time.sleep(0.05)
+        return send_physical_keys(text, delay_per_key=delay_per_key)
 
     def send_keys(self, spec: str, delay_per_key: float = 0.02) -> bool:
         """
