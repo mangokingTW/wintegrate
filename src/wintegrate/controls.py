@@ -119,7 +119,7 @@ class DataGrid:
         self.element = element
         if self._grid() is None:
             raise ActionVerificationError(
-                f"Element {element} does not support GridPattern; it is not a grid"
+                f"Element does not support GridPattern, so it is not a grid: {element.describe()}"
             )
 
     def __repr__(self) -> str:

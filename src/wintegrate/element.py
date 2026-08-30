@@ -712,6 +712,50 @@ class UiaElement:
             logger.debug(f"FindItemByProperty failed on {self} ({type(exc).__name__}): {exc}")
             return None
 
+    # Pattern id -> name, for describing what an element actually supports.
+    _PATTERN_NAMES = {
+        10000: "Invoke",
+        10001: "Selection",
+        10002: "Value",
+        10004: "Scroll",
+        10005: "ExpandCollapse",
+        10006: "Grid",
+        10007: "GridItem",
+        10010: "SelectionItem",
+        10012: "Table",
+        10013: "TableItem",
+        10014: "Text",
+        10015: "Toggle",
+        10017: "ScrollItem",
+        10019: "ItemContainer",
+        10020: "VirtualizedItem",
+    }
+
+    def supported_patterns(self) -> list[str]:
+        """
+        Names the control patterns this element actually supports.
+
+        For diagnosing "the control does not do what I expected": UIA providers
+        differ between control versions and Windows builds, and a list of what is
+        there beats guessing at what is missing.
+        """
+        found = []
+        for pattern_id, name in self._PATTERN_NAMES.items():
+            try:
+                if self._element.GetCurrentPattern(pattern_id):
+                    found.append(name)
+            except Exception:
+                continue
+        return found
+
+    def describe(self) -> str:
+        """A one-line identity for error messages: what this element is and can do."""
+        return (
+            f"<{self.control_type_name or self.control_type_id} "
+            f"class={self.class_name!r} name={self.name!r} "
+            f"id={self.automation_id!r} patterns={self.supported_patterns()}>"
+        )
+
     # --- Typed control views ---
 
     def as_data_grid(self):

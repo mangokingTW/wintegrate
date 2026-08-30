@@ -215,3 +215,20 @@ def test_scroll_into_view_reports_support(grid):
     """ScrollItemPattern is what moves an off-screen row into the viewport."""
     cell = grid.get_cell(len(GRID_ROWS) - 1, 0)
     assert isinstance(cell.element.scroll_into_view(), bool)
+
+
+def test_report_what_the_providers_actually_expose(dialog):
+    """Prints each control's real identity and patterns into the CI log.
+
+    Not an assertion about behaviour — a standing diagnostic. UIA providers differ
+    between Windows builds and control versions, and when a wrapper says a control
+    "is not a grid", the next question is always what it *is*. Having that in the
+    same run that failed removes a round trip.
+    """
+    root = dialog.re_resolve_element()
+    print("\n--- provider report ---")
+    for child in root.children():
+        print(" ", child.describe())
+        for grandchild in child.children()[:3]:
+            print("    ", grandchild.describe())
+    print("--- end provider report ---")
