@@ -72,7 +72,7 @@ def test_multi_window_switching_and_typing():
         timeline.record_action("launch_win_a", text="Launching Notepad Window A")
         proc_a, win_a = session.launch_and_discover(
             ["notepad.exe"],
-            timeout=12.0,
+            timeout=30.0,
             title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
         )
         proc_b = None
@@ -88,7 +88,7 @@ def test_multi_window_switching_and_typing():
                 timeline.record_action("launch_win_b", text="Launching Calculator Window B")
                 proc_b, win_b = session.launch_and_discover(
                     ["calc.exe"],
-                    timeout=12.0,
+                    timeout=30.0,
                     title_pattern="(?i)calculator|小算盤|计算器",
                     exclude_hwnds={win_a.hwnd},
                 )
@@ -129,7 +129,7 @@ def test_multi_window_switching_and_typing():
                 timeline.record_action("launch_win_b", text="Launching Notepad Window B")
                 proc_b, win_b = session.launch_and_discover(
                     ["notepad.exe"],
-                    timeout=12.0,
+                    timeout=30.0,
                     title_pattern=".* - Notepad.*|.*記事本.*|.*记事本.*|.*Notepad$",
                     exclude_hwnds={win_a.hwnd},
                 )

@@ -406,7 +406,15 @@ class UiaElement:
         Sends hardware keypresses via send_char_input (SendInput KEYEVENTF_UNICODE),
         and asserts verified text mutation.
         """
-        if not self.set_focus(timeout=2.0):
+        # Foreground contention (first-run popups, notification toasts) is usually
+        # transient, so retry focus a few times before declaring a steal.
+        focus_ok = False
+        for _ in range(3):
+            if self.set_focus(timeout=2.0):
+                focus_ok = True
+                break
+            time.sleep(0.3)
+        if not focus_ok:
             # Focus verification needs a native handle or an automation id to compare
             # against; without either it can never confirm, so falling through to text
             # verification is the only meaningful check available.

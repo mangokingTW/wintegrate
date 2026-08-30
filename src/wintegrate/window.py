@@ -210,6 +210,12 @@ class Window:
 
             time.sleep(0.1)
 
+        # Best-effort: don't leak the launcher on timeout (a late-arriving window
+        # can still outlive this — session sanitization sweeps those up).
+        try:
+            proc.kill()
+        except Exception:
+            pass
         raise WindowDiscoveryTimeoutError(
             f"Window failed to appear within {timeout}s (cmd={cmd}, pattern={title_pattern})"
         )

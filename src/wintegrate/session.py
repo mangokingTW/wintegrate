@@ -91,7 +91,10 @@ def sanitize_ci_runner_environment():
 
     # 1. Kill noisy background prompts (excluding our own process hierarchy)
     try:
-        ps_cmd = f"Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
+        # Notepad/Calculator are swept because Store apps are single-instance: an
+        # instance leaked by an earlier test makes the next launch open a tab in the
+        # old window instead of a new top-level window, breaking window discovery.
+        ps_cmd = f"Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2','notepad','CalculatorApp','Calculator' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
         )
