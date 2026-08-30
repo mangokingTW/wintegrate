@@ -59,3 +59,13 @@ def test_unsatisfiable_combination_raises(fake_desktop):
 def test_no_criteria_rejected():
     with pytest.raises(ValueError):
         Window.find(timeout=0.3)
+
+
+def test_element_find_descendant_no_criteria_rejected():
+    from unittest.mock import MagicMock
+
+    from wintegrate.element import UiaElement
+
+    elem = UiaElement(MagicMock())
+    with pytest.raises(ValueError, match="At least one search criterion"):
+        elem.find_descendant()

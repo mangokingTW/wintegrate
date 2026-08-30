@@ -130,6 +130,7 @@ def try_dismiss_oobe_privacy_screen(timeout: float = 15.0) -> bool:
     clicked = 0
 
     known_ids = {"OobeSettingsAcceptButton", "AcceptButton", "NextButton"}
+    exact_names = {"ok", "got it", "yes", "no"}
     name_substrings = [
         "next",
         "accept",
@@ -154,7 +155,9 @@ def try_dismiss_oobe_privacy_screen(timeout: float = 15.0) -> bool:
                 return False
             if elem.automation_id in known_ids:
                 return True
-            elem_name = elem.name.lower()
+            elem_name = elem.name.strip().lower()
+            if elem_name in exact_names:
+                return True
             return any(sub in elem_name for sub in name_substrings)
         except Exception:
             return False
