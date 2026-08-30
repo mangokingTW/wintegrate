@@ -38,10 +38,27 @@ classifiers = [
 ]
 dependencies = [
     "comtypes>=1.4.16",
+]
+
+[project.optional-dependencies]
+# Screen recording, failure screenshots, and the frame pipeline.
+video = [
     "pillow>=12.3.0",
     "imageio-ffmpeg>=0.6.0",
-    "psutil>=7.2.2",
+]
+# Virtual desktop clean-room isolation. pyvda wraps undocumented COM interfaces
+# whose GUIDs change between Windows builds, which is why it stays optional.
+desktop = [
     "pyvda>=0.6.0",
+]
+all = [
+    "wintegrate[video,desktop]",
+]
+dev = [
+    "wintegrate[all]",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.5",
 ]
 
 [project.urls]
@@ -49,13 +66,6 @@ Homepage = "https://github.com/mangokingTW/wintegrate"
 Repository = "https://github.com/mangokingTW/wintegrate"
 Issues = "https://github.com/mangokingTW/wintegrate/issues"
 Changelog = "https://github.com/mangokingTW/wintegrate/releases"
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=9.1.1",
-    "pytest-cov>=7.1.0",
-    "ruff>=0.16.5",
-]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wintegrate"]

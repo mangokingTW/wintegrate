@@ -24,6 +24,7 @@ from wintegrate.interop import (
     SW_HIDE,
     WNDENUMPROC,
     attach_to_input_desktop,
+    get_ancestor_pids,
     get_window_class,
     get_window_title,
     user32,
@@ -77,11 +78,7 @@ def sanitize_ci_runner_environment():
     attach_to_input_desktop()
     excluded_pids = {os.getpid()}
     try:
-        import psutil
-
-        p = psutil.Process(os.getpid())
-        for parent in p.parents():
-            excluded_pids.add(parent.pid)
+        excluded_pids |= get_ancestor_pids()
     except Exception as exc:
         logger.warning(
             f"Parent-process exclusion degraded ({type(exc).__name__}: {exc}); "
