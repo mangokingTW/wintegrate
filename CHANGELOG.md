@@ -5,10 +5,30 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
-## [Unreleased]
+## [0.1.4] — 2026-08-30
 
 ### Added
 
+- **Grid and tree controls.** `DataGrid`, `DataGridRow`, `DataGridCell`,
+  `TreeView`, and `TreeViewItem`, all exported from the package root, wrapping
+  the UIA Grid/GridItem/Table/TableItem and ExpandCollapse patterns. Cells are
+  addressable by column index *or* header name, and `TreeView.navigate_path_verified`
+  walks and expands a path in one call.
+- **Countermeasures for UI virtualization.** A WPF `DataGrid` does not create
+  elements for rows you have not scrolled to, so a plain search finds nothing
+  and the failure looks like a wrong query. `UiaElement.scroll_into_view()`,
+  `.realize()`, `.ensure_available()`, and `.find_item_by_property()` bring an
+  item into existence through ScrollItem/VirtualizedItem/ItemContainer first.
+- `UiaElement.as_data_grid()`, `.as_tree_view()`, and `.as_tree_item()` to cast
+  a found element into the wrappers above.
+- `UiaElement.supported_patterns()` and `.describe()`. An unsupported-pattern
+  error now reports what the element actually is, which is the difference
+  between "GridPattern is unsupported" and knowing you are holding a `List`
+  rather than a `DataGrid`.
+- `DataGrid.get_column_headers()` falls back to `HeaderItem` children: a WPF
+  `DataGrid` supports TablePattern but answers `GetCurrentColumnHeaders` with an
+  empty collection, so the pattern alone reports no headers on the very control
+  the pattern exists for.
 - `Window.set_keyboard_layout_verified(layout_id)` — switches the window's thread
   to a keyboard layout and polls until it takes. A layout change is a request
   posted to another thread, so it is not in effect when the call returns; code
