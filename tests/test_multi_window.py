@@ -110,9 +110,7 @@ def test_multi_window_switching_and_typing():
                 time.sleep(0.3)
                 calc_root = win_b.re_resolve_element()
                 calc_root.find_descendant(automation_id="num7Button").invoke()
-                display = calc_root.find_descendant(
-                    automation_id="CalculatorResults", timeout=5.0
-                )
+                display = calc_root.find_descendant(automation_id="CalculatorResults", timeout=5.0)
                 assert "7" in display.name
 
                 # 5. Switch back to Window A and assert isolation in both directions
