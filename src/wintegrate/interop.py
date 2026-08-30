@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
+import time
 from ctypes import wintypes
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,46 @@ VK_RETURN = 0x0D
 VK_TAB = 0x09
 VK_SPACE = 0x20
 VK_BACK = 0x08
+VK_SHIFT = 0x10
+VK_CONTROL = 0x11
+VK_MENU = 0x12  # Alt
+
+# Named keys accepted inside braces by send_keys, e.g. "{ENTER}", "{TAB 3}".
+# Names are matched case-insensitively.
+KEY_NAMES: dict[str, int] = {
+    "ENTER": VK_RETURN,
+    "RETURN": VK_RETURN,
+    "TAB": VK_TAB,
+    "SPACE": VK_SPACE,
+    "BACKSPACE": VK_BACK,
+    "BS": VK_BACK,
+    "ESC": 0x1B,
+    "ESCAPE": 0x1B,
+    "DELETE": 0x2E,
+    "DEL": 0x2E,
+    "INSERT": 0x2D,
+    "HOME": 0x24,
+    "END": 0x23,
+    "PGUP": 0x21,
+    "PGDN": 0x22,
+    "LEFT": 0x25,
+    "UP": 0x26,
+    "RIGHT": 0x27,
+    "DOWN": 0x28,
+    "SHIFT": VK_SHIFT,
+    "CTRL": VK_CONTROL,
+    "CONTROL": VK_CONTROL,
+    "ALT": VK_MENU,
+    "APPS": 0x5D,  # context-menu key
+    "PRTSC": 0x2C,
+    **{f"F{i}": 0x6F + i for i in range(1, 25)},  # F1..F24 -> 0x70..0x87
+}
+
+# Keys that must carry KEYEVENTF_EXTENDEDKEY to be delivered correctly.
+_EXTENDED_VKS = {0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x25, 0x26, 0x27, 0x28, 0x5D, 0x2C}
+
+# Modifier prefixes, following the pywinauto/SendKeys convention.
+_MODIFIER_PREFIXES = {"^": VK_CONTROL, "+": VK_SHIFT, "%": VK_MENU}
 
 
 class RECT(ctypes.Structure):
@@ -218,6 +259,9 @@ user32.IsWindowVisible.restype = wintypes.BOOL
 user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 user32.SendInput.restype = wintypes.UINT
 
+user32.VkKeyScanW.argtypes = [wintypes.WCHAR]
+user32.VkKeyScanW.restype = ctypes.c_short
+
 user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 user32.AttachThreadInput.restype = wintypes.BOOL
 
@@ -307,6 +351,111 @@ def send_char_input(char: str):
         )
         arr = (INPUT * 2)(inp_down, inp_up)
         _send_input_checked(arr, repr(char))
+
+
+def parse_key_spec(spec: str) -> list[tuple[str, object, tuple[int, ...]]]:
+    """
+    Parses a SendKeys-style spec into `(kind, value, modifier_vks)` actions.
+
+    - `"{ENTER}"` / `"{ESC}"` / `"{F5}"` -> named virtual keys (`kind="vk"`)
+    - `"{TAB 3}"` repeats a named key three times
+    - `"^a"`, `"+{TAB}"`, `"%{F4}"` -> Ctrl / Shift / Alt applied to the next key
+    - anything else is literal text (`kind="char"`), sent as Unicode
+    - `"{{"` and `"}}"` are literal braces
+
+    Pure function: no Win32 calls, so the grammar is testable on any platform.
+    Raises ValueError on an unterminated brace or an unknown key name.
+    """
+    actions: list[tuple[str, object, tuple[int, ...]]] = []
+    pending: list[int] = []
+    i = 0
+    while i < len(spec):
+        ch = spec[i]
+
+        if ch in _MODIFIER_PREFIXES:
+            pending.append(_MODIFIER_PREFIXES[ch])
+            i += 1
+            continue
+
+        if ch == "{":
+            if spec.startswith("{{", i):
+                actions.append(("char", "{", tuple(pending)))
+                pending, i = [], i + 2
+                continue
+            end = spec.find("}", i + 1)
+            if end == -1:
+                raise ValueError(f"Unterminated '{{' in key spec: {spec!r}")
+            body = spec[i + 1 : end].strip()
+            if not body:
+                raise ValueError(f"Empty '{{}}' in key spec: {spec!r}")
+            name, _, count_str = body.partition(" ")
+            repeat = 1
+            if count_str.strip():
+                try:
+                    repeat = int(count_str)
+                except ValueError as exc:
+                    raise ValueError(f"Invalid repeat count in {body!r}") from exc
+            vk = KEY_NAMES.get(name.upper())
+            if vk is None:
+                raise ValueError(
+                    f"Unknown key name {name!r}. Known names: {', '.join(sorted(KEY_NAMES))}"
+                )
+            for _ in range(repeat):
+                actions.append(("vk", vk, tuple(pending)))
+            pending, i = [], end + 1
+            continue
+
+        if spec.startswith("}}", i):
+            actions.append(("char", "}", tuple(pending)))
+            pending, i = [], i + 2
+            continue
+
+        actions.append(("char", ch, tuple(pending)))
+        pending, i = [], i + 1
+
+    return actions
+
+
+def _key_input(vk: int, keyup: bool) -> INPUT:
+    flags = KEYEVENTF_KEYUP if keyup else 0
+    if vk in _EXTENDED_VKS:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    return INPUT(
+        type=INPUT_KEYBOARD,
+        u=_INPUT_UNION(ki=KEYBDINPUT(wVk=vk, wScan=0, dwFlags=flags, time=0, dwExtraInfo=0)),
+    )
+
+
+def send_vk_input(vk: int, modifiers: tuple[int, ...] = ()) -> bool:
+    """Presses a virtual key, holding `modifiers` (Ctrl/Shift/Alt VKs) around it."""
+    events = [_key_input(m, False) for m in modifiers]
+    events += [_key_input(vk, False), _key_input(vk, True)]
+    events += [_key_input(m, True) for m in reversed(modifiers)]
+    arr = (INPUT * len(events))(*events)
+    return _send_input_checked(arr, f"vk=0x{vk:02X} modifiers={modifiers}")
+
+
+def send_keys(spec: str, delay_per_key: float = 0.02) -> bool:
+    """
+    Sends a SendKeys-style spec: named keys in braces, `^`/`+`/`%` modifiers,
+    everything else as literal Unicode text. See `parse_key_spec` for the grammar.
+
+    Returns False if the system refused to inject any of the events.
+    """
+    ok = True
+    for kind, value, modifiers in parse_key_spec(spec):
+        if kind == "vk":
+            ok = send_vk_input(int(value), modifiers) and ok
+        elif modifiers:
+            # A modified letter is a shortcut (e.g. ^a), so send the letter's
+            # virtual key rather than a Unicode codepoint, which ignores modifiers.
+            vk_scan = user32.VkKeyScanW(str(value))
+            ok = send_vk_input(vk_scan & 0xFF, modifiers) and ok
+        else:
+            send_char_input(str(value))
+        if delay_per_key > 0:
+            time.sleep(delay_per_key)
+    return ok
 
 
 def send_mouse_click(x: int, y: int):

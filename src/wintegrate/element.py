@@ -24,12 +24,22 @@ from wintegrate.interop import (
     WM_GETTEXTLENGTH,
     attach_to_input_desktop,
     send_char_input,
+    send_keys,
     send_mouse_click,
     user32,
 )
 from wintegrate.text import count_lines, normalize_line_endings
 
 logger = logging.getLogger(__name__)
+
+# UIA control pattern ids. Declared here rather than imported from comtypes.gen so a
+# comtypes build missing one name cannot take down the whole UIA initialization.
+UIA_SelectionPatternId = 10001
+UIA_ExpandCollapsePatternId = 10005
+UIA_SelectionItemPatternId = 10010
+UIA_TogglePatternId = 10015
+
+TreeScope_Children = 2
 
 _uia = None
 
@@ -248,7 +258,8 @@ class UiaElement:
         class_name: str | None = None,
         control_type_id: int | None = None,
         timeout: float = 5.0,
-    ) -> UiaElement:
+        required: bool = True,
+    ) -> UiaElement | None:
         """
         Finds a descendant matching ALL supplied criteria within a bounded timeout,
         with a RawViewWalker fallback for UWP/XAML islands.
@@ -259,6 +270,9 @@ class UiaElement:
         substring match on the element's Name only — UIA property conditions cannot
         express substring matching, so it is applied as a filter over the candidates
         selected by the other criteria.
+
+        With `required=False` the call returns None instead of raising when nothing
+        matches — the presence check to use in place of a raise/except pair.
         """
         deadline = time.monotonic() + timeout
         uia = get_uia()
@@ -345,9 +359,232 @@ class UiaElement:
 
             time.sleep(0.1)
 
+        if not required:
+            return None
         raise ElementNotFoundError(
-            f"Descendant not found (automation_id={automation_id}, name_contains={name_contains}, name_exact={name_exact})"
+            f"Descendant not found (automation_id={automation_id}, name_contains={name_contains}, "
+            f"name_exact={name_exact}, class_name={class_name}, control_type_id={control_type_id})"
         )
+
+    def exists(self) -> bool:
+        """
+        Returns whether this element is still alive in the UI tree.
+
+        Reads a property off the live element: a destroyed or replaced element
+        raises a COM error instead of answering, which is how staleness surfaces.
+        """
+        try:
+            self._element.CurrentControlType
+            return True
+        except Exception:
+            return False
+
+    def children(self) -> list[UiaElement]:
+        """Returns this element's direct children (control view)."""
+        return self._collect(TreeScope_Children, get_uia().CreateTrueCondition())
+
+    def find_all(
+        self,
+        automation_id: str | None = None,
+        name_contains: str | None = None,
+        name_exact: str | None = None,
+        class_name: str | None = None,
+        control_type_id: int | None = None,
+    ) -> list[UiaElement]:
+        """Returns every descendant matching ALL supplied criteria (empty list if none)."""
+        uia = get_uia()
+        conditions = []
+        if automation_id:
+            conditions.append(uia.CreatePropertyCondition(30011, automation_id))
+        if name_exact:
+            conditions.append(uia.CreatePropertyCondition(30005, name_exact))
+        if class_name:
+            conditions.append(uia.CreatePropertyCondition(30012, class_name))
+        if control_type_id:
+            conditions.append(uia.CreatePropertyCondition(30003, control_type_id))
+
+        if not conditions:
+            cond = uia.CreateTrueCondition()
+        elif len(conditions) == 1:
+            cond = conditions[0]
+        else:
+            cond = uia.CreateAndConditionFromArray(conditions)
+
+        found = self._collect(TreeScope_Descendants, cond)
+        if name_contains:
+            needle = name_contains.lower()
+            found = [el for el in found if needle in el.name.lower()]
+        return found
+
+    def _collect(self, scope, condition) -> list[UiaElement]:
+        try:
+            arr = self._element.FindAll(scope, condition)
+        except Exception as exc:
+            logger.debug(f"FindAll failed ({type(exc).__name__}): {exc}")
+            return []
+        if not arr:
+            return []
+        out = []
+        for i in range(arr.Length):
+            try:
+                out.append(UiaElement(arr.GetElement(i)))
+            except Exception:
+                continue
+        return out
+
+    def _pattern(self, pattern_id: int, interface_name: str):
+        """Resolves a UIA control pattern, or None when the element doesn't support it."""
+        try:
+            raw = self._element.GetCurrentPattern(pattern_id)
+            if not raw:
+                return None
+            module = __import__("comtypes.gen.UIAutomationClient", fromlist=[interface_name])
+            return raw.QueryInterface(getattr(module, interface_name))
+        except Exception as exc:
+            logger.debug(f"Pattern {interface_name} unavailable ({type(exc).__name__}): {exc}")
+            return None
+
+    # --- TogglePattern (checkboxes) ---
+
+    @property
+    def toggle_state(self) -> int | None:
+        """0 = off, 1 = on, 2 = indeterminate; None when not a toggleable control."""
+        pat = self._pattern(UIA_TogglePatternId, "IUIAutomationTogglePattern")
+        if pat is None:
+            return None
+        try:
+            return int(pat.CurrentToggleState)
+        except Exception:
+            return None
+
+    def toggle(self) -> bool:
+        """Advances the toggle state by one step. Returns False if unsupported."""
+        pat = self._pattern(UIA_TogglePatternId, "IUIAutomationTogglePattern")
+        if pat is None:
+            return False
+        try:
+            pat.Toggle()
+            return True
+        except Exception:
+            return False
+
+    def set_toggle_verified(self, checked: bool, timeout: float = 2.0) -> bool:
+        """
+        Drives a checkbox to the requested state and confirms it landed there.
+
+        Toggle() only cycles the state, so a control already in the target state
+        must be left alone; tri-state controls may need more than one step.
+        """
+        want = 1 if checked else 0
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            state = self.toggle_state
+            if state is None:
+                raise ActionVerificationError(f"Element {self} does not support TogglePattern")
+            if state == want:
+                return True
+            if not self.toggle():
+                raise ActionVerificationError(f"Toggle() failed on {self}")
+            time.sleep(0.1)
+        raise ActionVerificationError(
+            f"Toggle did not reach state {want} within {timeout}s (last={self.toggle_state})"
+        )
+
+    # --- SelectionItemPattern (list items, radio buttons, tabs) ---
+
+    @property
+    def is_selected(self) -> bool | None:
+        pat = self._pattern(UIA_SelectionItemPatternId, "IUIAutomationSelectionItemPattern")
+        if pat is None:
+            return None
+        try:
+            return bool(pat.CurrentIsSelected)
+        except Exception:
+            return None
+
+    def select_verified(self, timeout: float = 2.0) -> bool:
+        """Selects this item and confirms the selection stuck."""
+        pat = self._pattern(UIA_SelectionItemPatternId, "IUIAutomationSelectionItemPattern")
+        if pat is None:
+            raise ActionVerificationError(f"Element {self} does not support SelectionItemPattern")
+        try:
+            pat.Select()
+        except Exception as exc:
+            raise ActionVerificationError(f"Select() failed on {self}: {exc}") from exc
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.is_selected:
+                return True
+            time.sleep(0.05)
+        raise ActionVerificationError(f"Element {self} did not become selected within {timeout}s")
+
+    def get_selection(self) -> list[UiaElement]:
+        """Returns the currently selected children of a selection container (list, combo)."""
+        pat = self._pattern(UIA_SelectionPatternId, "IUIAutomationSelectionPattern")
+        if pat is None:
+            return []
+        try:
+            arr = pat.GetCurrentSelection()
+        except Exception:
+            return []
+        if not arr:
+            return []
+        out = []
+        for i in range(arr.Length):
+            try:
+                out.append(UiaElement(arr.GetElement(i)))
+            except Exception:
+                continue
+        return out
+
+    # --- ExpandCollapsePattern (combo boxes, tree items) ---
+
+    @property
+    def expand_collapse_state(self) -> int | None:
+        """0 = collapsed, 1 = expanded, 2 = partially expanded, 3 = leaf; None if unsupported."""
+        pat = self._pattern(UIA_ExpandCollapsePatternId, "IUIAutomationExpandCollapsePattern")
+        if pat is None:
+            return None
+        try:
+            return int(pat.CurrentExpandCollapseState)
+        except Exception:
+            return None
+
+    def expand_verified(self, expand: bool = True, timeout: float = 2.0) -> bool:
+        """Expands or collapses this element and confirms the state changed."""
+        pat = self._pattern(UIA_ExpandCollapsePatternId, "IUIAutomationExpandCollapsePattern")
+        if pat is None:
+            raise ActionVerificationError(f"Element {self} does not support ExpandCollapsePattern")
+        want = 1 if expand else 0
+        try:
+            pat.Expand() if expand else pat.Collapse()
+        except Exception as exc:
+            raise ActionVerificationError(
+                f"{'Expand' if expand else 'Collapse'}() failed on {self}: {exc}"
+            ) from exc
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            state = self.expand_collapse_state
+            # 3 = leaf node: nothing to expand, and that is not a failure.
+            if state == want or state == 3:
+                return True
+            time.sleep(0.05)
+        raise ActionVerificationError(
+            f"Element {self} did not reach expand state {want} within {timeout}s"
+        )
+
+    def send_keys(self, spec: str, delay_per_key: float = 0.02) -> bool:
+        """
+        Focuses this element and sends a SendKeys-style spec ("{ENTER}", "^a", "{TAB 3}").
+
+        Unlike type_verified this asserts no post-condition — the caller decides what
+        the keys were supposed to achieve and verifies that.
+        """
+        self.set_focus(verify=False)
+        time.sleep(0.05)
+        return send_keys(spec, delay_per_key=delay_per_key)
 
     def get_value(self) -> str:
         """Reads element text via TextPattern, ValuePattern, or window text fallback."""

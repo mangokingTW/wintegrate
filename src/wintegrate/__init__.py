@@ -31,13 +31,17 @@ from wintegrate.exceptions import (
     WintegrateError,
 )
 from wintegrate.interop import (
+    KEY_NAMES,
     get_foreground_window,
     get_process_image_name,
     get_window_class,
     get_window_pid,
     get_window_title,
+    parse_key_spec,
     send_char_input,
+    send_keys,
     send_mouse_click,
+    send_vk_input,
 )
 from wintegrate.recorder import (
     ActionPlayer,
@@ -68,6 +72,10 @@ __all__ = [
     "normalize_line_endings",
     "count_lines",
     "send_char_input",
+    "send_keys",
+    "send_vk_input",
+    "parse_key_spec",
+    "KEY_NAMES",
     "send_mouse_click",
     "get_foreground_window",
     "get_process_image_name",
