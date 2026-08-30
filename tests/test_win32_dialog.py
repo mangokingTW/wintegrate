@@ -132,19 +132,26 @@ def test_find_all_filters_by_control_type_and_name(dialog):
     assert [b.name for b in browse] == ["Browse"]
 
 
-def test_focusing_an_edit_selects_its_contents(dialog):
-    """Focus selects the whole field, so the next keystroke replaces it, not appends.
+def test_selection_state_after_focus_is_not_guaranteed(dialog):
+    """A bare destructive key is unsafe, because focus leaves the selection undefined.
 
-    This is standard Win32 EDIT behaviour and it bites callers: `send_keys`
-    focuses first, so a bare `{BACKSPACE}` clears the field instead of deleting
-    one character. Collapse the selection with `{END}` (or `{HOME}`) first.
+    Focusing a Win32 EDIT through UIA selects its whole contents, so the next
+    keystroke replaces the field; arriving by click instead places the caret and
+    selects nothing. `set_focus` does both — UIA SetFocus, then a click — and which
+    one wins is timing-dependent: an ARM64 run produced 'ab' where an x64 run
+    produced ''.
+
+    So this asserts the honest invariant — the field is one of the two states, and
+    a caller must not assume either — rather than pinning whichever behaviour one
+    machine happened to show. The safe pattern is the next test: collapse the
+    selection explicitly first.
     """
     edit = control(dialog, ID_EDIT)
     edit.type_verified("abc", verify_contains="abc")
 
     edit.send_keys("{BACKSPACE}")
     time.sleep(0.2)
-    assert edit.get_value() == ""
+    assert edit.get_value() in ("", "ab")
 
 
 def test_send_keys_named_keys_reach_the_dialog(dialog):

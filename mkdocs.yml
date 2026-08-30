@@ -1,0 +1,71 @@
+site_name: wintegrate
+site_description: CI-first Windows UI automation for unattended x64 and ARM64 runners.
+site_url: https://mangokingtw.github.io/wintegrate/
+repo_url: https://github.com/mangokingTW/wintegrate
+repo_name: mangokingTW/wintegrate
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - What breaks in CI: pitfalls.md
+  - API reference: api.md
+  - Changelog: changelog.md
+
+plugins:
+  - search
+  # Builds the API reference from the docstrings in src/, so the reference cannot
+  # drift from the code the way a hand-written one does. paths=[src] means the
+  # docs build reads the source directly and never installs the package — which
+  # matters because this is a Windows library documented on a Linux runner.
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            heading_level: 3
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            filters: ["!^_"]
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mangokingTW/wintegrate
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/wintegrate/

@@ -16,3 +16,6 @@ tmp-*/
 *.webp
 *.png
 scratch_debug_*.py
+
+# MkDocs build output
+site/

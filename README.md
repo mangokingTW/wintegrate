@@ -5,6 +5,7 @@ A Python library for driving Windows GUIs **from CI**, where no human is watchin
 [![CI UI Automation Tests](https://github.com/mangokingTW/wintegrate/actions/workflows/ci.yml/badge.svg)](https://github.com/mangokingTW/wintegrate/actions/workflows/ci.yml)
 [![Python 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://pypi.org/project/wintegrate/)
 [![Architecture x64 | ARM64](https://img.shields.io/badge/architecture-x64%20%7C%20ARM64-brightgreen)](https://github.com/mangokingTW/wintegrate)
+[![Docs](https://img.shields.io/badge/docs-mangokingtw.github.io-blue)](https://mangokingtw.github.io/wintegrate/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![PyPI](https://img.shields.io/pypi/v/wintegrate)](https://pypi.org/project/wintegrate/)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/mangokingTW/wintegrate/badge)](https://scorecard.dev/viewer/?uri=github.com/mangokingTW/wintegrate)
@@ -116,6 +117,12 @@ with Session(config) as session:
             verify_contains="Hello from CI\nSecond line",
         )
 ```
+
+---
+
+Full documentation: **<https://mangokingtw.github.io/wintegrate/>** — including
+[what breaks in CI](https://mangokingtw.github.io/wintegrate/pitfalls/), a catalogue of the
+failures this library was built against.
 
 ---
 
