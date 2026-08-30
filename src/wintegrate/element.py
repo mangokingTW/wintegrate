@@ -210,13 +210,31 @@ class UiaElement:
             return True
 
         deadline = time.monotonic() + timeout
+        uia = get_uia()
         while time.monotonic() < deadline:
             try:
-                focused = UiaElement.get_focused()
-                if focused.handle and self.handle and focused.handle == self.handle:
-                    return True
-                if focused.automation_id and focused.automation_id == self.automation_id:
-                    return True
+                # Focus often lands on a descendant of the target (XAML/WinUI trees),
+                # so walk the focused element's ancestors. CompareElements matches by
+                # UIA runtime id, which works for elements with no native handle and
+                # no automation id — no polling until timeout for those.
+                node = UiaElement.get_focused()
+                for _ in range(6):
+                    if node is None:
+                        break
+                    try:
+                        if uia.CompareElements(node._element, self._element):
+                            return True
+                    except Exception:
+                        pass
+                    if node.handle and self.handle and node.handle == self.handle:
+                        return True
+                    if (
+                        node.automation_id
+                        and self.automation_id
+                        and node.automation_id == self.automation_id
+                    ):
+                        return True
+                    node = node.get_parent()
             except Exception:
                 pass
             time.sleep(0.05)
@@ -431,13 +449,17 @@ class UiaElement:
         initial_text = self.get_value()
         initial_lines = count_lines(initial_text) if initial_text else 1
 
-        # When no explicit post-condition is given, derive one from the typed text and
-        # require a *new* occurrence of it: containment alone passes vacuously whenever
-        # the same text already exists in the buffer (e.g. replaying an action twice).
+        # When no explicit post-condition is given, derive one from the typed text.
         target_verify_contains = verify_contains
-        required_occurrences = None
         if expected_line_count_delta == 0 and target_verify_contains is None:
             target_verify_contains = text.strip() if text.strip() else text
+
+        # Without a line-count delta, containment alone passes vacuously whenever the
+        # target text already exists in the buffer (replaying an action twice, or an
+        # explicit verify_contains matching pre-existing content while every keystroke
+        # was dropped) — so require a *new* occurrence instead.
+        required_occurrences = None
+        if expected_line_count_delta == 0 and target_verify_contains is not None:
             norm_initial = normalize_line_endings(initial_text)
             required_occurrences = (
                 norm_initial.count(normalize_line_endings(target_verify_contains)) + 1

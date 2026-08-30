@@ -66,6 +66,30 @@ Supports dynamic virtual desktop isolation. When `isolated_virtual_desktop=True`
 - **Automatic Failure Artifacts**: Automatically dumps full-screen screenshots and pre/post `window_census.json` diffs on assertion failure.
 - **Event Timeline Logging**: Logs action timestamps and targets to human-readable `.log` and structured `.json`.
 
+### 7. Managed App Lifecycle & Locale-Independent Discovery (`session.app`)
+Modern Windows apps break naive launch-and-poll automation in specific, repeatable ways.
+`session.app()` packages the countermeasures:
+
+```python
+from wintegrate import NOTEPAD, Session, SessionConfig
+
+with Session(SessionConfig()) as session:
+    with session.app(NOTEPAD) as app:                # cleanup guaranteed, even on failure
+        editor = app.find_text_input()               # locale-independent control ladder
+        editor.type_verified("hello\n", expected_line_count_delta=1)
+```
+
+- **No localized strings**: windows are matched by process image name (`Notepad.exe`),
+  window class (`Notepad`), and UIA control types — none of which change with the UI
+  language. Title regexes are a last-resort fallback and live once, in the `AppSpec`.
+- **Single-instance safety**: Store apps (Notepad) reuse a running instance — a leaked
+  instance makes the next launch open a *tab* instead of a new window, and discovery
+  times out mysteriously. `fresh="auto"` sweeps leftovers before launching (CI only).
+- **Cold-start headroom**: first launches of Store apps regularly exceed 10s on CI
+  runners (ARM64 especially); managed launches default to a 30s discovery timeout.
+- **No leaks**: the context manager closes the window and kills the process on exit,
+  and a timed-out discovery kills its own launcher.
+
 ---
 
 ## Quickstart

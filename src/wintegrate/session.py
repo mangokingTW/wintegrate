@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from wintegrate.apps import AppHandle, AppSpec, kill_processes
 from wintegrate.diagnostics import (
     ContinuousRecorder,
     WindowCensus,
@@ -402,14 +403,66 @@ class Session:
         timeout: float | None = None,
         title_pattern: str | None = None,
         exclude_hwnds: set[int] | None = None,
+        process_names: tuple[str, ...] | list[str] | None = None,
+        window_classes: tuple[str, ...] | list[str] | None = None,
     ) -> tuple[subprocess.Popen, Window]:
         """Wrapper around Window.launch_and_discover with session logging."""
         to = timeout or self.config.default_timeout
         self.log_event("launch_app", f"Launching {cmd}")
         proc, win = Window.launch_and_discover(
-            cmd, timeout=to, title_pattern=title_pattern, exclude_hwnds=exclude_hwnds
+            cmd,
+            timeout=to,
+            title_pattern=title_pattern,
+            exclude_hwnds=exclude_hwnds,
+            process_names=process_names,
+            window_classes=window_classes,
         )
         self.log_event(
             "window_discovered", f"Window '{win.title}' (HWND: {win.hwnd}, PID: {win.pid})"
         )
         return proc, win
+
+    def app(
+        self,
+        spec: AppSpec | list[str] | str,
+        timeout: float | None = None,
+        fresh: bool | str = "auto",
+        title_pattern: str | None = None,
+        exclude_hwnds: set[int] | None = None,
+    ) -> AppHandle:
+        """
+        Launches an application with a managed lifecycle. Use as a context manager:
+
+            with session.app(NOTEPAD) as app:
+                editor = app.find_text_input()
+                editor.type_verified("hello\\n", expected_line_count_delta=1)
+
+        - Matching prefers locale-independent identities from the AppSpec
+          (process image names, window classes) over window titles.
+        - fresh="auto" (CI only) sweeps leftover instances of the app before
+          launching: Store apps are single-instance, so a leaked instance makes
+          the next launch open a tab instead of a new window. Pass fresh=False
+          when launching a second instance of the same app deliberately.
+        - The default timeout is generous because cold Store-app starts on CI
+          runners regularly exceed 10s.
+        - Cleanup (window close + process kill) runs on context exit even when
+          the body raises.
+        """
+        if not isinstance(spec, AppSpec):
+            cmd = tuple(spec) if isinstance(spec, list) else (str(spec),)
+            spec = AppSpec(name=cmd[0], command=cmd, title_pattern=title_pattern)
+
+        do_fresh = is_ci() if fresh == "auto" else bool(fresh)
+        if do_fresh and spec.process_names:
+            kill_processes(spec.process_names)
+            time.sleep(0.3)
+
+        proc, win = self.launch_and_discover(
+            list(spec.command),
+            timeout=timeout if timeout is not None else max(self.config.default_timeout, 30.0),
+            title_pattern=title_pattern or spec.title_pattern,
+            exclude_hwnds=exclude_hwnds,
+            process_names=spec.process_names or None,
+            window_classes=spec.window_classes or None,
+        )
+        return AppHandle(proc, win, spec)
