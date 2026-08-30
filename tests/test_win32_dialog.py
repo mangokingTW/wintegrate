@@ -167,10 +167,12 @@ def test_send_keys_modifiers_reach_the_dialog(dialog):
     edit = control(dialog, ID_EDIT)
     edit.type_verified("hello", verify_contains="hello")
 
-    edit.send_keys("{HOME}")
-    edit.send_keys("+{END}")
-    edit.send_keys("{DELETE}")
-    time.sleep(0.2)
+    # One spec, one focus: every send_keys call re-focuses, and focusing an EDIT
+    # re-selects its contents, so splitting this across three calls made each key
+    # act on a different selection — and gave ARM64 runners three chances to drop
+    # a keystroke instead of one.
+    edit.send_keys("{HOME}+{END}{DELETE}")
+    time.sleep(0.3)
     assert edit.get_value() == ""
 
 
