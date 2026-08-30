@@ -62,8 +62,10 @@ def test_no_criteria_rejected():
 
 
 def test_element_find_descendant_no_criteria_rejected():
+    from unittest.mock import MagicMock
+
     from wintegrate.element import UiaElement
 
-    elem = UiaElement(None)
+    elem = UiaElement(MagicMock())
     with pytest.raises(ValueError, match="At least one search criterion"):
         elem.find_descendant()
