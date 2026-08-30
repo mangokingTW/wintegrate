@@ -20,6 +20,7 @@ import time
 from wintegrate.element import (
     UIA_GridItemPatternId,
     UIA_GridPatternId,
+    UIA_HeaderItemControlTypeId,
     UIA_TableItemPatternId,
     UIA_TablePatternId,
     UIA_TreeItemControlTypeId,
@@ -142,17 +143,32 @@ class DataGrid:
         return int(pat.CurrentColumnCount) if pat else 0
 
     def get_column_headers(self) -> list[str]:
-        """Column header texts, left to right. Empty when the provider exposes none."""
+        """
+        Column header texts, left to right. Empty when the provider exposes none.
+
+        TablePattern is asked first, then the header elements directly: a WPF
+        DataGrid supports TablePattern but answers GetCurrentColumnHeaders with an
+        empty collection, keeping the header texts on HeaderItem children instead.
+        Trusting the pattern alone reports a grid with no headers, which reads like
+        the grid has none rather than like the query looked in the wrong place.
+        """
         pat = self._table()
-        if pat is None:
-            return []
-        try:
-            headers = pat.GetCurrentColumnHeaders()
-            if not headers:
-                return []
-            return [UiaElement(headers.GetElement(i)).name for i in range(headers.Length)]
-        except Exception:
-            return []
+        if pat is not None:
+            try:
+                headers = pat.GetCurrentColumnHeaders()
+                if headers and headers.Length:
+                    return [UiaElement(headers.GetElement(i)).name for i in range(headers.Length)]
+            except Exception:
+                pass
+
+        names = [
+            item.name
+            for item in self.element.find_all(control_type_id=UIA_HeaderItemControlTypeId)
+            if item.name
+        ]
+        # Providers pad the header row with unnamed spacers; a grid never has more
+        # headers than columns.
+        return names[: self.column_count]
 
     def column_index(self, column: int | str) -> int:
         """Resolves a column given either its index or its header text."""

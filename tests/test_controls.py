@@ -18,19 +18,26 @@ import time
 from pathlib import Path
 
 import pytest
-from win32_controls_app import (
-    DIALOG_TITLE,
-    GRID_COLUMNS,
-    GRID_ROWS,
-    ID_GRID,
-    ID_TREE,
-    TREE_DATA,
-)
+from win32_controls_app import DIALOG_TITLE, ID_TREE, TREE_DATA
 
 from wintegrate import Window
 from wintegrate.exceptions import ElementNotFoundError
 
 APP = Path(__file__).parent / "win32_controls_app.py"
+WPF_APP = Path(__file__).parent / "wpf_grid_app.ps1"
+WPF_TITLE = "wintegrate grid fixture"
+
+# Mirrors the fixture's generator, so the expected value of any row is computed
+# rather than duplicated — 200 rows are not worth hard-coding.
+GRID_COLUMNS = ["Name", "Kind", "Status"]
+GRID_ROW_COUNT = 200
+_KINDS = ["widget", "gadget", "gizmo"]
+_STATES = ["ready", "failed", "pending"]
+
+
+def expected_row(i: int) -> list[str]:
+    return [f"row-{i}", _KINDS[i % 3], _STATES[i % 3]]
+
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="drives live Win32 common controls")
 
@@ -51,9 +58,35 @@ def dialog():
             pass
 
 
+@pytest.fixture(scope="module")
+def wpf_window():
+    """A real WPF DataGrid.
+
+    The Win32 report-mode ListView is a UIA *List* — Selection and Scroll only,
+    no GridPattern, its rows plain list items. GridPattern comes from WPF/WinUI,
+    and a WPF DataGrid also virtualizes its rows, which is what makes the
+    virtualization countermeasures testable rather than merely present.
+    """
+    proc = subprocess.Popen(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(WPF_APP)]
+    )
+    try:
+        win = Window.find(title_exact=WPF_TITLE, timeout=40.0)
+        win.set_foreground(verify=False)
+        time.sleep(1.0)
+        yield win
+    finally:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 @pytest.fixture
-def grid(dialog):
-    element = dialog.re_resolve_element().find_descendant(automation_id=str(ID_GRID), timeout=10.0)
+def grid(wpf_window):
+    element = wpf_window.re_resolve_element().find_descendant(
+        automation_id="wintegrate-grid", timeout=15.0
+    )
     return element.as_data_grid()
 
 
@@ -67,7 +100,7 @@ def tree(dialog):
 
 
 def test_grid_reports_its_shape(grid):
-    assert grid.row_count == len(GRID_ROWS)
+    assert grid.row_count == GRID_ROW_COUNT
     assert grid.column_count == len(GRID_COLUMNS)
 
 
@@ -77,14 +110,14 @@ def test_grid_column_headers(grid):
 
 def test_cell_lookup_by_coordinates(grid):
     cell = grid.get_cell(0, 0)
-    assert cell.value == GRID_ROWS[0][0]
+    assert cell.value == expected_row(0)[0]
     assert (cell.row, cell.column) == (0, 0)
 
 
 def test_cell_lookup_by_column_header(grid):
     """A header is the readable way to address a column, and survives reordering."""
     cell = grid.get_cell(2, "Status")
-    assert cell.value == GRID_ROWS[2][2]
+    assert cell.value == expected_row(2)[2]
 
 
 def test_unknown_column_header_names_the_alternatives(grid):
@@ -101,27 +134,27 @@ def test_out_of_range_cell_is_an_error_not_an_empty_result(grid):
 
 def test_reaching_a_row_below_the_viewport(grid):
     """The last row starts off-screen; GetItem addresses data, not pixels."""
-    last = len(GRID_ROWS) - 1
+    last = GRID_ROW_COUNT - 1
     cell = grid.get_cell(last, 0)
-    assert cell.value == GRID_ROWS[last][0]
+    assert cell.value == expected_row(last)[0]
 
 
 def test_row_values(grid):
-    assert grid.row(1).values() == GRID_ROWS[1]
+    assert grid.row(1).values() == expected_row(1)
 
 
 def test_find_row_by_cell_value(grid):
     """Searches every row, including ones never scrolled to."""
-    target = GRID_ROWS[-1][0]
+    target = expected_row(GRID_ROW_COUNT - 1)[0]
     row = grid.find_row_by_cell_value("Name", target)
-    assert row.index == len(GRID_ROWS) - 1
+    assert row.index == GRID_ROW_COUNT - 1
     assert row.cell("Name").value == target
 
 
 def test_find_row_by_cell_value_reports_the_search_when_missing(grid):
     with pytest.raises(ElementNotFoundError) as excinfo:
         grid.find_row_by_cell_value("Name", "no-such-value")
-    assert str(len(GRID_ROWS)) in str(excinfo.value)
+    assert str(GRID_ROW_COUNT) in str(excinfo.value)
 
 
 def test_select_cell_verified(grid):
@@ -197,23 +230,26 @@ def test_navigate_path_names_the_missing_segment_and_the_alternatives(tree):
 # --- Virtualization helpers -------------------------------------------------
 
 
-def test_virtualization_helpers_are_safe_on_ordinary_elements(grid):
-    """
-    A control that is not virtualized must not be harmed by the countermeasures.
+def test_virtualization_helpers_are_transparent(grid):
+    """The countermeasures must be safe to call and leave the element usable.
 
-    realize() returning False is the expected answer for a non-virtualized item,
-    not a failure, and ensure_available() has to stay callable on anything.
+    An earlier version asserted realize() returns False here, which was true of
+    the Win32 ListView that materializes everything. On a WPF DataGrid even the
+    first row supports VirtualizedItemPattern, so pinning a particular return
+    value tested the fixture rather than the behaviour. What callers rely on is
+    that these are safe on anything and change nothing observable.
     """
     cell = grid.get_cell(0, 0)
-    assert cell.element.realize() is False
+    assert isinstance(cell.element.realize(), bool)
+    assert isinstance(cell.element.scroll_into_view(), bool)
     assert cell.element.ensure_available() is cell.element
     # Still usable afterwards: the countermeasures must be transparent.
-    assert cell.value == GRID_ROWS[0][0]
+    assert cell.value == expected_row(0)[0]
 
 
 def test_scroll_into_view_reports_support(grid):
     """ScrollItemPattern is what moves an off-screen row into the viewport."""
-    cell = grid.get_cell(len(GRID_ROWS) - 1, 0)
+    cell = grid.get_cell(GRID_ROW_COUNT - 1, 0)
     assert isinstance(cell.element.scroll_into_view(), bool)
 
 
@@ -232,3 +268,26 @@ def test_report_what_the_providers_actually_expose(dialog):
         for grandchild in child.children()[:3]:
             print("    ", grandchild.describe())
     print("--- end provider report ---")
+
+
+def test_far_rows_are_genuinely_virtualized(grid):
+    """The row is not merely off-screen — it has no UIA peer until realized.
+
+    This is the assertion the Win32 ListView could not support: it materializes
+    every item, so realize() always answered False and the virtualization path was
+    implemented but never exercised. A WPF DataGrid creates peers only for the
+    rows near the viewport, so a row 200 deep is a real virtualized item.
+    """
+    cell = grid.get_cell(GRID_ROW_COUNT - 1, 0)
+    assert cell.element.realize() is True
+    assert cell.value == expected_row(GRID_ROW_COUNT - 1)[0]
+
+
+def test_column_headers_survive_a_provider_that_hides_them(grid):
+    """WPF answers TablePattern.GetCurrentColumnHeaders with an empty collection.
+
+    The headers live on HeaderItem children instead. Reading only the pattern
+    reports a grid with no headers, which reads like the grid has none rather than
+    like the query looked in the wrong place — so header lookup falls back.
+    """
+    assert grid.get_column_headers() == GRID_COLUMNS
