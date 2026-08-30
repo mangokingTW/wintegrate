@@ -332,32 +332,53 @@ class UiaElement:
                     except Exception:
                         pass
 
-            # Fallback for UWP/XAML isolated controls via RawViewWalker
-            if automation_id and name_contains is None:
-                try:
-                    walker = uia.RawViewWalker
+            # Fallback for UWP/XAML islands and nested Win32 child HWND boundaries via RawViewWalker
+            try:
+                walker = uia.RawViewWalker
 
-                    def search_walker(node, depth=0):
-                        if depth > 10 or not node:
-                            return None
-                        try:
-                            if node.CurrentAutomationId == automation_id:
-                                return node
-                        except Exception:
-                            pass
+                def matches_node(node) -> bool:
+                    try:
+                        if automation_id and node.CurrentAutomationId != automation_id:
+                            return False
+                        if class_name and node.CurrentClassName != class_name:
+                            return False
+                        if control_type_id and node.CurrentControlType != control_type_id:
+                            return False
+                        if name_exact and (node.CurrentName or "") != name_exact:
+                            return False
+                        if (
+                            name_contains
+                            and name_contains.lower() not in (node.CurrentName or "").lower()
+                        ):
+                            return False
+                        return True
+                    except Exception:
+                        return False
+
+                def search_walker(node, depth=0):
+                    if depth > 15 or not node:
+                        return None
+                    try:
+                        if node != self._element and matches_node(node):
+                            return node
+                    except Exception:
+                        pass
+                    try:
                         child = walker.GetFirstChildElement(node)
                         while child:
                             res = search_walker(child, depth + 1)
                             if res:
                                 return res
                             child = walker.GetNextSiblingElement(child)
-                        return None
+                    except Exception:
+                        pass
+                    return None
 
-                    raw_found = search_walker(self._element)
-                    if raw_found:
-                        return UiaElement(raw_found)
-                except Exception:
-                    pass
+                raw_found = search_walker(self._element)
+                if raw_found:
+                    return UiaElement(raw_found)
+            except Exception:
+                pass
 
             time.sleep(0.1)
 

@@ -143,6 +143,8 @@ def try_dismiss_oobe_privacy_screen(timeout: float = 15.0) -> bool:
         "sign in later",
         "do this later",
         "start without",
+        "got it",
+        "ok",
     ]
 
     def is_match_button(elem: UiaElement | None) -> bool:
