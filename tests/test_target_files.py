@@ -173,25 +173,26 @@ def _type_path_verified(win: Window, target: str) -> None:
         current = _maybe(win.re_resolve_element(), automation_id="PART_TextBox")
         return current.get_value() if current else ""
 
-    # The clear is verified separately from the typing. On CI, Ctrl+A once failed
-    # to select the existing contents and the path was appended instead, giving
-    # 'HomeC:\Windows' — a wrong destination reported as a navigation failure two
-    # assertions later. Checking for an empty buffer names the step that broke.
     interop.send_keys("^a")
     interop.send_keys("{DELETE}")
-    cleared = settled(buffer_now, lambda v: v == "", timeout=10.0)
-    assert cleared == "", (
-        f"the path box still reads {cleared!r} after Ctrl+A and Delete — typing now "
-        "would append to it rather than replace it"
-    )
+
+    # Recorded, not asserted. The reading only reflects the edit buffer once the
+    # breadcrumb is in edit mode; at Home it answers with the display value
+    # ('Home') whatever the buffer holds, so "the box is empty" is not reliably
+    # observable. It is still worth knowing when the typing below goes wrong —
+    # on CI, Ctrl+A once failed to select and the path was appended instead,
+    # giving 'HomeC:\Windows'.
+    before_typing = buffer_now()
 
     for character in target:
         interop.send_char_input(character)
 
     typed = settled(buffer_now, lambda v: v == target, timeout=10.0)
     assert typed == target, (
-        f"typing {target!r} into the path box left it reading {typed!r} — a keystroke "
-        "was dropped, so Enter would have navigated somewhere unintended"
+        f"typing {target!r} into the path box left it reading {typed!r} "
+        f"(it read {before_typing!r} after Ctrl+A and Delete). Either a keystroke "
+        "was dropped or the clear did not take, and Enter would then navigate "
+        "somewhere unintended"
     )
     interop.send_keys("{ENTER}")
 
