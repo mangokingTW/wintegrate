@@ -47,6 +47,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_TEXT_INPUT_LADDER: tuple[dict, ...] = (
     {"class_name": "RichEditD2DPT"},  # Win11 tabbed Notepad
     {"class_name": "Edit"},  # classic Win32 edit control
+    # Scintilla — Notepad++, Notepad4, and anything else embedding the same
+    # editor. It appears in the UIA tree as a Pane supporting *no* patterns, so
+    # the control-type entries below never match it, and find_text_input used to
+    # fail on Notepad++ despite the editor being right there. Reading works
+    # anyway: get_value() falls through to WM_GETTEXT, which USER32 marshals
+    # across the process boundary — unlike the SCI_* messages, which take a
+    # pointer into the caller's address space and return nothing when sent from
+    # outside.
+    {"class_name": "Scintilla"},
     {"control_type_id": 50030},  # UIA Document
     {"control_type_id": 50004},  # UIA Edit
     # Note: "NotepadTextBox" is deliberately absent — it is the *container* hwnd
