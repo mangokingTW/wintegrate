@@ -8,8 +8,12 @@ offers are traps:
   a module base address.
 - `automation_id` is a full object path
   (`Application.MainWindow.centralwidget.mainTab.qt_tabwidget_tabbar`), which is
-  language-independent and stable — but a container and its children share the
-  container's path, so an id identifies a *group* rather than one element.
+  language-independent — but a container and its children share the container's
+  path, so an id identifies a *group* rather than one element. And it is not
+  dependable: on a Windows Server 2025 runner every tab item reported
+  `automation_id=''` while the same build on a Windows 11 client reported the full
+  path, with 71 other elements carrying ids on both. `_main_tab_bar` therefore
+  falls back to Qt class names.
 
 The tab labels are localized (`瀏覽資料`, not `Browse Data`) and their order has
 been observed to differ between runs, so nothing here matches a tab by name or by
@@ -62,6 +66,7 @@ PROCESS = "DB Browser for SQLite.exe"
 # would call the app's tabs.
 MAIN_TAB_BAR = "centralwidget.mainTab.qt_tabwidget_tabbar"
 EXPECTED_MAIN_TABS = 4
+CONTROL_TYPE_TAB = 50018
 CONTROL_TYPE_TAB_ITEM = 50019
 CONTROL_TYPE_TABLE = 50036
 CONTROL_TYPE_BUTTON = 50000
@@ -88,12 +93,56 @@ def _is_running() -> bool:
     return PROCESS.lower() in result.stdout.lower()
 
 
+def _ancestor_classes(element, depth: int = 8) -> list[str]:
+    classes = []
+    node = element
+    for _ in range(depth):
+        node = node.get_parent()
+        if node is None:
+            break
+        try:
+            classes.append(node.class_name)
+        except Exception:
+            break
+    return classes
+
+
+def _main_tab_bar(win: Window):
+    """The document tab bar, found without relying on automation ids.
+
+    Two routes, because the ids are not dependable. On a Windows 11 client each
+    tab item reports its parent tab bar's object path
+    (`…centralwidget.mainTab.qt_tabwidget_tabbar`), and the endswith() on that path
+    is precise. On a Windows Server 2025 runner the same build of the same
+    application reports `automation_id=''` for every tab item while 71 other
+    elements still have ids — the tree is otherwise complete, 201 descendants
+    including all 11 tab items, so this is not a missing accessibility bridge.
+
+    The fallback uses what is stable on both: Qt class names. There are three tab
+    bars — the document one and the Remote dock's are `QTabBar`, and the dock
+    title strip is `QMainWindowTabBar` — so the document tab bar is the `QTabBar`
+    that is not inside a dock.
+    """
+    candidates = win.re_resolve_element().find_all(
+        control_type_id=CONTROL_TYPE_TAB, class_name="QTabBar"
+    )
+    for bar in candidates:
+        try:
+            if bar.automation_id.endswith(MAIN_TAB_BAR):
+                return bar
+        except Exception:
+            continue
+    for bar in candidates:
+        if not any("Dock" in name for name in _ancestor_classes(bar)):
+            return bar
+    return None
+
+
 def _main_tabs(win: Window) -> list:
-    return [
-        tab
-        for tab in win.re_resolve_element().find_all(control_type_id=CONTROL_TYPE_TAB_ITEM)
-        if tab.automation_id.endswith(MAIN_TAB_BAR)
-    ]
+    bar = _main_tab_bar(win)
+    if bar is None:
+        return []
+    return bar.find_all(control_type_id=CONTROL_TYPE_TAB_ITEM)
 
 
 def _describe_tree(win: Window, limit: int = 12) -> str:
@@ -186,8 +235,13 @@ def test_window_class_carries_the_qt_version(browser):
     assert browser.class_name.endswith("QWindowIcon"), browser.class_name
 
 
-def test_main_tabs_are_found_by_object_path(browser):
-    """Object paths survive translation; names and positions do not."""
+def test_main_tabs_are_found_without_reading_their_names(browser):
+    """Neither names nor positions are usable; ids are usable but not dependable.
+
+    The names are translated and their order has been observed to differ between
+    runs, so `_main_tab_bar` uses the object-path id where it exists and Qt class
+    names where it does not.
+    """
     tabs = _main_tabs(browser)
     assert len(tabs) == EXPECTED_MAIN_TABS, (
         f"expected {EXPECTED_MAIN_TABS} tabs on the main tab bar, found {len(tabs)}: "
