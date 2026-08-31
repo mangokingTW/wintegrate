@@ -217,48 +217,58 @@ jobs:
       # release carries zero assets). The packages live on the CDN its own
       # cd-sideload-stable.yml publishes to, addressed through an .appinstaller
       # manifest. The CDN rejects non-browser User-Agents with 403.
-      # Files is the one target that cannot be installed here, and the step is
-      # kept rather than deleted so the blocker stays visible — and so the job
-      # starts covering Files again by itself if the blocker goes away.
+      # Files is fetched from a mirror rather than from its own distribution.
+      # Every GitHub release of files-community/Files carries zero assets, so the
+      # packages exist only on the CDN named in the project's own
+      # cd-sideload-stable.yml — and that CDN is behind Cloudflare bot protection,
+      # which answers a runner's datacentre IP with a "Just a moment..." challenge
+      # page instead of the 100 MB bundle. (The small .appinstaller manifest does
+      # come through; the bundle does not.) Solving a bot challenge is not this
+      # workflow's job, so the package was fetched once by hand and mirrored.
       #
-      # Every GitHub release of Files carries zero assets; the packages live only
-      # on the CDN its own cd-sideload-stable.yml publishes to, and that CDN sits
-      # behind Cloudflare bot protection. A runner's datacentre IP gets a
-      # "Just a moment..." challenge page instead of the 100 MB bundle. The small
-      # .appinstaller manifest comes through, the bundle does not. Solving the
-      # challenge is not something this workflow should be doing.
-      #
-      # The Files tests therefore skip here, and are covered on a machine that has
-      # Files installed. They are not listed in WINTEGRATE_REQUIRE_TARGET_APPS
-      # below, so that skip is declared rather than accidental.
-      - name: Install Files (advisory — expected to fail on hosted runners)
-        continue-on-error: true
+      # The mirror is an unmodified, publisher-signed bundle. The hash is checked
+      # here so the mirror is verified rather than trusted, and the signature is
+      # checked so the bytes are attributable to Files' own publisher rather than
+      # to the mirror.
+      - name: Install Files
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILES_SHA256: '87bd06f897094fce4d14ec0d87f258c711477c6f1c5271b055c794b3aac7ff41'
+          FILES_SIGNER_CN: 'CN=Yair Aichenbaum'
         run: |
           $ErrorActionPreference = 'Stop'
+
           # Files 4.x is framework-dependent; without the runtime it starts and
-          # shows a #32770 message box owned by Files.exe instead of a window.
+          # shows a #32770 message box owned by Files.exe instead of a window, and
+          # discovery by process name accepts that dialog as the app.
           choco install dotnet-desktopruntime -y --no-progress
           $global:LASTEXITCODE = 0
+          & "$env:ProgramFiles\dotnet\dotnet.exe" --list-runtimes
 
-          $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
-          $headers = @{ 'User-Agent' = $ua }
-          $manifestUrl = 'https://cdn.files.community/files/stable/Files.Package.appinstaller'
+          $dir = Join-Path $env:RUNNER_TEMP 'files-pkg'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          gh release download files-4.2.9.0 `
+            --repo mangokingTW/wintegrate-test-fixtures `
+            --pattern '*.msixbundle' --dir $dir
+          if ($LASTEXITCODE -ne 0) { throw "gh release download failed ($LASTEXITCODE)" }
 
-          # Downloaded to a file rather than cast from the response. PowerShell 7
-          # returns .Content as a byte array when the content type is not text,
-          # and the CDN serves .appinstaller as one — so `[xml]$response.Content`
-          # fails with 'Cannot convert value "System.Byte[]"'.
-          $manifestFile = Join-Path $env:RUNNER_TEMP 'Files.appinstaller'
-          Invoke-WebRequest -Uri $manifestUrl -Headers $headers -UseBasicParsing -OutFile $manifestFile -TimeoutSec 120
-          $manifest = [xml](Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8)
-          $bundleUrl = $manifest.AppInstaller.MainBundle.Uri
-          if (-not $bundleUrl) { throw "no MainBundle Uri in $manifestUrl" }
-          Write-Host "bundle: $bundleUrl (version $($manifest.AppInstaller.MainBundle.Version))"
-
-          $bundle = Join-Path $env:RUNNER_TEMP 'Files.msixbundle'
-          Invoke-WebRequest -Uri $bundleUrl -Headers $headers -UseBasicParsing -OutFile $bundle -TimeoutSec 600
+          $bundle = (Get-ChildItem $dir -Filter '*.msixbundle' | Select-Object -First 1).FullName
+          if (-not $bundle) { throw "no msixbundle in $dir" }
           Write-Host ("downloaded {0:N1} MB" -f ((Get-Item $bundle).Length / 1MB))
+
+          $hash = (Get-FileHash $bundle -Algorithm SHA256).Hash
+          if ($hash -ne $env:FILES_SHA256.ToUpperInvariant()) {
+            throw "SHA-256 mismatch: got $hash, expected $($env:FILES_SHA256)"
+          }
+          Write-Host "sha256 ok: $hash"
+
+          $sig = Get-AuthenticodeSignature $bundle
+          Write-Host "signature: $($sig.Status) / $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status), not Valid" }
+          if ($sig.SignerCertificate.Subject -notlike "$($env:FILES_SIGNER_CN)*") {
+            throw "unexpected signer: $($sig.SignerCertificate.Subject)"
+          }
 
           # No -DependencyPath. The .appinstaller lists VCLibs, but Files' own
           # manifest depends only on Microsoft.WindowsAppRuntime.2 — and handing
@@ -267,11 +277,10 @@ jobs:
           try {
             Add-AppxPackage -Path $bundle -ForceApplicationShutdown -ErrorAction Stop
           } catch {
-            # 0x80070005 here is usually not a permission problem: MSIX
-            # deployment needs the Process Lifetime Manager, which a
-            # non-interactive session cannot reach. The deployment log says so
-            # and the exception does not, so print it either way.
-            Write-Host "Add-AppxPackage failed: $($_.Exception.Message)"
+            # 0x80070005 here is usually not a permission problem: MSIX deployment
+            # needs the Process Lifetime Manager, which a non-interactive session
+            # cannot reach. The deployment log says so and the exception does not.
+            Write-Host "::error::Add-AppxPackage failed: $($_.Exception.Message)"
             Get-WinEvent -LogName 'Microsoft-Windows-AppXDeploymentServer/Operational' -MaxEvents 25 -ErrorAction SilentlyContinue |
               ForEach-Object { Write-Host ("[{0}] id={1} {2}" -f $_.TimeCreated.ToString('HH:mm:ss'), $_.Id, ($_.Message -replace "`r?`n", ' ')) }
             throw
@@ -280,11 +289,10 @@ jobs:
 
       - name: Run target application tests
         env:
-          # Turns "the application is not installed" from a skip into a failure
-          # for these three. Without it a broken install step would leave a green
-          # job that tested nothing, which is the failure mode this job exists to
-          # catch. Files is deliberately absent — see the step above.
-          WINTEGRATE_REQUIRE_TARGET_APPS: "Notepad++,WinMerge,DB Browser for SQLite"
+          # Turns "the application is not installed" from a skip into a failure.
+          # Without it a broken install step would leave a green job that tested
+          # nothing, which is the exact failure mode this job exists to catch.
+          WINTEGRATE_REQUIRE_TARGET_APPS: "1"
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
           pytest tests/ -v -s -m target_app

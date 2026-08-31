@@ -17,12 +17,8 @@ must be a *failure* instead:
     WINTEGRATE_REQUIRE_TARGET_APPS=1                     every application
     WINTEGRATE_REQUIRE_TARGET_APPS='WinMerge,Notepad++'  only these
 
-Per-application rather than all-or-nothing because Files cannot be installed on a
-GitHub-hosted runner: its packages are only distributed from a CDN behind
-Cloudflare bot protection, which answers a runner's datacentre IP with a "Just a
-moment..." challenge page instead of the 100 MB bundle. So CI requires the three
-that install from Chocolatey and lets Files skip, while a machine that does have
-Files can require all four.
+A list rather than a boolean so that a partially-provisioned machine can still be
+strict about the applications it does have. CI passes `1` and requires all four.
 """
 
 from __future__ import annotations
