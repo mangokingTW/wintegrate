@@ -5,6 +5,40 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [0.2.0] — 2026-08-31
+
+### Removed
+
+- **The external FFmpeg subprocess backend.** `ContinuousRecorder` now encodes
+  only through PyAV. The fallback never covered the case it appeared to: PyAV is
+  the only ffmpeg distribution on PyPI with a `win_arm64` wheel, so on ARM64 the
+  subprocess path resolved only when the user had already installed an ffmpeg
+  binary by hand — the exact situation this library exists to avoid, made to look
+  handled. `resolve_ffmpeg_exe()` is gone along with it; it probed PATH, four
+  hardcoded directories, two WinGet globs and `imageio_ffmpeg` on every recorder
+  construction.
+- `ContinuousRecorder.backend` can therefore no longer return `"ffmpeg"`; it is
+  `"pyav"` or `None`. **This is the breaking change in this release.**
+
+Without PyAV, `start()` returns `False` and logs, as before. A missing recording
+must never be why a test run fails.
+
+### Added
+
+- **Whole-run recording.** A session-scoped pytest fixture records the entire
+  test run to `recording-artifacts/full-suite-<arch>.mp4`, enabled with
+  `WINTEGRATE_RECORD_SUITE=1`. The per-session clips each show one scenario; what
+  they cannot show is the run, and on a CI runner the dialog that breaks a late
+  test is usually one that appeared during an early one.
+
+### Documentation
+
+- The README now opens with the complete test suite running on both
+  architectures — 108s on x64 and 125s on ARM64, unedited and uncropped, with the
+  cold-start gap (0.10s vs 17.18s to a discoverable Notepad window) alongside.
+- A CI/CD integration section with a workflow template and case study.
+- `docs/pitfalls.md` records why there is deliberately no external-ffmpeg path.
+
 ## [0.1.4] — 2026-08-30
 
 ### Added
