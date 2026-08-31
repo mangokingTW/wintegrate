@@ -163,7 +163,15 @@ def test_step_records_windows_that_came_and_went(tmp_path):
 
 
 def test_discovery_timeout_says_what_was_on_the_desktop():
-    """\"Window failed to appear\" is only half an answer; the other half is what did."""
+    """\"Window failed to appear\" is only half an answer; the other half is what did.
+
+    Only the census itself is asserted. The first version of this test also
+    required the "nothing new appeared at all" line, and CI produced a counter-
+    example within the hour: a Windows Widgets panel opened by itself during the
+    three-second wait, so something new *had* appeared and the line was correctly
+    absent. Asserting that a live desktop stays quiet is the same environment
+    dependency this helper exists to expose.
+    """
     from wintegrate.exceptions import WindowDiscoveryTimeoutError
 
     with pytest.raises(WindowDiscoveryTimeoutError) as excinfo:
@@ -174,4 +182,7 @@ def test_discovery_timeout_says_what_was_on_the_desktop():
         )
     message = str(excinfo.value)
     assert "Visible windows at the moment discovery gave up" in message
-    assert "the launch produced no window" in message
+    # The census must name real windows, whatever else the desktop is doing.
+    assert "class=" in message and "pid=" in message
+    # And it must not claim the class we were looking for was among them.
+    assert "NoSuchWindowClass" not in message.split("Visible windows")[1]
