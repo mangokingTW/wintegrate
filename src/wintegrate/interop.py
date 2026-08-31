@@ -361,6 +361,8 @@ imm32.ImmGetCompositionStringW.argtypes = [
 imm32.ImmGetCompositionStringW.restype = ctypes.c_long
 imm32.ImmGetDefaultIMEWnd.argtypes = [wintypes.HWND]
 imm32.ImmGetDefaultIMEWnd.restype = wintypes.HWND
+imm32.ImmGetDefaultIMEWnd.argtypes = [wintypes.HWND]
+imm32.ImmGetDefaultIMEWnd.restype = wintypes.HWND
 
 user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
 user32.PrintWindow.restype = wintypes.BOOL
@@ -645,6 +647,27 @@ def send_physical_keys(text: str, delay_per_key: float = 0.03) -> bool:
     return ok
 
 
+WM_IME_CONTROL = 0x0283
+IMC_GETCONVERSIONMODE = 0x0001
+IMC_SETCONVERSIONMODE = 0x0002
+IMC_GETOPENSTATUS = 0x0005
+IMC_SETOPENSTATUS = 0x0006
+
+
+class GUITHREADINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hwndActive", wintypes.HWND),
+        ("hwndFocus", wintypes.HWND),
+        ("hwndCapture", wintypes.HWND),
+        ("hwndMenuOwner", wintypes.HWND),
+        ("hwndMoveSize", wintypes.HWND),
+        ("hwndCaret", wintypes.HWND),
+        ("rcCaret", wintypes.RECT),
+    ]
+
+
 def get_ime_status(hwnd: int) -> dict[str, object]:
     """
     Reads the IME state attached to a window: open/closed and conversion mode.
@@ -691,26 +714,77 @@ def get_ime_status(hwnd: int) -> dict[str, object]:
         imm32.ImmReleaseContext(hwnd, himc)
 
 
-def set_ime_open(hwnd: int, is_open: bool) -> bool:
-    """Opens or closes the IME for a window. False when the window has no IMM32 context."""
-    himc = imm32.ImmGetContext(hwnd)
-    if not himc:
-        return False
+def _ime_control_targets(hwnd: int) -> list[int]:
+    """The windows worth addressing when driving another process's IME.
+
+    The IME follows keyboard focus, and in a dialog that focus is on a child
+    control, not the window you were handed. GetGUIThreadInfo names the focused
+    child; try it first and fall back to the window itself.
+    """
+    targets = [hwnd]
     try:
-        return bool(imm32.ImmSetOpenStatus(himc, bool(is_open)))
-    finally:
-        imm32.ImmReleaseContext(hwnd, himc)
+        tid = user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), None)
+        info = GUITHREADINFO()
+        info.cbSize = ctypes.sizeof(GUITHREADINFO)
+        if user32.GetGUIThreadInfo(tid, ctypes.byref(info)) and info.hwndFocus:
+            focus = int(info.hwndFocus)
+            if focus and focus != hwnd:
+                targets.insert(0, focus)
+    except Exception as exc:
+        logger.debug(f"GetGUIThreadInfo failed ({type(exc).__name__}): {exc}")
+    return targets
+
+
+def _ime_control(hwnd: int, command: int, value: int) -> int | None:
+    """Sends one WM_IME_CONTROL to the default IME window, or None if there is none."""
+    ime_wnd = imm32.ImmGetDefaultIMEWnd(wintypes.HWND(hwnd))
+    if not ime_wnd:
+        return None
+    return int(user32.SendMessageW(ime_wnd, WM_IME_CONTROL, command, value))
+
+
+def set_ime_open(hwnd: int, is_open: bool) -> bool:
+    """Opens or closes the IME for a window.
+
+    Goes through WM_IME_CONTROL rather than ImmSetOpenStatus. ImmGetContext
+    returns nothing for a window in another process — and for anything routing
+    text services through TSF — so the context-based call silently does nothing
+    in exactly the case an automation tool cares about. The default IME window
+    accepts the request across process boundaries.
+    """
+    sent = False
+    for target in _ime_control_targets(hwnd):
+        if _ime_control(target, IMC_SETOPENSTATUS, int(bool(is_open))) is not None:
+            sent = True
+    return sent
 
 
 def set_ime_conversion(hwnd: int, conversion: int, sentence: int = 0) -> bool:
-    """Sets the IME conversion mode (see the IME_CMODE_* flags)."""
-    himc = imm32.ImmGetContext(hwnd)
-    if not himc:
-        return False
-    try:
-        return bool(imm32.ImmSetConversionStatus(himc, conversion, sentence))
-    finally:
-        imm32.ImmReleaseContext(hwnd, himc)
+    """Sets the IME conversion mode (see the IME_CMODE_* flags).
+
+    `sentence` is accepted for symmetry with get_ime_status and is not sent:
+    WM_IME_CONTROL carries the conversion mode only.
+
+    Measured on a zh-TW Windows 11 ARM64 desktop, driving a dialog in another
+    process: with IME_CMODE_ALPHANUMERIC, send_physical_keys("hello") lands
+    "hello"; with IME_CMODE_NATIVE the same call lands "" because the IME takes
+    the keystrokes into composition. That is the switch this function exists to
+    give a test.
+    """
+    sent = False
+    for target in _ime_control_targets(hwnd):
+        if _ime_control(target, IMC_SETCONVERSIONMODE, int(conversion)) is not None:
+            sent = True
+    return sent
+
+
+def get_ime_conversion(hwnd: int) -> int | None:
+    """The IME conversion mode as the IME itself reports it, or None if unavailable."""
+    for target in _ime_control_targets(hwnd):
+        got = _ime_control(target, IMC_GETCONVERSIONMODE, 0)
+        if got is not None:
+            return got
+    return None
 
 
 def get_composition_string(hwnd: int, index: int = GCS_COMPSTR) -> str:
