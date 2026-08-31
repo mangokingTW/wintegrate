@@ -30,6 +30,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - What breaks in CI: pitfalls.md
+  - Comparisons: comparisons.md
   - API reference: api.md
   - Changelog: changelog.md
 
