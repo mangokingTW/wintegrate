@@ -23,7 +23,12 @@ import sys
 from pathlib import Path
 
 import pytest
-from target_apps import find_packaged_app, launch_packaged_app
+from target_apps import (
+    assert_version,
+    find_packaged_app,
+    installed_package_version,
+    launch_packaged_app,
+)
 from waits import settled
 
 from wintegrate import Window, interop
@@ -38,6 +43,10 @@ PACKAGE = "Files"
 PROCESS = "Files.exe"
 WINDOW_CLASS = "WinUIDesktopWin32WindowClass"
 CONTROL_TYPE_TAB_ITEM = 50019
+
+# The build every assertion below was measured against. Pinned by SHA-256 in the
+# CI install step, so this check and that one have to be bumped together.
+VERIFIED_VERSION = "4.2.9.0"
 
 # Files restores the previous session by default, and after an update it opens a
 # release-notes page in an embedded WebView2 — which is what made find_text_input
@@ -149,6 +158,44 @@ def _tab_count(win: Window) -> int:
         return -1
 
 
+def _type_path_verified(win: Window, target: str) -> None:
+    """Types a path into the path box and checks it arrived before pressing Enter.
+
+    Character-by-character injection can drop one, and then Enter navigates
+    somewhere else entirely and the failure surfaces as a wrong location several
+    assertions later. Checking the buffer first localises it: the message says the
+    typing failed and shows what the box actually holds.
+    """
+    box = win.re_resolve_element().find_descendant(automation_id="PART_TextBox", timeout=10.0)
+    box.set_focus()
+
+    def buffer_now() -> str:
+        current = _maybe(win.re_resolve_element(), automation_id="PART_TextBox")
+        return current.get_value() if current else ""
+
+    # The clear is verified separately from the typing. On CI, Ctrl+A once failed
+    # to select the existing contents and the path was appended instead, giving
+    # 'HomeC:\Windows' — a wrong destination reported as a navigation failure two
+    # assertions later. Checking for an empty buffer names the step that broke.
+    interop.send_keys("^a")
+    interop.send_keys("{DELETE}")
+    cleared = settled(buffer_now, lambda v: v == "", timeout=10.0)
+    assert cleared == "", (
+        f"the path box still reads {cleared!r} after Ctrl+A and Delete — typing now "
+        "would append to it rather than replace it"
+    )
+
+    for character in target:
+        interop.send_char_input(character)
+
+    typed = settled(buffer_now, lambda v: v == target, timeout=10.0)
+    assert typed == target, (
+        f"typing {target!r} into the path box left it reading {typed!r} — a keystroke "
+        "was dropped, so Enter would have navigated somewhere unintended"
+    )
+    interop.send_keys("{ENTER}")
+
+
 def test_discovery_rejects_the_apps_own_dialog(files_app):
     """`require_all=True` in the fixture is what this asserts.
 
@@ -225,17 +272,11 @@ def test_navigation_updates_the_invariant_path(files_app):
     )
 
     target = os.environ.get("SystemRoot", r"C:\Windows")
-    path_box.set_focus()
-    interop.send_keys("^a")
-    for character in target:
-        interop.send_char_input(character)
-    interop.send_keys("{ENTER}")
+    _type_path_verified(files_app, target)
 
     def read_path() -> str:
-        box = files_app.re_resolve_element().find_descendant(
-            automation_id="PART_TextBox", timeout=5.0
-        )
-        return box.get_value()
+        box = _maybe(files_app.re_resolve_element(), automation_id="PART_TextBox")
+        return box.get_value() if box else ""
 
     final = settled(read_path, lambda value: value == target, timeout=20.0)
     assert final == target, f"navigation did not land on {target!r}, PART_TextBox reads {final!r}"
@@ -284,14 +325,8 @@ def test_navigation_buttons_move_and_come_back(files_app):
     toolbar has to be matched on translated names and read through the status
     bar; sqlitebrowser's tool buttons share one id. Files has neither problem.
     """
-    root = files_app.re_resolve_element()
-    path_box = root.find_descendant(automation_id="PART_TextBox", timeout=10.0)
-    path_box.set_focus()
-    interop.send_keys("^a")
     start = os.environ.get("SystemRoot", r"C:\Windows")
-    for character in start:
-        interop.send_char_input(character)
-    interop.send_keys("{ENTER}")
+    _type_path_verified(files_app, start)
 
     # CurrentPathGet, not PART_TextBox. PART_TextBox is the path *editor's*
     # buffer: typing updates it, and button navigation does not. Measured — after
@@ -326,3 +361,12 @@ def test_navigation_buttons_move_and_come_back(files_app):
     assert same_path(after_back, start), (
         f"Back should have returned to {start!r}, location reads {after_back!r}"
     )
+
+
+def test_files_is_the_verified_version():
+    """Pins the build.
+
+    The mirrored package in CI is pinned by hash, so a mismatch here means a
+    locally-installed Files is a different build from the one under test.
+    """
+    assert_version("Files", installed_package_version(PACKAGE), VERIFIED_VERSION)

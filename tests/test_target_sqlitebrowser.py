@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from target_apps import find_executable
+from target_apps import assert_version, find_executable, installed_file_version
 from waits import settled
 
 from wintegrate import Window
@@ -49,6 +49,12 @@ SQLITEBROWSER_CANDIDATES = (
     / "tools"
     / "DB Browser for SQLite.exe",
 )
+
+# The build every assertion below was measured against, including the Qt version
+# in the window class and the object paths. Chocolatey package
+# `sqlitebrowser 3.13.1` installs this file version — the vendor writes it as
+# '3.13.1.' with a trailing dot, hence the four-part numeric form.
+VERIFIED_VERSION = "3.13.1.0"
 
 PROCESS = "DB Browser for SQLite.exe"
 # The four tabs of the main document area. Dock widgets and the QMainWindow tab
@@ -90,6 +96,42 @@ def _main_tabs(win: Window) -> list:
     ]
 
 
+def _describe_tree(win: Window, limit: int = 12) -> str:
+    """What the UIA tree actually contains, for a failure message.
+
+    "found 0 tabs" says what is missing; the next question is what is there
+    instead. Qt builds its UIA tree by bridging QAccessible, and that bridge can
+    be absent rather than slow — in which case the answer is a nearly empty tree,
+    not a tree with the tabs somewhere else.
+    """
+    try:
+        elements = win.re_resolve_element().find_all()
+    except Exception as exc:
+        return f"\n  (could not walk the tree: {type(exc).__name__}: {exc})"
+
+    census: dict[str, int] = {}
+    for element in elements:
+        try:
+            census[element.control_type_name] = census.get(element.control_type_name, 0) + 1
+        except Exception:
+            continue
+    lines = [f"\n  UIA descendants: {len(elements)}"]
+    if census:
+        ranked = sorted(census.items(), key=lambda kv: -kv[1])[:limit]
+        lines.append("\n  control types: " + ", ".join(f"{n}={c}" for n, c in ranked))
+    else:
+        lines.append("\n  control types: none — the QAccessible bridge is not exposing anything")
+    ids = []
+    for element in elements:
+        try:
+            if element.automation_id:
+                ids.append(element.automation_id.split(".")[-1])
+        except Exception:
+            continue
+    lines.append(f"\n  automation ids ({len(ids)} total): {sorted(set(ids))[:limit]}")
+    return "".join(lines)
+
+
 @pytest.fixture
 def browser(tmp_path):
     """The app opened on a fresh database.
@@ -115,6 +157,7 @@ def browser(tmp_path):
             )
             assert found == EXPECTED_MAIN_TABS, (
                 f"the main tab bar never reached {EXPECTED_MAIN_TABS} tabs (saw {found})"
+                f"{_describe_tree(win)}"
             )
             yield win
     finally:
@@ -220,4 +263,18 @@ def test_toolbar_buttons_are_not_addressable_by_id(browser):
     assert len(shared) > 1, (
         "tool buttons no longer share the 'QToolButton' id — they may now be "
         "addressable individually, so a toolbar-button test is worth adding"
+    )
+
+
+def test_sqlitebrowser_is_the_verified_version():
+    """Pins the build.
+
+    The window class carries the Qt version and the automation ids are object
+    paths, so both are tied to this build more tightly than usual.
+    """
+    exe = find_executable("DB Browser for SQLite", SQLITEBROWSER_CANDIDATES)
+    assert_version(
+        "DB Browser for SQLite",
+        installed_file_version(exe, "DB Browser for SQLite"),
+        VERIFIED_VERSION,
     )

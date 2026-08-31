@@ -108,3 +108,74 @@ def launch_packaged_app(aumid: str) -> list[str]:
     the launcher's pid differing from the window's.
     """
     return ["explorer.exe", f"shell:appsFolder\\{aumid}"]
+
+
+ANY_VERSION = os.environ.get("WINTEGRATE_TARGET_APP_ANY_VERSION") == "1"
+
+
+def _powershell(script: str, what: str) -> str:
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _missing(what, f"could not run PowerShell: {exc}")
+    if result.returncode != 0:
+        _missing(what, f"PowerShell exited {result.returncode}: {result.stderr.strip()[:200]}")
+    return result.stdout.strip()
+
+
+def installed_file_version(path: Path, what: str) -> str:
+    """The four-part numeric file version of an executable.
+
+    Built from the individual version parts rather than read from the
+    `FileVersion` string, because that string is whatever the vendor typed. DB
+    Browser for SQLite reports `'3.13.1.'` — with a trailing dot and no fourth
+    component — while the numeric parts give an unambiguous `3.13.1.0`.
+    """
+    script = (
+        f"$v = (Get-Item -LiteralPath '{path}').VersionInfo; "
+        "Write-Output ("
+        "$v.FileMajorPart.ToString() + '.' + $v.FileMinorPart.ToString() + '.' + "
+        "$v.FileBuildPart.ToString() + '.' + $v.FilePrivatePart.ToString())"
+    )
+    return _powershell(script, what).splitlines()[-1].strip()
+
+
+def installed_package_version(package_name: str) -> str:
+    """The version of an installed MSIX package."""
+    script = (
+        f"$p = Get-AppxPackage -Name '{package_name}' | Select-Object -First 1; "
+        "if (-not $p) { exit 1 }; Write-Output $p.Version"
+    )
+    return _powershell(script, package_name).splitlines()[-1].strip()
+
+
+def assert_version(what: str, actual: str, expected: str) -> None:
+    """Requires the application under test to be the version it was verified on.
+
+    Every assertion in these modules — a colour value, a status-bar transition, an
+    automation id, the number of tabs on a tab bar — was measured against one
+    build. A floating version turns any of those into a failure that belongs to
+    the application's release notes rather than to this repository, which is not
+    what a release gate should be reporting.
+
+    `WINTEGRATE_TARGET_APP_ANY_VERSION=1` downgrades this to a skip, for trying
+    the suite against a newer build on purpose. The other tests still run either
+    way: this is one dedicated check so a version mismatch shows up as a single
+    clear red line beside whatever else it caused.
+    """
+    if actual == expected:
+        return
+    message = (
+        f"{what} is version {actual}, and these tests were verified against "
+        f"{expected}. Pin the installed version, or set "
+        f"WINTEGRATE_TARGET_APP_ANY_VERSION=1 to run them anyway and update the "
+        f"expected version once they pass."
+    )
+    if ANY_VERSION:
+        pytest.skip(message)
+    pytest.fail(message)

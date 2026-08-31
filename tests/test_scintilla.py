@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from target_apps import find_executable
+from target_apps import assert_version, find_executable, installed_file_version
 from waits import settled
 
 from wintegrate import EolMode, ScintillaView, Window, is_scintilla
@@ -31,6 +31,10 @@ NPP_CANDIDATES = (
     Path(r"C:\Program Files\Notepad++\notepad++.exe"),
     Path(r"C:\Program Files (x86)\Notepad++\notepad++.exe"),
 )
+
+# The build every assertion below was measured against. Chocolatey package
+# `notepadplusplus 8.9.8` installs this file version.
+VERIFIED_VERSION = "8.9.8.0"
 
 SCROLLBAR_PART_IDS = frozenset(
     {"UpButton", "DownButton", "UpPageButton", "DownPageButton", "LeftButton", "RightButton"}
@@ -229,3 +233,9 @@ def test_dialog_buttons_carry_their_win32_control_id(editor):
     cancel.click()
     gone = settled(find_dialog, lambda d: d is None, timeout=15.0)
     assert gone is None, "clicking IDCANCEL left the Find dialog open"
+
+
+def test_notepadpp_is_the_verified_version():
+    """Pins the build. See `assert_version` for why a release gate needs this."""
+    npp = find_executable("Notepad++", NPP_CANDIDATES)
+    assert_version("Notepad++", installed_file_version(npp, "Notepad++"), VERIFIED_VERSION)

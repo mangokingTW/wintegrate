@@ -191,18 +191,22 @@ jobs:
             tests: tests/test_scintilla.py
             require: Notepad++
             choco: notepadplusplus
+            chocoVersion: '8.9.8'
           - app: winmerge
             tests: tests/test_target_winmerge.py
             require: WinMerge
             choco: winmerge
+            chocoVersion: '2.16.58.2'
           - app: sqlitebrowser
             tests: tests/test_target_sqlitebrowser.py
             require: DB Browser for SQLite
             choco: sqlitebrowser
+            chocoVersion: '3.13.1'
           - app: files
             tests: tests/test_target_files.py
             require: Files
             choco: ''
+            chocoVersion: ''
     name: test-target-app (${{ matrix.app }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -221,13 +225,19 @@ jobs:
 
       # Chocolatey is preinstalled on the Windows images, and winget is not — it
       # appears in neither Windows2022-Readme.md nor Windows2025-Readme.md.
-      # Versions float on purpose: this job exists to notice when a new release of
-      # one of these applications breaks the assumptions the tests encode.
-      - name: Install ${{ matrix.app }}
+      #
+      # Versions are pinned. Everything these tests assert was measured against one
+      # build — a sampled highlight colour, a Qt version inside a window class, a
+      # set of automation ids — so a floating version turns any upstream release
+      # into a red release gate with nothing wrong on this side. Each module
+      # declares the same version in VERIFIED_VERSION and one test checks it, so
+      # the pin and the assertions cannot drift apart silently.
+      - name: Install ${{ matrix.app }} ${{ matrix.chocoVersion }}
         if: matrix.choco != ''
         shell: pwsh
         run: |
-          choco install ${{ matrix.choco }} -y --no-progress --ignore-checksums
+          choco install ${{ matrix.choco }} --version=${{ matrix.chocoVersion }} `
+            -y --no-progress --ignore-checksums
           # choco's exit code is unreliable across packages. The tests fail loudly
           # when the executable is missing, and that is the check that matters, so
           # do not end the job before it runs.

@@ -24,6 +24,16 @@ documentation. Each entry names what was measured.
   `WINTEGRATE_REQUIRE_TARGET_APPS` turns "not installed" into a failure that names
   every path it tried.
 
+  Application versions are pinned — Chocolatey `--version=` in CI, a SHA-256 for
+  the mirrored Files package — and each module declares the same version in
+  `VERIFIED_VERSION` with one test checking it, so the pin and the assertions
+  cannot drift apart silently. Everything asserted was measured against one build:
+  a sampled highlight colour, a Qt version inside a window class, a set of
+  automation ids. A floating version would turn any upstream release into a red
+  release gate with nothing wrong on this side.
+  `WINTEGRATE_TARGET_APP_ANY_VERSION=1` relaxes the check for trying a newer build
+  deliberately.
+
   Buttons are clicked, not just located: WinMerge's `Next Difference` against the
   status bar changing, Files' `Up` and `Back` against the location it reports,
   Notepad++'s Find dialog through its Win32 control ids, and the new-tab button in

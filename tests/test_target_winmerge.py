@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 import pytest
-from target_apps import find_executable
+from target_apps import assert_version, find_executable, installed_file_version
 from tests_support_pixels import count_colour_bands
 from waits import settled
 
@@ -36,6 +36,10 @@ WINMERGE_CANDIDATES = (
     Path(r"C:\Program Files\WinMerge\WinMergeU.exe"),
     Path(r"C:\Program Files (x86)\WinMerge\WinMergeU.exe"),
 )
+
+# The build every assertion below was measured against, including the highlight
+# colour. Chocolatey package `winmerge 2.16.58.2` installs this file version.
+VERIFIED_VERSION = "2.16.58.2"
 
 # Sampled from a rendered diff on Windows 11: WinMerge's "changed line" fill.
 DIFF_HIGHLIGHT_RGB = (239, 203, 5)
@@ -249,3 +253,13 @@ def test_toolbar_button_click_changes_the_status_bar(compare):
         f"clicking {name!r} left the status bar unchanged: {before!r}. "
         "Either the click did not land or the difference navigation is broken."
     )
+
+
+def test_winmerge_is_the_verified_version(winmerge):
+    """Pins the build.
+
+    This one matters more than most: `DIFF_HIGHLIGHT_RGB` is a colour sampled from
+    a rendered diff, and a theme change in a new release would turn the pixel
+    tests red with nothing wrong on this side.
+    """
+    assert_version("WinMerge", installed_file_version(winmerge, "WinMerge"), VERIFIED_VERSION)
