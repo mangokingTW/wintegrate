@@ -191,92 +191,85 @@ jobs:
           # Enterprise. Both, because a client SKU and a server SKU are not
           # interchangeable for UI automation — this suite already carries
           # desktop_only and server_only markers for that reason.
+          #
+          # Every application is installed from its own official installer,
+          # addressed by a URL that pins the version and the architecture
+          # together. Chocolatey was used first and removed: its community feed
+          # answered 'Unable to connect to source' from the runners, which took
+          # out two jobs, and it ships the x64 build on both architectures for
+          # applications whose arm64 build behaves differently.
           - app: notepad++
             os: windows-latest
             arch: x64
             tests: tests/test_scintilla.py
             require: Notepad++
-            choco: notepadplusplus
-            chocoVersion: '8.9.8'
-            installerUrl: ''
-            installerArgs: ''
-          # The native arm64 build, not Chocolatey's x64 one under emulation.
-          # Emulated, nothing typed reached Scintilla at all: length=0, lines=1,
-          # is_modified=False and get_value()=='' while every element resolved.
+            installerUrl: 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8/npp.8.9.8.Installer.x64.exe'
+            installerArgs: '/S'
+            installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
           - app: notepad++
             os: windows-11-arm
             arch: arm64
             tests: tests/test_scintilla.py
             require: Notepad++
-            choco: ''
-            chocoVersion: ''
             installerUrl: 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8/npp.8.9.8.Installer.arm64.exe'
             installerArgs: '/S'
+            installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
           - app: winmerge
             os: windows-latest
             arch: x64
             tests: tests/test_target_winmerge.py
             require: WinMerge
-            choco: winmerge
-            chocoVersion: '2.16.58.2'
-            installerUrl: ''
-            installerArgs: ''
-          # The native arm64 build. Emulated, the Next Difference button click
-          # left the status bar unchanged while the other eight tests passed.
+            installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-x64-Setup.exe'
+            installerArgs: '/SILENT /NORESTART'
+            installerExpects: 'C:\\Program Files\\WinMerge\\WinMergeU.exe'
           - app: winmerge
             os: windows-11-arm
             arch: arm64
             tests: tests/test_target_winmerge.py
             require: WinMerge
-            choco: ''
-            chocoVersion: ''
             installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-ARM64-Setup.exe'
             installerArgs: '/SILENT /NORESTART'
-          # Both architectures, because DB Browser for SQLite v3.13.1 ships a
-          # different Qt per architecture: the win64 zip carries Qt5Core.dll and
-          # the arm64 zip carries Qt6Core.dll. Same application version, different
-          # accessibility surface — Qt 6 exposes SelectionItem on tab items and
-          # Qt 5 does not — so running only one of them would leave half the
-          # users untested. Installed from the official msi rather than
-          # Chocolatey, whose package wraps the win64 build on both.
+            installerExpects: 'C:\\Program Files\\WinMerge\\WinMergeU.exe'
+          # DB Browser for SQLite v3.13.1 ships a different Qt per
+          # architecture: the win64 zip carries Qt5Core.dll and the arm64
+          # zip carries Qt6Core.dll. Same application version, different
+          # accessibility surface — Qt 6 exposes SelectionItem on tab items
+          # and Qt 5 does not — so running only one would leave half the
+          # users untested.
           - app: sqlitebrowser
             os: windows-latest
             arch: x64
             db4sArch: win64
             tests: tests/test_target_sqlitebrowser.py
             require: DB Browser for SQLite
-            choco: ''
-            chocoVersion: ''
             installerUrl: ''
             installerArgs: ''
+            installerExpects: ''
           - app: sqlitebrowser
             os: windows-11-arm
             arch: arm64
             db4sArch: arm64
             tests: tests/test_target_sqlitebrowser.py
             require: DB Browser for SQLite
-            choco: ''
-            chocoVersion: ''
             installerUrl: ''
             installerArgs: ''
+            installerExpects: ''
           - app: files
             os: windows-latest
             arch: x64
             tests: tests/test_target_files.py
             require: Files
-            choco: ''
-            chocoVersion: ''
             installerUrl: ''
             installerArgs: ''
+            installerExpects: ''
           - app: files
             os: windows-11-arm
             arch: arm64
             tests: tests/test_target_files.py
             require: Files
-            choco: ''
-            chocoVersion: ''
             installerUrl: ''
             installerArgs: ''
+            installerExpects: ''
     name: test-target-app (${{ matrix.app }} / ${{ matrix.arch }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -336,43 +329,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
-      # Chocolatey is preinstalled on the Windows images, and winget is not — it
-      # appears in neither Windows2022-Readme.md nor Windows2025-Readme.md.
+      # The official installer, addressed by a URL that pins the version and the
+      # architecture together.
       #
-      # Versions are pinned. Everything these tests assert was measured against one
-      # build — a sampled highlight colour, a Qt version inside a window class, a
-      # set of automation ids — so a floating version turns any upstream release
-      # into a red release gate with nothing wrong on this side. Each module
-      # declares the same version in VERIFIED_VERSION and one test checks it, so
-      # the pin and the assertions cannot drift apart silently.
-      - name: Install ${{ matrix.app }} ${{ matrix.chocoVersion }}
-        if: matrix.choco != ''
-        shell: pwsh
-        run: |
-          choco install ${{ matrix.choco }} --version=${{ matrix.chocoVersion }} `
-            -y --no-progress --ignore-checksums
-          # choco's exit code is unreliable across packages. The tests fail loudly
-          # when the executable is missing, and that is the check that matters, so
-          # do not end the job before it runs.
-          $global:LASTEXITCODE = 0
-
-      # An arch-specific official installer, for the applications whose native
-      # arm64 build behaves differently from the x64 one under emulation. Pinning
-      # a URL pins the version and the architecture in one place.
-      - name: Install ${{ matrix.app }} (${{ matrix.arch }} native)
+      # The result is verified here rather than left to the tests. An install that
+      # fails quietly surfaces six seconds later as "Notepad++ not available: not
+      # found at any of:" from a test, which points at the wrong thing — that is
+      # what happened when Chocolatey's feed went unreachable and this step reset
+      # $LASTEXITCODE to hide it.
+      - name: Install ${{ matrix.app }} (${{ matrix.arch }})
         if: matrix.installerUrl != ''
         shell: pwsh
         env:
           INSTALLER_URL: ${{ matrix.installerUrl }}
           INSTALLER_ARGS: ${{ matrix.installerArgs }}
+          INSTALLER_EXPECTS: ${{ matrix.installerExpects }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = Join-Path $env:RUNNER_TEMP 'target-app-setup.exe'
-          Invoke-WebRequest -Uri $env:INSTALLER_URL -UseBasicParsing -OutFile $exe -TimeoutSec 600
-          Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $exe).Length / 1MB), $env:INSTALLER_URL)
-          $p = Start-Process -FilePath $exe -Wait -PassThru `
+          $setup = Join-Path $env:RUNNER_TEMP 'target-app-setup.exe'
+          Invoke-WebRequest -Uri $env:INSTALLER_URL -UseBasicParsing -OutFile $setup -TimeoutSec 600
+          Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $setup).Length / 1MB), $env:INSTALLER_URL)
+
+          $p = Start-Process -FilePath $setup -Wait -PassThru `
             -ArgumentList ($env:INSTALLER_ARGS -split ' ')
           if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
+
+          if (-not (Test-Path $env:INSTALLER_EXPECTS)) {
+            throw "installer reported success but $($env:INSTALLER_EXPECTS) does not exist"
+          }
+          Write-Host ("installed: {0}" -f (Get-Item $env:INSTALLER_EXPECTS).VersionInfo.FileVersion)
 
       # Installed from the official msi rather than Chocolatey: the Chocolatey
       # package wraps the win64 build on both architectures, and the whole point
