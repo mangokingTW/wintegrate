@@ -118,6 +118,25 @@ class Window:
         except Exception:
             return f"<Window hwnd={self.hwnd:#x} (gone)>"
 
+    def _set_ime_conversion_settled(self, conversion: int, timeout: float = 2.0) -> bool:
+        """Sets the conversion mode and waits until the IME reports it.
+
+        WM_IME_CONTROL is sent synchronously, but the IME still has to act on it,
+        and callers were sleeping a fixed interval afterwards to cover that —
+        which is the pattern this library exists to remove. Polls instead, and
+        gives up quietly: an unverifiable mode is not worth failing a caller over
+        when the block is about to run either way.
+        """
+        self.set_ime_conversion(conversion)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            current = get_ime_conversion(self.hwnd)
+            if current is None or int(current) == conversion:
+                return True
+            time.sleep(0.05)
+        logger.debug(f"IME conversion mode did not settle on {conversion} within {timeout}s")
+        return False
+
     @contextmanager
     def ime_mode(self, conversion: int):
         """Puts this window's IME into a known conversion mode for the block.
@@ -138,7 +157,7 @@ class Window:
         """
         original = get_ime_conversion(self.hwnd)
         caps_was_on = get_toggle_key_state(VK_CAPITAL)
-        self.set_ime_conversion(int(conversion))
+        self._set_ime_conversion_settled(int(conversion))
         if caps_was_on:
             # Caps Lock is desktop-global and survives everything. Left latched it
             # turns "hello" into "HELLO", and the resulting assertion failure
@@ -150,7 +169,7 @@ class Window:
             yield self
         finally:
             if original is not None:
-                self.set_ime_conversion(int(original))
+                self._set_ime_conversion_settled(int(original))
             if caps_was_on:
                 set_caps_lock(True)
 
