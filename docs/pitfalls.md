@@ -102,6 +102,79 @@ IMM32 context there is nothing for `set_ime_conversion` to act on.
 **Do not try to detect an IME. Pin the layout instead** — and be ready for that
 to fail too (see below).
 
+## Some controls expose nothing at all, and pixels are the only evidence
+
+Scintilla answers no UIA pattern but still responds to `WM_GETTEXT`, so
+`get_value()` works. Not everything is that kind. WinMerge's diff panes are
+window class `Afx:00007FF6C8380000:8` — a name containing the module base
+address, so it is not even a stable identifier — and they answer **no pattern and
+no `WM_GETTEXT`**:
+
+```
+UIA: <Pane class='Afx:00007FF6C8380000:8' name='' id='59648' patterns=[]>
+patterns: []
+get_value(): ''
+```
+
+For a *visual diff tool*, checking only the output file misses the entire point:
+the question is whether the difference was **displayed**. When the control tells
+you nothing, the rendered pixels are the only evidence left — and `Window.capture()`
+and `UiaElement.capture()` already hand you a Pillow image.
+
+**Assert colour structure, not pixel equality.** A screenshot compared against a
+baseline breaks on a font update, a DPI change, a theme change, or antialiasing,
+and the baseline then has to be regenerated. Asking "is this colour present, and
+in how many contiguous bands" survives all of those. Measured against WinMerge,
+comparing a 12-line file:
+
+| changed lines | highlight rows | contiguous bands |
+|---|---|---|
+| 0 | 0 | 0 |
+| 1 | 16 | 1 |
+| 2 | 32 | 2 |
+| 3 | 48 | 3 |
+
+Its highlight is exactly `(239, 203, 5)`, absent from an identical comparison and
+12.4% of the pane with two changed lines. One band per difference, sixteen rows
+each — one line of text.
+
+```python
+HILITE = (239, 203, 5)
+
+def highlight_bands(image, colour):
+    """Contiguous horizontal runs of `colour`, as inclusive (first_row, last_row)."""
+    rgb = image.convert("RGB")
+    spans, start = [], None
+    for y in range(rgb.height):
+        row = rgb.crop((0, y, rgb.width, y + 1))
+        present = any(v == colour for _n, v in (row.getcolors(1 << 24) or []))
+        if present and start is None:
+            start = y
+        elif not present and start is not None:
+            spans.append((start, y - 1))
+            start = None
+    if start is not None:
+        spans.append((start, rgb.height - 1))
+    return spans
+
+bands = highlight_bands(pane.capture(), HILITE)
+assert len(bands) == 2          # two differences, and bands says which lines
+```
+
+Two details in those ten lines are worth having in front of you rather than
+hidden in a library: touching runs merge into one band, and an open run has to be
+flushed at the bottom edge. `getcolors` on a one-pixel-high crop keeps the scan
+in C, which matters on a full-screen capture.
+
+**This is deliberately not part of wintegrate.** Everything the library does
+encode is Windows knowledge that is hard to rediscover — that `WM_GETTEXT` is
+marshalled across processes while `SCI_*` is not, that an IME's mode is set
+through `WM_IME_CONTROL`, that a sweep has to wait for processes and not just
+windows. Counting same-coloured rows is not that: it is ten lines of arithmetic
+with no trap in it, and putting it behind an API would invite tolerance
+parameters, then regions, then perceptual hashing — none of which has a natural
+stopping point.
+
 ## The selection state after focus is undefined
 
 Focusing a Win32 `EDIT` through UIA selects its entire contents, so the next
