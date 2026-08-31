@@ -5,7 +5,7 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
-## [Unreleased]
+## [0.5.0b1] — 2026-09-01
 
 Everything here came from driving three real applications — Files (WinUI 3),
 WinMerge (Win32/MFC) and DB Browser for SQLite (Qt) — rather than from reading

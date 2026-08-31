@@ -223,6 +223,18 @@ pip install 'wintegrate[all]'
 Using a feature without its extra raises an error naming the extra to install, so a
 missing dependency never turns into a silently skipped diagnostic.
 
+`0.5.0b1` is a pre-release, so the commands above install the last stable version.
+To get it:
+
+```bash
+pip install --pre wintegrate
+```
+
+Everything in it came from driving four real applications — Notepad++, WinMerge,
+DB Browser for SQLite and Files — rather than a test app written for the purpose,
+and those four now run as a CI release gate on both a client and a server SKU.
+See the [changelog](CHANGELOG.md#050b1--2026-09-01).
+
 Or install from source with development dependencies:
 ```bash
 git clone https://github.com/mangokingTW/wintegrate.git
