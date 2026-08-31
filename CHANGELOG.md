@@ -24,6 +24,19 @@ documentation. Each entry names what was measured.
   `WINTEGRATE_REQUIRE_TARGET_APPS` turns "not installed" into a failure that names
   every path it tried.
 
+  Each application runs on **both a client and a server SKU** —
+  `windows-11-arm` is Windows 11 Enterprise, `windows-latest` is Windows Server
+  2025 — because the two are not interchangeable for UI automation.
+
+  DB Browser for SQLite runs on both for a second reason: v3.13.1 ships a
+  different Qt per architecture, `Qt5Core.dll` in the win64 build and
+  `Qt6Core.dll` in the arm64 one. Same application version, different
+  accessibility surface — Qt 6 exposes `SelectionItem` on tab items and Qt 5
+  exposes only `Invoke`/`Value`, with no readable selection state anywhere. The
+  tests drive both: they select through the pattern where it exists and through a
+  click where it does not, and verify through the tab bar's `name`, which reports
+  the selected tab's label on both builds.
+
   Application versions are pinned — Chocolatey `--version=` in CI, a SHA-256 for
   the mirrored Files package — and each module declares the same version in
   `VERIFIED_VERSION` with one test checking it, so the pin and the assertions

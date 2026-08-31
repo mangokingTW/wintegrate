@@ -182,36 +182,128 @@ jobs:
   # without anyone reading the log.
   test-target-app:
     needs: lint
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # windows-latest is Windows Server 2025; windows-11-arm is Windows 11
+          # Enterprise. Both, because a client SKU and a server SKU are not
+          # interchangeable for UI automation — this suite already carries
+          # desktop_only and server_only markers for that reason.
           - app: notepad++
+            os: windows-latest
+            arch: x64
+            tests: tests/test_scintilla.py
+            require: Notepad++
+            choco: notepadplusplus
+            chocoVersion: '8.9.8'
+          - app: notepad++
+            os: windows-11-arm
+            arch: arm64
             tests: tests/test_scintilla.py
             require: Notepad++
             choco: notepadplusplus
             chocoVersion: '8.9.8'
           - app: winmerge
+            os: windows-latest
+            arch: x64
             tests: tests/test_target_winmerge.py
             require: WinMerge
             choco: winmerge
             chocoVersion: '2.16.58.2'
+          - app: winmerge
+            os: windows-11-arm
+            arch: arm64
+            tests: tests/test_target_winmerge.py
+            require: WinMerge
+            choco: winmerge
+            chocoVersion: '2.16.58.2'
+          # Both architectures, because DB Browser for SQLite v3.13.1 ships a
+          # different Qt per architecture: the win64 zip carries Qt5Core.dll and
+          # the arm64 zip carries Qt6Core.dll. Same application version, different
+          # accessibility surface — Qt 6 exposes SelectionItem on tab items and
+          # Qt 5 does not — so running only one of them would leave half the
+          # users untested. Installed from the official msi rather than
+          # Chocolatey, whose package wraps the win64 build on both.
           - app: sqlitebrowser
+            os: windows-latest
+            arch: x64
+            db4sArch: win64
             tests: tests/test_target_sqlitebrowser.py
             require: DB Browser for SQLite
-            choco: sqlitebrowser
-            chocoVersion: '3.13.1'
+            choco: ''
+            chocoVersion: ''
+          - app: sqlitebrowser
+            os: windows-11-arm
+            arch: arm64
+            db4sArch: arm64
+            tests: tests/test_target_sqlitebrowser.py
+            require: DB Browser for SQLite
+            choco: ''
+            chocoVersion: ''
           - app: files
+            os: windows-latest
+            arch: x64
             tests: tests/test_target_files.py
             require: Files
             choco: ''
             chocoVersion: ''
-    name: test-target-app (${{ matrix.app }})
+          - app: files
+            os: windows-11-arm
+            arch: arm64
+            tests: tests/test_target_files.py
+            require: Files
+            choco: ''
+            chocoVersion: ''
+    name: test-target-app (${{ matrix.app }} / ${{ matrix.arch }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
+
+      - name: Install WSL on ARM Runner (Stop 30s probe popups)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          # 1. Update WSL stub so the provision daemon stops spawning terminal popups every 30s
+          $p = Start-Process -FilePath wsl.exe -ArgumentList '--update', '--confirm' -NoNewWindow -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); Write-Host 'wsl --update timed out' }
+
+          # 2. Fallback to arm64 MSI if needed
+          function Get-WslStatus {
+            $prev = [Console]::OutputEncoding
+            try {
+              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+              return ((& wsl.exe --status 2>&1 | Out-String) -replace "\0", '')
+            } finally { [Console]::OutputEncoding = $prev }
+          }
+          $status = Get-WslStatus
+          Write-Host "WSL status: $status"
+          if ($status -match 'not installed') {
+            try {
+              $rel = Invoke-RestMethod 'https://api.github.com/repos/microsoft/WSL/releases/latest'
+              $asset = $rel.assets | Where-Object { $_.name -match 'arm64\.msi$' } | Select-Object -First 1
+              if ($asset) {
+                Write-Host "Downloading $($asset.name)..."
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile wsl-arm64.msi
+                Start-Process msiexec -ArgumentList '/i', 'wsl-arm64.msi', '/qn', '/norestart' -Wait
+              }
+            } catch {
+              Write-Host "WSL MSI fallback skipped: $_"
+            }
+          }
+
+          # 3. Disable Microsoft Edge First Run Experience via Registry
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "PreventFirstRunPage" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          New-Item -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+
+          # 4. Sweep existing background popups
+          Get-Process -Name "wsl","wslhost","WindowsTerminal","msedge","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE = 0
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -242,6 +334,36 @@ jobs:
           # when the executable is missing, and that is the check that matters, so
           # do not end the job before it runs.
           $global:LASTEXITCODE = 0
+
+      # Installed from the official msi rather than Chocolatey: the Chocolatey
+      # package wraps the win64 build on both architectures, and the whole point
+      # of running this app twice is to cover its two Qt versions. One URL pins
+      # the application version and the Qt version together.
+      - name: Install DB Browser for SQLite (${{ matrix.db4sArch }})
+        if: matrix.app == 'sqlitebrowser'
+        shell: pwsh
+        env:
+          DB4S_VERSION: '3.13.1'
+          DB4S_ARCH: ${{ matrix.db4sArch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = "https://github.com/sqlitebrowser/sqlitebrowser/releases/download/v$env:DB4S_VERSION/DB.Browser.for.SQLite-v$env:DB4S_VERSION-$env:DB4S_ARCH.msi"
+          $msi = Join-Path $env:RUNNER_TEMP 'db4s-arm64.msi'
+          Invoke-WebRequest -Uri $url -UseBasicParsing -OutFile $msi -TimeoutSec 600
+          Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $msi).Length / 1MB), $url)
+          $p = Start-Process msiexec -ArgumentList '/i', "\"$msi\"", '/qn', '/norestart' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec exited $($p.ExitCode)" }
+          $dirs = @(
+            'C:\Program Files\DB Browser for SQLite',
+            'C:\Program Files (x86)\DB Browser for SQLite'
+          )
+          $dir = $dirs | Where-Object { Test-Path (Join-Path $_ 'DB Browser for SQLite.exe') } | Select-Object -First 1
+          if (-not $dir) { throw "not installed at any of: $($dirs -join ', ')" }
+          $exe = Join-Path $dir 'DB Browser for SQLite.exe'
+          $qt = if (Test-Path (Join-Path $dir 'Qt6Core.dll')) { 'Qt6' }
+                elseif (Test-Path (Join-Path $dir 'Qt5Core.dll')) { 'Qt5' }
+                else { 'unknown Qt' }
+          Write-Host ("installed: {0} ({1}) at {2}" -f (Get-Item $exe).VersionInfo.FileVersion, $qt, $dir)
 
       # Files is fetched from a mirror rather than from its own distribution.
       # Every GitHub release of files-community/Files carries zero assets, so the
@@ -327,7 +449,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
-          name: ci-artifacts-target-app-${{ matrix.app }}
+          name: ci-artifacts-target-app-${{ matrix.app }}-${{ matrix.arch }}
           path: |
             recording-artifacts/
             artifacts/

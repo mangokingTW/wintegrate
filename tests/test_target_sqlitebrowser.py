@@ -7,13 +7,29 @@ offers are traps:
   it exactly would break on a Qt upgrade, exactly like WinMerge's class carrying
   a module base address.
 - `automation_id` is a full object path
-  (`Application.MainWindow.centralwidget.mainTab.qt_tabwidget_tabbar`), which is
-  language-independent — but a container and its children share the container's
-  path, so an id identifies a *group* rather than one element. And it is not
-  dependable: on a Windows Server 2025 runner every tab item reported
-  `automation_id=''` while the same build on a Windows 11 client reported the full
-  path, with 71 other elements carrying ids on both. `_main_tab_bar` therefore
-  falls back to Qt class names.
+  (`…centralwidget.mainTab.qt_tabwidget_tabbar`), which is language-independent —
+  but a container and its children share the container's path, so an id
+  identifies a *group* rather than one element.
+
+DB Browser for SQLite v3.13.1 ships **two Qt versions**, one per architecture: the
+win64 and win32 builds carry `Qt5Core.dll`, the arm64 build carries `Qt6Core.dll`.
+Same application version, and a different accessibility surface — so these tests
+run against both and depend only on what the two have in common:
+
+| | Qt 5.15.2 | Qt 6.8.3 |
+|---|---|---|
+| window class | `Qt5152QWindowIcon` | `Qt683QWindowIcon` |
+| tab bar object-path id | yes, no `Application.` prefix | yes, `Application.` prefix |
+| tab *item* id | `''` | the bar's path |
+| tab item patterns | `Invoke`, `Value` | `Invoke`, `Value`, `SelectionItem` |
+| `bar.get_selection()` | `[]` | works |
+| `item.is_selected` | `None` | works |
+| tool button ids | 21 of 37 empty | 19 of 38 share `QToolButton` |
+
+Selection is therefore driven by `click()` and verified through the tab bar's
+`name`, which reports the selected tab's label on both builds — measured across
+four consecutive selections on Qt 5. `select_verified()` is used where
+SelectionItem exists, because verifying through the pattern is stronger.
 
 The tab labels are localized (`瀏覽資料`, not `Browse Data`) and their order has
 been observed to differ between runs, so nothing here matches a tab by name or by
@@ -108,20 +124,16 @@ def _ancestor_classes(element, depth: int = 8) -> list[str]:
 
 
 def _main_tab_bar(win: Window):
-    """The document tab bar, found without relying on automation ids.
+    """The document tab bar.
 
-    Two routes, because the ids are not dependable. On a Windows 11 client each
-    tab item reports its parent tab bar's object path
-    (`…centralwidget.mainTab.qt_tabwidget_tabbar`), and the endswith() on that path
-    is precise. On a Windows Server 2025 runner the same build of the same
-    application reports `automation_id=''` for every tab item while 71 other
-    elements still have ids — the tree is otherwise complete, 201 descendants
-    including all 11 tab items, so this is not a missing accessibility bridge.
+    Matched on the *bar's* object path, which both Qt builds publish — Qt 6 as
+    `Application.MainWindow.centralwidget.mainTab.qt_tabwidget_tabbar` and Qt 5
+    as the same without the `Application.` prefix, so an `endswith` covers both.
+    The tab *items* are the part that differs: Qt 5 gives them no id at all.
 
-    The fallback uses what is stable on both: Qt class names. There are three tab
-    bars — the document one and the Remote dock's are `QTabBar`, and the dock
-    title strip is `QMainWindowTabBar` — so the document tab bar is the `QTabBar`
-    that is not inside a dock.
+    The fallback needs no ids: of the three tab bars, the document one and the
+    Remote dock's are `QTabBar` and the dock title strip is `QMainWindowTabBar`,
+    so the document tab bar is the `QTabBar` with no dock among its ancestors.
     """
     candidates = win.re_resolve_element().find_all(
         control_type_id=CONTROL_TYPE_TAB, class_name="QTabBar"
@@ -228,8 +240,10 @@ def browser(tmp_path):
 def test_window_class_carries_the_qt_version(browser):
     """Characterisation: records why the class name is not used for matching.
 
-    A failure here means the Qt version moved, and is a prompt to check that no
-    matching anywhere depends on the class — not a defect in the app.
+    `Qt5152QWindowIcon` on the win64 and win32 builds, `Qt683QWindowIcon` on the
+    arm64 one — the same application version, so the class encodes the Qt version
+    and nothing else. A failure here means Qt moved, and is a prompt to check that
+    no matching anywhere depends on the class, not a defect in the app.
     """
     assert browser.class_name.startswith("Qt"), browser.class_name
     assert browser.class_name.endswith("QWindowIcon"), browser.class_name
@@ -249,6 +263,44 @@ def test_main_tabs_are_found_without_reading_their_names(browser):
     )
 
 
+def _select_tab(win: Window, index: int) -> str:
+    """Selects a tab and confirms it, on either Qt build. Returns its label.
+
+    Qt 6 exposes SelectionItem on tab items and `select_verified()` is the stronger
+    route, since it verifies through the pattern. Qt 5 exposes only Invoke and
+    Value: `select_verified()` raises `ActionVerificationError`, `is_selected`
+    answers None and `get_selection()` answers `[]`, so there is no selection state
+    to read on the item at all.
+
+    What both publish is the tab bar's `name`, which is the selected tab's label.
+    Comparing it against the label of the tab that was clicked keeps this
+    language-independent — both strings come from the same place.
+    """
+    bar = _main_tab_bar(win)
+    assert bar is not None, "the document tab bar disappeared"
+    tabs = bar.find_all(control_type_id=CONTROL_TYPE_TAB_ITEM)
+    assert len(tabs) == EXPECTED_MAIN_TABS, (
+        f"tab {index}: the tab bar holds {len(tabs)} tabs, expected {EXPECTED_MAIN_TABS}"
+    )
+    tab = tabs[index]
+    label = tab.name
+
+    if "SelectionItem" in tab.supported_patterns():
+        assert tab.select_verified(timeout=10.0), f"tab {index} ({label!r}) did not become selected"
+    else:
+        tab.click()
+
+    def selected_label() -> str:
+        current = _main_tab_bar(win)
+        return current.name if current is not None else ""
+
+    settled_label = settled(selected_label, lambda value: value == label, timeout=10.0)
+    assert settled_label == label, (
+        f"selecting tab {index} ({label!r}) left the tab bar reporting {settled_label!r}"
+    )
+    return label
+
+
 def test_every_tab_can_be_selected_and_the_app_survives(browser):
     """The crash coverage. Selecting a tab is what the reported bugs do.
 
@@ -257,14 +309,8 @@ def test_every_tab_can_be_selected_and_the_app_survives(browser):
     without raising.
     """
     for index in range(EXPECTED_MAIN_TABS):
-        tabs = _main_tabs(browser)
-        assert len(tabs) == EXPECTED_MAIN_TABS, (
-            f"tab {index}: the tab bar lost tabs during the walk ({len(tabs)} left)"
-        )
-        tab = tabs[index]
-        name = tab.name
-        assert tab.select_verified(timeout=10.0), f"tab {index} ({name!r}) did not become selected"
-        assert _is_running(), f"the app died after selecting tab {index} ({name!r})"
+        label = _select_tab(browser, index)
+        assert _is_running(), f"the app died after selecting tab {index} ({label!r})"
 
 
 def test_some_tab_renders_a_table(browser):
@@ -280,8 +326,7 @@ def test_some_tab_renders_a_table(browser):
         "relies on is gone, so it no longer proves anything"
     )
     for index in range(EXPECTED_MAIN_TABS):
-        tabs = _main_tabs(browser)
-        tabs[index].select_verified(timeout=10.0)
+        _select_tab(browser, index)
         if browser.re_resolve_element().find_all(control_type_id=CONTROL_TYPE_TABLE):
             return
     pytest.fail("no tab produced a Table control — the data grid never rendered")
@@ -323,11 +368,14 @@ def test_toolbar_buttons_are_not_addressable_by_id(browser):
     """
     buttons = browser.re_resolve_element().find_all(control_type_id=CONTROL_TYPE_BUTTON)
     assert buttons, "no buttons at all — the toolbar did not render"
-    tails = [b.automation_id.split(".")[-1] for b in buttons]
-    shared = [t for t in tails if t == "QToolButton"]
-    assert len(shared) > 1, (
-        "tool buttons no longer share the 'QToolButton' id — they may now be "
-        "addressable individually, so a toolbar-button test is worth adding"
+    tails = [b.automation_id.split(".")[-1] if b.automation_id else "" for b in buttons]
+    # The invariant across both Qt builds is that ids do not tell the buttons
+    # apart. How they fail to differs: Qt 6 gives 19 of 38 the class name
+    # `QToolButton`, Qt 5 leaves 21 of 37 empty. Either way there are far fewer
+    # distinct ids than buttons.
+    assert len(set(tails)) < len(buttons), (
+        f"every button now has a distinct id ({len(set(tails))} ids for "
+        f"{len(buttons)} buttons) — a toolbar-button test is worth adding"
     )
 
 
