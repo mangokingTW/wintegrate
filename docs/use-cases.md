@@ -34,7 +34,7 @@ with Session(config) as session:
     )
     
     # 2. Interact with the main window
-    win.set_foreground()
+    win.set_foreground(verify=False)
     
     # 3. Trigger an action that opens a native Windows file dialog
     browse_btn = win.find_descendant(name_contains="Open File", control_type_id=50000)
@@ -71,7 +71,7 @@ with Session() as session:
         ["bin/release/my-qt-app.exe"],
         timeout=10.0,
     )
-    win.set_foreground()
+    win.set_foreground(verify=False)
 
     # 2. Interact with Qt form fields with verified typing
     input_box = win.find_descendant(automation_id="usernameInput", required=False)
@@ -83,8 +83,8 @@ with Session() as session:
     if table_elem:
         grid = DataGrid(table_elem)
         # Select row 5 safely even if virtualized/off-screen
-        cell = grid.get_cell(row_index=5, column=0)
-        cell.select()
+        cell = grid.get_cell(row=5, column=0)
+        cell.select_verified()
 
     # 4. Clean exit
     win.close()
@@ -130,29 +130,51 @@ with Session(config) as session:
 
 For low-level system utilities (such as keyboard layout switchers, status bars, tray helpers, or IME managers like [`ImeModePersistence`](https://github.com/mangokingTW/ImeModePersistence)), `wintegrate` provides specialized hardware input and layout verification:
 
-- Native Win32 `SendInput` with physical scan codes (allowing IME interception)
-- Thread-level keyboard layout inspection and switching (`get_keyboard_layout`, `set_keyboard_layout_verified`)
-- IME conversion mode verification (`ImmGetConversionStatus`, `ImmIsIME`)
+- Native Win32 `SendInput` with physical scan codes — the one input path an IME
+  can intercept, which is what makes IME behaviour testable at all
+- **Establishing** the IME conversion mode across a process boundary
+  (`Window.ime_mode`, `get_ime_conversion`), via `WM_IME_CONTROL` to the default
+  IME window. `ImmGetContext` returns nothing for a window in another process and
+  for anything routing text services through TSF, so the context-based route
+  silently does nothing in exactly the case automation cares about.
+- Thread-level keyboard layout inspection (`get_keyboard_layout`,
+  `get_keyboard_layout_list`)
 - Multi-window isolation without PID/HWND collisions
+
+!!! warning "Detecting an IME is not possible; establishing its mode is"
+
+    There is deliberately no "is an IME active" query. `ImmIsIME` looks like that
+    answer and is not — it reports whether an HKL is *loaded*, so it returns true
+    for a plain en-GB layout the moment one is loaded next to Bopomofo. Switching
+    the *layout* is also unreliable across processes: a layout is loaded per
+    process, and a window elsewhere rejects one it has never loaded. Set the
+    conversion mode instead.
 
 ### Example: Testing Physical Scan Codes & IME States
 
 ```python
-from wintegrate import Session, Window
-from wintegrate.interop import get_keyboard_layout, get_keyboard_layout_list
+from wintegrate import ImeConversion, Session, Window
+from wintegrate.interop import get_keyboard_layout_list
 
 with Session() as session:
     win = Window.find(title_pattern="System Tool", timeout=5.0)
-    win.set_foreground()
-    
-    # Verify the thread keyboard layout is active
-    hkl = win.keyboard_layout
-    layouts = get_keyboard_layout_list()
-    assert hkl in layouts
-    
-    # Send physical scan codes through the Windows message pipeline
-    edit = win.find_text_input()
-    edit.send_physical_keys("Abc")
+
+    with win.foreground(verify=False):
+        # The thread's layout, for the record — a scan code means whatever the
+        # active layout says it means.
+        assert win.keyboard_layout in get_keyboard_layout_list()
+
+        # Alphanumeric mode, so the scan codes reach the control rather than the
+        # IME's composition buffer. Restored on exit, along with Caps Lock.
+        with win.ime_mode(ImeConversion.ALPHANUMERIC):
+            edit = win.find_text_input()
+            edit.send_physical_keys("Abc")
+
+        # And the other direction: under a CJK layout in native mode, the same
+        # call lands nothing, because the IME took the keystrokes. That is the
+        # feature, not a failure.
+        with win.ime_mode(ImeConversion.NATIVE):
+            edit.send_physical_keys("hello")
 ```
 
 ---
