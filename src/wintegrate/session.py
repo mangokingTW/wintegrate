@@ -246,6 +246,43 @@ class Session:
         self.logs.append(entry)
         logger.info(f"[{event_type}] {message} ({kwargs})")
 
+    def _census_or_none(self):
+        """A window census, or None when one cannot be taken.
+
+        Diagnostics must never be the reason a step fails, so every call site
+        tolerates None.
+        """
+        try:
+            return WindowCensus.capture()
+        except Exception as exc:
+            logger.debug(f"Step census skipped ({type(exc).__name__}): {exc}")
+            return None
+
+    def _census_delta(self, before) -> dict:
+        """What arrived and left during a step, compact enough to sit in the timeline."""
+        after = self._census_or_none()
+        if before is None or after is None:
+            return {}
+        try:
+            diff = WindowCensus.diff(before, after)
+        except Exception as exc:
+            logger.debug(f"Step census diff skipped ({type(exc).__name__}): {exc}")
+            return {}
+        out = {}
+        if diff.added:
+            out["windows_added"] = [
+                {"class_name": s.class_name, "title": s.title[:60], "pid": s.pid}
+                for s in diff.added
+                if s.is_visible
+            ]
+        if diff.removed:
+            out["windows_removed"] = [
+                {"class_name": s.class_name, "title": s.title[:60], "pid": s.pid}
+                for s in diff.removed
+                if s.is_visible
+            ]
+        return {k: v for k, v in out.items() if v}
+
     @contextmanager
     def step(self, name: str):
         """Names a block of work, so the artifacts say *which step* failed.
@@ -266,6 +303,10 @@ class Session:
         """
         safe = re.sub(r"[^0-9A-Za-z._-]+", "-", name).strip("-") or "step"
         started = time.monotonic()
+        # A census per step boundary, because the session-level before/after pair
+        # cannot see anything that appears and goes during the run — which is
+        # exactly where the interesting windows live.
+        before = self._census_or_none()
         self.log_event("step_start", name)
         try:
             yield
@@ -285,7 +326,7 @@ class Session:
             raise
         else:
             elapsed = time.monotonic() - started
-            self.log_event("step_ok", name, seconds=round(elapsed, 3))
+            self.log_event("step_ok", name, seconds=round(elapsed, 3), **self._census_delta(before))
 
     def __enter__(self) -> Session:
         logger.info("Starting Wintegrate UI automation session...")

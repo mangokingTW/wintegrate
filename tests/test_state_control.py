@@ -137,3 +137,42 @@ def test_reprs_are_useful_and_never_raise(dialog):
     elem = dialog.re_resolve_element()
     assert "UiaElement" in repr(elem)
     assert repr(Window(0xDEAD_BEEF))  # a dead hwnd must still format
+
+
+def test_step_records_windows_that_came_and_went(tmp_path):
+    """A step's census delta covers what the session-level pair cannot see.
+
+    The session census runs once at start and once at end, so a window that
+    appears during the run and is gone before the end leaves no trace at all —
+    and that is exactly the window worth knowing about. Per-step boundaries catch
+    it.
+    """
+    import subprocess as sp
+
+    with Session(SessionConfig(artifact_dir=tmp_path, record_video=False)) as session:
+        proc = sp.Popen([sys.executable, str(APP)])
+        try:
+            with session.step("a window appears"):
+                Window.find(title_exact=DIALOG_TITLE, timeout=20.0)
+            added = [e for e in session.logs if e["type"] == "step_ok" and e.get("windows_added")]
+            assert added, "the step should have recorded the new window"
+            titles = [w["title"] for w in added[0]["windows_added"]]
+            assert any(DIALOG_TITLE in t for t in titles), titles
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+
+def test_discovery_timeout_says_what_was_on_the_desktop():
+    """\"Window failed to appear\" is only half an answer; the other half is what did."""
+    from wintegrate.exceptions import WindowDiscoveryTimeoutError
+
+    with pytest.raises(WindowDiscoveryTimeoutError) as excinfo:
+        Window.launch_and_discover(
+            [sys.executable, "-c", "pass"],  # exits at once, opens nothing
+            timeout=3.0,
+            window_classes=("NoSuchWindowClass",),
+        )
+    message = str(excinfo.value)
+    assert "Visible windows at the moment discovery gave up" in message
+    assert "the launch produced no window" in message
