@@ -11,8 +11,18 @@ UI technology:
 
 A missing application skips its tests. That is the right default for a laptop and
 the wrong default for a release gate, where a silent skip looks exactly like a
-pass — so `WINTEGRATE_REQUIRE_TARGET_APPS=1` turns every skip into a failure that
-names what was not found. CI sets it after installing them.
+pass — so `WINTEGRATE_REQUIRE_TARGET_APPS` names the applications whose absence
+must be a *failure* instead:
+
+    WINTEGRATE_REQUIRE_TARGET_APPS=1                     every application
+    WINTEGRATE_REQUIRE_TARGET_APPS='WinMerge,Notepad++'  only these
+
+Per-application rather than all-or-nothing because Files cannot be installed on a
+GitHub-hosted runner: its packages are only distributed from a CDN behind
+Cloudflare bot protection, which answers a runner's datacentre IP with a "Just a
+moment..." challenge page instead of the 100 MB bundle. So CI requires the three
+that install from Chocolatey and lets Files skip, while a machine that does have
+Files can require all four.
 """
 
 from __future__ import annotations
@@ -23,17 +33,25 @@ from pathlib import Path
 
 import pytest
 
-REQUIRE_TARGET_APPS = os.environ.get("WINTEGRATE_REQUIRE_TARGET_APPS") == "1"
+_REQUIRED = os.environ.get("WINTEGRATE_REQUIRE_TARGET_APPS", "")
+
+
+def _is_required(what: str) -> bool:
+    if _REQUIRED.strip() == "1":
+        return True
+    wanted = {name.strip().casefold() for name in _REQUIRED.split(",") if name.strip()}
+    return what.casefold() in wanted
 
 
 def _missing(what: str, reason: str):
     """Skip, or fail when the caller has declared the app must be present."""
     message = f"{what} not available: {reason}"
-    if REQUIRE_TARGET_APPS:
+    if _is_required(what):
         pytest.fail(
             f"{message}\n"
-            "WINTEGRATE_REQUIRE_TARGET_APPS=1 is set, so this is a failure rather "
-            "than a skip: the application was supposed to have been installed."
+            f"WINTEGRATE_REQUIRE_TARGET_APPS={_REQUIRED!r} names {what}, so this is a "
+            "failure rather than a skip: the application was supposed to have been "
+            "installed."
         )
     pytest.skip(message)
 
