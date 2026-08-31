@@ -985,6 +985,36 @@ def get_parent_pid_map() -> dict[int, int]:
         kernel32.CloseHandle(snapshot)
 
 
+def find_pids_by_image_name(names: tuple[str, ...] | list[str]) -> set[int]:
+    """PIDs of every running process whose image name is in `names`, case-insensitive.
+
+    A packaged app outlives its windows: measured on Windows 11 ARM64, Notepad's
+    windows disappear roughly 45ms before its processes do, and the singleton
+    identity belongs to the process. A sweep that only waits for windows can hand
+    back control while the dying instance can still absorb the next launch.
+    """
+    wanted = {n.lower() for n in names}
+    if not wanted:
+        return set()
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == INVALID_HANDLE_VALUE:
+        raise OSError(f"CreateToolhelp32Snapshot failed (GetLastError={ctypes.get_last_error()})")
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        found: set[int] = set()
+        if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            return found
+        while True:
+            if entry.szExeFile.lower() in wanted:
+                found.add(entry.th32ProcessID)
+            if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                break
+        return found
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
 def get_ancestor_pids(pid: int | None = None) -> set[int]:
     """
     Returns `pid` plus every ancestor PID, walking parent links from a snapshot.

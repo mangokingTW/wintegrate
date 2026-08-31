@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from wintegrate.element import UiaElement
-from wintegrate.interop import get_process_image_name
+from wintegrate.interop import find_pids_by_image_name, get_process_image_name
 from wintegrate.window import Window
 
 logger = logging.getLogger(__name__)
@@ -198,7 +198,10 @@ def sweep_processes_verified(
                 continue
             if image and image.lower() in lowered_procs:
                 survivors.append(snap)
-        if not survivors:
+        # Windows first, then processes: a packaged app has no window while it is
+        # still shutting down, and the singleton identity lives on the process.
+        # Returning at "no windows" hands back a slate that is not clean yet.
+        if not survivors and not find_pids_by_image_name(names):
             if package_family_name and session_state_dirs:
                 # Only once the windows are gone: the files are still open until
                 # then, and clearing them early achieves nothing.
@@ -210,7 +213,8 @@ def sweep_processes_verified(
         time.sleep(0.2)
 
     logger.warning(
-        f"Sweep left {len(survivors)} window(s) alive after {timeout}s: "
+        f"Sweep left {len(survivors)} window(s) and "
+        f"{len(find_pids_by_image_name(names))} process(es) alive after {timeout}s: "
         f"{[(s.hwnd, s.title) for s in survivors[:3]]}"
     )
     return False
