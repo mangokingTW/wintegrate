@@ -29,11 +29,9 @@ from pathlib import Path
 import pytest
 from win32_dialog_app import DIALOG_TITLE, ID_EDIT
 
-from wintegrate import Window
+from wintegrate import ImeConversion, Window, requires_ime
 from wintegrate.interop import (
-    IME_CMODE_ALPHANUMERIC,
     IME_CMODE_NATIVE,
-    get_ime_conversion,
     get_keyboard_layout,
     get_keyboard_layout_list,
 )
@@ -123,12 +121,9 @@ def latin_dialog(dialog):
     Pinning the layout keeps the two tests below about "do scan codes arrive"
     rather than "does this machine happen to have no IME installed".
     """
-    original = get_ime_conversion(dialog.hwnd)
-    dialog.set_ime_conversion(IME_CMODE_ALPHANUMERIC)
-    time.sleep(0.3)
-    yield dialog
-    if original is not None:
-        dialog.set_ime_conversion(original)
+    with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
+        time.sleep(0.3)
+        yield dialog
 
 
 def test_physical_keys_deliver_text(latin_dialog):
@@ -163,6 +158,7 @@ def test_status_does_not_claim_to_detect_an_ime(dialog):
     assert not hasattr(dialog, "keyboard_layout_has_ime")
 
 
+@requires_ime
 def test_native_mode_intercepts_unshifted_scan_codes(dialog):
     """The behaviour `latin_dialog` exists to neutralise, asserted head-on.
 
@@ -170,30 +166,22 @@ def test_native_mode_intercepts_unshifted_scan_codes(dialog):
     reach the IME. Both directions are asserted, because only the pair rules out
     "this machine never types anything" as the explanation for the empty field.
     """
-    if dialog.keyboard_layout & 0xFFFF not in (0x0404, 0x0411, 0x0412, 0x0804):
-        pytest.skip("no CJK layout active, so there is no IME to intercept")
-
     edit = edit_of(dialog)
-    original = get_ime_conversion(dialog.hwnd)
 
-    dialog.set_ime_conversion(IME_CMODE_NATIVE)
-    time.sleep(0.4)
-    edit.send_keys("{HOME}+{END}{DELETE}")
-    time.sleep(0.3)
-    edit.send_physical_keys("hello")
-    time.sleep(0.7)
-    swallowed = edit.get_value()
+    def type_hello() -> str:
+        edit.send_keys("{HOME}+{END}{DELETE}")
+        time.sleep(0.3)
+        edit.send_physical_keys("hello")
+        time.sleep(0.7)
+        return edit.get_value()
 
-    dialog.set_ime_conversion(IME_CMODE_ALPHANUMERIC)
-    time.sleep(0.4)
-    edit.send_keys("{HOME}+{END}{DELETE}")
-    time.sleep(0.3)
-    edit.send_physical_keys("hello")
-    time.sleep(0.7)
-    delivered = edit.get_value()
+    with dialog.ime_mode(ImeConversion.NATIVE):
+        time.sleep(0.4)
+        swallowed = type_hello()
 
-    if original is not None:
-        dialog.set_ime_conversion(original)
+    with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
+        time.sleep(0.4)
+        delivered = type_hello()
 
     assert delivered == "hello", "alphanumeric mode must let scan codes through"
     assert swallowed == "", "native mode must take the same keystrokes into composition"

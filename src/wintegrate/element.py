@@ -121,6 +121,42 @@ class UiaElement:
             raise ValueError("IUIAutomationElement cannot be None")
         self._element = element
 
+    def __repr__(self) -> str:
+        """A one-line identity, so a failed assertion says what it was holding.
+
+        Every field here is a cross-process read, so this stays cheap and
+        tolerates failure: a repr that raises turns a useful assertion message
+        into a traceback about formatting.
+        """
+        try:
+            return (
+                f"<UiaElement {self.control_type_name} name={self.name!r} "
+                f"class={self.class_name!r} id={self.automation_id!r}>"
+            )
+        except Exception:
+            return "<UiaElement (unreadable — the element has probably gone stale)>"
+
+    def __eq__(self, other: object) -> bool:
+        """Identity as UIA defines it, via CompareElements.
+
+        Two COM pointers to the same UI element are not necessarily the same
+        pointer value, so the default `==` answers False for elements that are the
+        same thing. Only UIA can settle it.
+        """
+        if not isinstance(other, UiaElement):
+            return NotImplemented
+        try:
+            return bool(get_uia().CompareElements(self._element, other._element))
+        except Exception as exc:
+            logger.debug(f"CompareElements failed ({type(exc).__name__}): {exc}")
+            return False
+
+    # Deliberately unhashable. An element is a mutable handle to something in
+    # another process: it can go stale, and two unequal-looking elements can
+    # become equal. Anything relying on a stable hash — a set, a dict key — would
+    # be relying on a guarantee that does not exist, so fail loudly instead.
+    __hash__ = None
+
     @property
     def name(self) -> str:
         try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import enum
 import logging
 import os
 import sys
@@ -148,12 +149,34 @@ VK_CONVERT = 0x1C
 VK_NONCONVERT = 0x1D
 VK_PROCESSKEY = 0xE5  # what an IME reports while it owns a keystroke
 
+
 # ImmGetConversionStatus mode flags
-IME_CMODE_ALPHANUMERIC = 0x0000
-IME_CMODE_NATIVE = 0x0001
-IME_CMODE_KATAKANA = 0x0002
-IME_CMODE_FULLSHAPE = 0x0008
-IME_CMODE_ROMAN = 0x0010
+VK_CAPITAL = 0x14
+
+
+class ImeConversion(enum.IntFlag):
+    """IME conversion-mode flags, as an IntFlag so a mode prints as what it means.
+
+    The raw API deals in integers, and `conversion=9` tells a reader nothing. As
+    an IntFlag the same value reprs as `ImeConversion.NATIVE|FULLSHAPE`, which is
+    the difference between a diagnostic artifact you can read and one you have to
+    decode. IntFlag members are ints, so anything that took the old constants
+    still works.
+    """
+
+    ALPHANUMERIC = 0x0000
+    NATIVE = 0x0001
+    KATAKANA = 0x0002
+    FULLSHAPE = 0x0008
+    ROMAN = 0x0010
+
+
+# The original names, kept because they are the ones the Win32 docs use.
+IME_CMODE_ALPHANUMERIC = ImeConversion.ALPHANUMERIC
+IME_CMODE_NATIVE = ImeConversion.NATIVE
+IME_CMODE_KATAKANA = ImeConversion.KATAKANA
+IME_CMODE_FULLSHAPE = ImeConversion.FULLSHAPE
+IME_CMODE_ROMAN = ImeConversion.ROMAN
 
 # ImmGetCompositionString index
 GCS_COMPSTR = 0x0008
@@ -778,12 +801,40 @@ def set_ime_conversion(hwnd: int, conversion: int, sentence: int = 0) -> bool:
     return sent
 
 
-def get_ime_conversion(hwnd: int) -> int | None:
-    """The IME conversion mode as the IME itself reports it, or None if unavailable."""
+def get_toggle_key_state(vk: int) -> bool:
+    """Whether a toggle key (Caps Lock, Num Lock, Scroll Lock) is currently latched.
+
+    The low bit of GetKeyState is the toggle, not the pressed state.
+    """
+    return bool(user32.GetKeyState(vk) & 1)
+
+
+def set_caps_lock(on: bool) -> bool:
+    """Latches or clears Caps Lock, returning whether it ended up as asked.
+
+    Caps Lock is desktop-global and survives everything: a stray press hours ago
+    turns every subsequent scan-code test into an assertion about `HELLO` instead
+    of `hello`. Nothing in a test suite normally owns this state, which is exactly
+    why a test that types letters has to establish it.
+    """
+    if get_toggle_key_state(VK_CAPITAL) == bool(on):
+        return True
+    user32.keybd_event(VK_CAPITAL, 0, 0, 0)
+    user32.keybd_event(VK_CAPITAL, 0, KEYEVENTF_KEYUP, 0)
+    time.sleep(0.15)
+    return get_toggle_key_state(VK_CAPITAL) == bool(on)
+
+
+def get_ime_conversion(hwnd: int) -> ImeConversion | None:
+    """The IME conversion mode as the IME itself reports it, or None if unavailable.
+
+    None means "no IME window answered", which is not the same as alphanumeric —
+    a caller restoring state must not treat it as a value to restore to.
+    """
     for target in _ime_control_targets(hwnd):
         got = _ime_control(target, IMC_GETCONVERSIONMODE, 0)
         if got is not None:
-            return got
+            return ImeConversion(got)
     return None
 
 

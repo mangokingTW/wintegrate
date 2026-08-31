@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -243,6 +245,47 @@ class Session:
         }
         self.logs.append(entry)
         logger.info(f"[{event_type}] {message} ({kwargs})")
+
+    @contextmanager
+    def step(self, name: str):
+        """Names a block of work, so the artifacts say *which step* failed.
+
+            with session.step("fill in the form"):
+                form.type_verified("...")
+            with session.step("submit"):
+                submit.invoke()
+
+        On a machine you cannot connect to, "which step" is more useful than
+        "which line". This records the step's start, duration and outcome in the
+        event timeline, captures a screenshot named after the step when the block
+        raises, and prefixes the exception message with the step name so the
+        pytest one-liner already tells you where you were.
+
+        The original exception type is preserved and re-raised: this adds context,
+        it does not swallow or convert failures.
+        """
+        safe = re.sub(r"[^0-9A-Za-z._-]+", "-", name).strip("-") or "step"
+        started = time.monotonic()
+        self.log_event("step_start", name)
+        try:
+            yield
+        except BaseException as exc:
+            elapsed = time.monotonic() - started
+            self.log_event("step_failed", name, seconds=round(elapsed, 3), error=type(exc).__name__)
+            try:
+                self.capture_screenshot(f"failure-{safe}", all_monitors=True)
+            except Exception as shot_exc:
+                logger.warning(f"Step screenshot failed ({type(shot_exc).__name__}): {shot_exc}")
+            if (
+                exc.args
+                and isinstance(exc.args[0], str)
+                and not exc.args[0].startswith(f"[{name}]")
+            ):
+                exc.args = (f"[{name}] {exc.args[0]}",) + exc.args[1:]
+            raise
+        else:
+            elapsed = time.monotonic() - started
+            self.log_event("step_ok", name, seconds=round(elapsed, 3))
 
     def __enter__(self) -> Session:
         logger.info("Starting Wintegrate UI automation session...")

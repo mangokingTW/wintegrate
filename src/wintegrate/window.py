@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from wintegrate.diagnostics import WindowCensus, capture_window_image
@@ -18,17 +19,21 @@ from wintegrate.exceptions import (
 )
 from wintegrate.interop import (
     SW_RESTORE,
+    VK_CAPITAL,
     attach_to_input_desktop,
     get_composition_string,
     get_foreground_window,
+    get_ime_conversion,
     get_ime_status,
     get_keyboard_layout,
     get_process_image_name,
+    get_toggle_key_state,
     get_window_class,
     get_window_pid,
     get_window_title,
     kernel32,
     load_keyboard_layout,
+    set_caps_lock,
     set_ime_conversion,
     set_ime_open,
     user32,
@@ -57,6 +62,80 @@ class Window:
     def __init__(self, hwnd: int, pid: int | None = None):
         self.hwnd = hwnd
         self.pid = pid or get_window_pid(hwnd)
+
+    def __repr__(self) -> str:
+        """A one-line identity for assertion output and logs.
+
+        Tolerates a dead window: by the time a failure is being formatted the
+        window may be gone, and a repr that raises replaces a useful message with
+        a traceback about formatting.
+        """
+        try:
+            return (
+                f"<Window hwnd={self.hwnd:#x} pid={self.pid} "
+                f"class={self.class_name!r} title={self.title!r}>"
+            )
+        except Exception:
+            return f"<Window hwnd={self.hwnd:#x} (gone)>"
+
+    @contextmanager
+    def ime_mode(self, conversion: int):
+        """Puts this window's IME into a known conversion mode for the block.
+
+            with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
+                edit.send_physical_keys("hello")
+
+        Why this exists: a scan code means whatever the active input state says it
+        means. Under Bopomofo in native mode, unshifted letters are phonetic keys
+        the IME swallows into composition, so correct scan-code injection produces
+        an empty field. Establishing the mode is the only way to make that
+        deterministic — detecting it is not possible (see get_ime_status).
+
+        On exit the previous mode is restored **only if it could be read**. A None
+        reading means no IME window answered, which is not the same as
+        alphanumeric; restoring a guess would leave the desktop in a state the
+        caller never asked for.
+        """
+        original = get_ime_conversion(self.hwnd)
+        caps_was_on = get_toggle_key_state(VK_CAPITAL)
+        self.set_ime_conversion(int(conversion))
+        if caps_was_on:
+            # Caps Lock is desktop-global and survives everything. Left latched it
+            # turns "hello" into "HELLO", and the resulting assertion failure
+            # points at the injection rather than at a toggle nobody set on
+            # purpose. Establish it here, since this block already exists to make
+            # typing deterministic.
+            set_caps_lock(False)
+        try:
+            yield self
+        finally:
+            if original is not None:
+                self.set_ime_conversion(int(original))
+            if caps_was_on:
+                set_caps_lock(True)
+
+    @contextmanager
+    def foreground(self, verify: bool = True, timeout: float = 2.0):
+        """Brings this window to the foreground for the block, then gives it back.
+
+            with dialog.foreground():
+                edit.send_physical_keys("hello")
+
+        The foreground window is a global, shared resource: a test that takes it
+        and never returns it leaves the next one typing into whatever it grabbed.
+        Restoration is best-effort — the previous window may be gone by now, and
+        failing teardown over that would mask the real result.
+        """
+        previous = get_foreground_window()
+        self.set_foreground(verify=verify, timeout=timeout)
+        try:
+            yield self
+        finally:
+            if previous and previous != self.hwnd:
+                try:
+                    Window(previous).set_foreground(verify=False)
+                except Exception as exc:
+                    logger.debug(f"Could not restore foreground ({type(exc).__name__}): {exc}")
 
     @property
     def title(self) -> str:

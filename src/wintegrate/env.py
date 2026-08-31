@@ -100,6 +100,39 @@ if _has_pytest:
         env.is_desktop,
         reason="Specifically designed for Windows Server environments",
     )
+
+    def _has_cjk_layout() -> bool:
+        """Whether a layout that can carry an IME is loaded.
+
+        Keyed off the layout's language, not off ImmIsIME: that function reports
+        whether an HKL is *loaded*, so it answers true for a plain en-GB layout
+        the moment one is loaded next to Bopomofo. This is a coarser question —
+        "could this machine have an IME to control" — and it is the one a skip
+        decision actually needs.
+        """
+        try:
+            from wintegrate.interop import get_keyboard_layout_list
+
+            cjk = {0x0404, 0x0411, 0x0412, 0x0804, 0x0C04, 0x1004, 0x1404}
+            return any((hkl & 0xFFFF) in cjk for hkl in get_keyboard_layout_list())
+        except Exception:
+            return False
+
+    requires_ime = pytest.mark.skipif(
+        not _has_cjk_layout(),
+        reason="No CJK keyboard layout is loaded, so there is no IME to drive",
+    )
+
+    def requires_windows_build(min_build: int):
+        """Skips unless the OS build is at least `min_build`."""
+        return pytest.mark.skipif(
+            env.os_build < min_build,
+            reason=f"Requires Windows build >= {min_build} (this is {env.os_build})",
+        )
 else:
     desktop_only = lambda fn: fn  # noqa: E731
     server_only = lambda fn: fn  # noqa: E731
+    requires_ime = lambda fn: fn  # noqa: E731
+
+    def requires_windows_build(min_build: int):  # noqa: ARG001
+        return lambda fn: fn
