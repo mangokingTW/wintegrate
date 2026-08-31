@@ -5,6 +5,66 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [0.4.1] — 2026-08-31
+
+### Fixed
+
+- **`Window.ime_mode` now waits for the IME to report the mode it was given.**
+  Callers were sleeping a fixed interval afterwards to cover the gap between
+  sending `WM_IME_CONTROL` and the IME acting on it — which is what the
+  `_verified` suffix exists to remove, and it belonged in the library rather than
+  in every caller. Gives up quietly rather than raising: an unverifiable mode is
+  not worth failing a caller over when the block is about to run either way.
+
+- **A discovery timeout now says what was on the desktop instead**, newly-arrived
+  windows first, titled windows before untitled ones. `Window failed to appear`
+  states what did not happen; the next question is always what happened instead,
+  and the census only ran at session start and end, so the state at the moment of
+  failure — the one that matters — was never recorded. Tracked down today's CI
+  failure by downloading the recording and sampling video frames; that should not
+  have been necessary.
+
+  It also distinguishes **"the launch produced no window"** — a single-instance app
+  absorbed it — from "a window appeared and was rejected". Different causes,
+  different fixes.
+
+- **The WPF grid fixture now reports why its window never appeared.** Polling the
+  PowerShell process turns "exited with a syntax error" into an immediate failure
+  carrying the exit code and stderr, instead of a 90-second mystery about a
+  window. Its launch timeout also went 40s → 90s: a cold Windows Server runner
+  loading `PresentationFramework` for the first time exceeded 40s on one job while
+  three others on the same image were fine.
+
+### Added
+
+- `Session.step` censuses each step boundary and records `windows_added` /
+  `windows_removed` in the event timeline. The session-level before/after pair
+  cannot see a window that appears **and goes** during a run, which is precisely
+  the window worth knowing about.
+- `get_toggle_key_state()` and `set_caps_lock()` are exported.
+
+### Documentation
+
+- A new use-cases page (Tauri, Qt, .NET/WinUI, system utilities) — and a
+  correction to it: its IME section advertised `ImmIsIME` for "conversion mode
+  verification". That function was removed in 0.3.0 precisely because it does not
+  do what its name says. It also offered `set_keyboard_layout_verified` as a
+  capability, which is unreliable across processes. Two code samples would not
+  have run: `cell.select()` does not exist, and `get_cell` takes `row=` rather
+  than `row_index=`. Every API reference in the page is now checked against `src/`
+  mechanically rather than by eye.
+
+### Tests
+
+- Seven sleep-then-assert sites became polling waits. Root cause of a real CI
+  failure: `assert 'hel' == 'hello'` on an x64 runner — two of five scan codes had
+  not landed within the 0.3s the test slept for. The helper returns the last value
+  rather than raising, so the caller's own assert still produces that diff, which
+  is what identified the cause.
+- `test_far_rows_are_genuinely_virtualized` asked whether a cell was virtualized
+  after `get_cell()` had already realized it — a race that failed one of eight CI
+  jobs.
+
 ## [0.4.0] — 2026-08-31
 
 ### Added
