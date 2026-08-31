@@ -128,7 +128,18 @@ def _describe_tree(win: Window, limit: int = 12) -> str:
                 ids.append(element.automation_id.split(".")[-1])
         except Exception:
             continue
-    lines.append(f"\n  automation ids ({len(ids)} total): {sorted(set(ids))[:limit]}")
+    lines.append(f"\n  automation id tails ({len(ids)} total): {sorted(set(ids))[:limit]}")
+
+    # The full path of every tab item, not just the tail. The filter this fixture
+    # uses is an endswith() on the tab bar's object path, so when it matches
+    # nothing the question is what the paths actually are.
+    for element in elements:
+        try:
+            if element.control_type_id != CONTROL_TYPE_TAB_ITEM:
+                continue
+            lines.append(f"\n    TabItem name={element.name!r} id={element.automation_id!r}")
+        except Exception:
+            continue
     return "".join(lines)
 
 
