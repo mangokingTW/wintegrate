@@ -176,9 +176,17 @@ def test_length_is_bytes_not_characters(editor):
 
     for ch in "中文":
         send_char_input(ch)
-    settled(lambda: sci.length, lambda n: n > EXPECTED_BYTES, timeout=5.0)
+
     # Two CJK characters: six UTF-8 bytes, two UTF-16 characters.
-    assert sci.length == EXPECTED_BYTES + 6
+    expected = EXPECTED_BYTES + 6
+    # Waited for the exact length, not merely for an increase. `n > EXPECTED_BYTES`
+    # is satisfied as soon as the *first* character lands, so a dropped second one
+    # surfaced as `assert 23 == 26` with no hint that a keystroke went missing.
+    length = settled(lambda: sci.length, lambda n: n == expected, timeout=10.0)
+    assert length == expected, (
+        f"typed two CJK characters but Scintilla reports {length} bytes, expected "
+        f"{expected} — {(expected - length) // 3} of them never arrived"
+    )
     assert len(edit.get_value()) == EXPECTED_BYTES + 2
 
 
