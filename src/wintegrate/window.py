@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import re
@@ -18,7 +19,13 @@ from wintegrate.exceptions import (
     WindowDiscoveryTimeoutError,
 )
 from wintegrate.interop import (
+    RECT,
+    SM_CXVIRTUALSCREEN,
+    SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN,
+    SM_YVIRTUALSCREEN,
     SW_RESTORE,
+    SWP_SHOWWINDOW,
     VK_CAPITAL,
     attach_to_input_desktop,
     find_child_windows,
@@ -468,6 +475,60 @@ class Window:
                 return False
             node = node.get_parent()
         return False
+
+    def ensure_onscreen(self, margin: int = 0) -> bool:
+        """Moves the window into the virtual screen if it is positioned outside it.
+
+        A window can be fully off-screen and behave normally in every way that
+        does not involve a pointer: it is visible, it is foreground, its UIA tree
+        resolves, and patterns like SelectionItem work. What stops working is
+        anything that clicks — a synthesised click at a negative coordinate lands
+        nowhere, `click()` returns without complaint, and the test fails on the
+        post-condition with no hint that the cursor never reached the control.
+
+        Measured against DB Browser for SQLite, which restores its last window
+        position: an element reported `(-701, -525, -494, -469)`, and every
+        button click was silently discarded while tab selection kept working.
+
+        Applications that remember their geometry will restore a position saved on
+        a machine with a different screen layout, which is why this is worth
+        checking rather than assuming.
+
+        Returns True if the window is on-screen afterwards (including when it
+        already was), False if it could not be moved.
+        """
+        rect = RECT()
+        if not user32.GetWindowRect(self.hwnd, ctypes.byref(rect)):
+            logger.debug(f"ensure_onscreen: GetWindowRect failed for {self.hwnd:#x}")
+            return False
+
+        vx = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        vy = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        vw = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        vh = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+        # The virtual screen spans every monitor and its origin is negative when a
+        # secondary monitor sits above or to the left of the primary one, so
+        # "negative coordinate" on its own does not mean off-screen.
+        if rect.left >= vx and rect.top >= vy and rect.right <= vx + vw and rect.bottom <= vy + vh:
+            return True
+
+        width = min(rect.right - rect.left, vw - 2 * margin)
+        height = min(rect.bottom - rect.top, vh - 2 * margin)
+        moved = user32.SetWindowPos(
+            self.hwnd, None, vx + margin, vy + margin, width, height, SWP_SHOWWINDOW
+        )
+        logger.debug(
+            f"ensure_onscreen: moved {self.hwnd:#x} from "
+            f"({rect.left},{rect.top},{rect.right},{rect.bottom}) to "
+            f"({vx + margin},{vy + margin}) size {width}x{height}: {bool(moved)}"
+        )
+        if not moved:
+            return False
+
+        after = RECT()
+        if not user32.GetWindowRect(self.hwnd, ctypes.byref(after)):
+            return False
+        return after.left >= vx and after.top >= vy
 
     def move_to_current_desktop(self):
         """Moves this window to the currently active virtual desktop if pyvda is available."""

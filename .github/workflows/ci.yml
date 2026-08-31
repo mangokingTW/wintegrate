@@ -175,11 +175,35 @@ jobs:
   # A test app written for this library only proves the library agrees with
   # itself; these prove it against software that has never heard of it.
   #
-  # One job rather than a matrix entry: the installs take minutes, and the value
-  # is in the applications rather than in the Python version.
-  test-target-apps:
+  # One runner per application, in parallel. Not pytest-xdist: these drive the
+  # real desktop, so two of them on one machine would fight over foreground focus
+  # and produce failures that belong to neither test. Separate runners also mean
+  # each job installs only what it needs, and a red job names the application
+  # without anyone reading the log.
+  test-target-app:
     needs: lint
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: notepad++
+            tests: tests/test_scintilla.py
+            require: Notepad++
+            choco: notepadplusplus
+          - app: winmerge
+            tests: tests/test_target_winmerge.py
+            require: WinMerge
+            choco: winmerge
+          - app: sqlitebrowser
+            tests: tests/test_target_sqlitebrowser.py
+            require: DB Browser for SQLite
+            choco: sqlitebrowser
+          - app: files
+            tests: tests/test_target_files.py
+            require: Files
+            choco: ''
+    name: test-target-app (${{ matrix.app }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
@@ -195,28 +219,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
-      # Chocolatey is preinstalled on the Windows images. Versions float on
-      # purpose: the point of this job is to notice when a new release of one of
-      # these applications breaks the assumptions the tests encode.
-      - name: Install Notepad++, WinMerge and DB Browser for SQLite
+      # Chocolatey is preinstalled on the Windows images, and winget is not — it
+      # appears in neither Windows2022-Readme.md nor Windows2025-Readme.md.
+      # Versions float on purpose: this job exists to notice when a new release of
+      # one of these applications breaks the assumptions the tests encode.
+      - name: Install ${{ matrix.app }}
+        if: matrix.choco != ''
         shell: pwsh
         run: |
-          foreach ($pkg in @('notepadplusplus', 'winmerge', 'sqlitebrowser')) {
-            Write-Host "::group::choco install $pkg"
-            choco install $pkg -y --no-progress --ignore-checksums
-            if ($LASTEXITCODE -ne 0) { Write-Host "$pkg install exit code $LASTEXITCODE" }
-            Write-Host '::endgroup::'
-          }
-          # choco's exit code is unreliable across packages; the tests themselves
-          # fail loudly when an executable is missing, which is the check that
-          # matters. Reset so a non-zero code here does not end the job before
-          # that check runs.
+          choco install ${{ matrix.choco }} -y --no-progress --ignore-checksums
+          # choco's exit code is unreliable across packages. The tests fail loudly
+          # when the executable is missing, and that is the check that matters, so
+          # do not end the job before it runs.
           $global:LASTEXITCODE = 0
 
-      # Files is a packaged app with no installer on its GitHub releases (every
-      # release carries zero assets). The packages live on the CDN its own
-      # cd-sideload-stable.yml publishes to, addressed through an .appinstaller
-      # manifest. The CDN rejects non-browser User-Agents with 403.
       # Files is fetched from a mirror rather than from its own distribution.
       # Every GitHub release of files-community/Files carries zero assets, so the
       # packages exist only on the CDN named in the project's own
@@ -227,10 +243,10 @@ jobs:
       # workflow's job, so the package was fetched once by hand and mirrored.
       #
       # The mirror is an unmodified, publisher-signed bundle. The hash is checked
-      # here so the mirror is verified rather than trusted, and the signature is
-      # checked so the bytes are attributable to Files' own publisher rather than
-      # to the mirror.
+      # so the mirror is verified rather than trusted, and the signature is checked
+      # so the bytes stay attributable to Files' own publisher.
       - name: Install Files
+        if: matrix.app == 'files'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -287,21 +303,21 @@ jobs:
           }
           Get-AppxPackage -Name 'Files' | ForEach-Object { Write-Host "installed: $($_.PackageFullName)" }
 
-      - name: Run target application tests
+      - name: Run ${{ matrix.app }} tests
         env:
           # Turns "the application is not installed" from a skip into a failure.
           # Without it a broken install step would leave a green job that tested
           # nothing, which is the exact failure mode this job exists to catch.
-          WINTEGRATE_REQUIRE_TARGET_APPS: "1"
+          WINTEGRATE_REQUIRE_TARGET_APPS: ${{ matrix.require }}
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/ -v -s -m target_app
+          pytest ${{ matrix.tests }} -v -s -m target_app
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
-          name: ci-artifacts-target-apps
+          name: ci-artifacts-target-app-${{ matrix.app }}
           path: |
             recording-artifacts/
             artifacts/

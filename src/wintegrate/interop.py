@@ -333,6 +333,20 @@ user32.EnumWindows.restype = wintypes.BOOL
 user32.EnumChildWindows.argtypes = [wintypes.HWND, WNDENUMPROC, wintypes.LPARAM]
 user32.EnumChildWindows.restype = wintypes.BOOL
 
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
+
+user32.SetWindowPos.argtypes = [
+    wintypes.HWND,
+    wintypes.HWND,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.UINT,
+]
+user32.SetWindowPos.restype = wintypes.BOOL
+
 user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
 user32.GetWindowTextLengthW.restype = ctypes.c_int
 

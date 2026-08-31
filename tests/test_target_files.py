@@ -42,11 +42,20 @@ CONTROL_TYPE_TAB_ITEM = 50019
 # Files restores the previous session by default, and after an update it opens a
 # release-notes page in an embedded WebView2 — which is what made find_text_input
 # return the blog post instead of the path box. This is the same problem as Store
-# Notepad's TabState directory, expressed as a settings key instead of a folder.
+# Notepad's TabState directory, expressed as settings keys instead of a folder.
+#
+# ShowRunningAsAdminPrompt defaults to true and matters more than it looks: a CI
+# runner is elevated, so Files opens a modal ContentDialog ("Files is running as
+# administrator") over its own window. Every element query still succeeds — the
+# tab strip is right there behind the dialog — while Ctrl+T and even a synthesised
+# click on the new-tab button do nothing, because a modal is swallowing input.
+# Found from the CI recording after four tests failed with no visible reason.
 DETERMINISTIC_STARTUP = {
     "ContinueLastSessionOnStartUp": False,
     "RestoreTabsOnStartup": False,
     "OpenSpecificPageOnStartup": False,
+    "ShowRunningAsAdminPrompt": False,
+    "ShowDataStreamsAreHiddenPrompt": False,
 }
 
 
@@ -72,14 +81,17 @@ def files_app():
     aumid = find_packaged_app(PACKAGE)
     settings_file = _settings_path(aumid.split("!")[0])
 
-    original = None
-    if settings_file.exists():
-        original = settings_file.read_text(encoding="utf-8")
-        settings = json.loads(original)
-        settings.update(DETERMINISTIC_STARTUP)
-        settings_file.write_text(
-            json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+    # Written even when the file does not exist yet. A first run on a fresh
+    # machine has no settings file, and an earlier version of this fixture
+    # skipped the patch in that case — which is exactly the CI machine, so none
+    # of the determinism below was applied there and the admin-prompt modal
+    # appeared. Every key Files does not find takes its own default, so a partial
+    # file is safe.
+    original = settings_file.read_text(encoding="utf-8") if settings_file.exists() else None
+    settings = json.loads(original) if original else {}
+    settings.update(DETERMINISTIC_STARTUP)
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings_file.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
 
     sweep_processes_verified((PROCESS,), ("Files",))
     proc, win = Window.launch_and_discover(
@@ -108,6 +120,16 @@ def files_app():
         sweep_processes_verified((PROCESS,), ("Files",))
         if original is not None:
             settings_file.write_text(original, encoding="utf-8")
+        else:
+            settings_file.unlink(missing_ok=True)
+
+
+def _maybe(root, **criteria):
+    """`find_descendant`, but absence is an answer rather than an exception."""
+    try:
+        return root.find_descendant(timeout=2.0, **criteria)
+    except Exception:
+        return None
 
 
 def _tab_count(win: Window) -> int:
@@ -185,11 +207,16 @@ def test_new_tab_by_button_and_close_by_accelerator(files_app):
 
 
 def test_navigation_updates_the_invariant_path(files_app):
-    """Assert on `PART_TextBox`, not on `CurrentPathGet`.
+    """Typing a path updates both fields, and the two are not interchangeable.
 
-    At Home the two disagree: `PART_TextBox` reads `Home` while `CurrentPathGet`
-    reads the translated display name (`首頁` on a zh-TW machine). Only the former
-    is safe to assert against on an unknown locale.
+    At Home they disagree: `PART_TextBox` reads the invariant `Home` while
+    `CurrentPathGet` reads the translated display name (`首頁` on a zh-TW
+    machine). So `PART_TextBox` is the one to assert on for a *special* location.
+
+    The reverse holds for navigation: `PART_TextBox` is the path editor's buffer
+    and only tracks what was typed into it, so a button that navigates leaves it
+    stale. `test_navigation_buttons_move_and_come_back` asserts on
+    `CurrentPathGet` for exactly that reason.
     """
     root = files_app.re_resolve_element()
     path_box = root.find_descendant(automation_id="PART_TextBox", timeout=10.0)
@@ -220,10 +247,15 @@ def test_sidebar_automation_ids_are_localized(files_app):
     Sidebar items use their display label as their id, so a suite that assumed the
     rule held app-wide would break on a translated machine. `SettingsButton` is
     the one stable id there, and it is the anchor this asserts on.
+
+    The toggle button is optional: below a certain window width Files collapses
+    the sidebar into a flyout and shows `SidebarPaneToggleButton`, and above it
+    the sidebar is always open and the button does not exist. Requiring it failed
+    on a 1024x768 runner while passing at 800x600.
     """
-    root = files_app.re_resolve_element()
-    toggle = root.find_descendant(automation_id="SidebarPaneToggleButton", timeout=10.0)
-    toggle.click()
+    toggle = _maybe(files_app.re_resolve_element(), automation_id="SidebarPaneToggleButton")
+    if toggle is not None:
+        toggle.click()
 
     def settings_item():
         items = files_app.re_resolve_element().find_all(control_type_id=50007)
@@ -241,4 +273,56 @@ def test_sidebar_automation_ids_are_localized(files_app):
     assert localized, (
         "no sidebar item uses its display name as its automation_id any more — "
         "check whether the locale caveat in this module still applies"
+    )
+
+
+def test_navigation_buttons_move_and_come_back(files_app):
+    """`Up` and `Back` clicked, verified against the invariant path field.
+
+    The one target where a toolbar button is both addressable by a stable
+    English id and observable through a language-independent value. WinMerge's
+    toolbar has to be matched on translated names and read through the status
+    bar; sqlitebrowser's tool buttons share one id. Files has neither problem.
+    """
+    root = files_app.re_resolve_element()
+    path_box = root.find_descendant(automation_id="PART_TextBox", timeout=10.0)
+    path_box.set_focus()
+    interop.send_keys("^a")
+    start = os.environ.get("SystemRoot", r"C:\Windows")
+    for character in start:
+        interop.send_char_input(character)
+    interop.send_keys("{ENTER}")
+
+    # CurrentPathGet, not PART_TextBox. PART_TextBox is the path *editor's*
+    # buffer: typing updates it, and button navigation does not. Measured — after
+    # clicking Up from C:\Windows, CurrentPathGet read 'C:\' while PART_TextBox
+    # still read 'C:\Windows' eight seconds later. CurrentPathGet is the current
+    # location, and for an ordinary folder it is the real path rather than a
+    # translated display name.
+    # Compared case-insensitively: %SystemRoot% is 'C:\WINDOWS' while Files
+    # reports the directory's real on-disk casing, 'C:\Windows'. Both name the
+    # same folder, and Windows paths are case-insensitive.
+    def same_path(a: str, b: str) -> bool:
+        return os.path.normcase(a) == os.path.normcase(b)
+
+    def read_location() -> str:
+        box = _maybe(files_app.re_resolve_element(), automation_id="CurrentPathGet")
+        return box.get_value() if box else ""
+
+    landed = settled(read_location, lambda v: same_path(v, start), timeout=20.0)
+    assert same_path(landed, start), f"could not get to {start!r} to begin with, at {landed!r}"
+
+    parent = str(Path(start).parent)
+    up = files_app.re_resolve_element().find_descendant(automation_id="Up", timeout=10.0)
+    up.click()
+    after_up = settled(read_location, lambda v: same_path(v, parent), timeout=20.0)
+    assert same_path(after_up, parent), (
+        f"Up should have gone to {parent!r}, location reads {after_up!r}"
+    )
+
+    back = files_app.re_resolve_element().find_descendant(automation_id="Back", timeout=10.0)
+    back.click()
+    after_back = settled(read_location, lambda v: same_path(v, start), timeout=20.0)
+    assert same_path(after_back, start), (
+        f"Back should have returned to {start!r}, location reads {after_back!r}"
     )

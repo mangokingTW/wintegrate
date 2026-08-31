@@ -129,12 +129,20 @@ def test_editor_panes_expose_nothing(compare):
     not good news; it is a record of a limitation that still holds.
     """
     win = compare(1)
-    panes = [
-        e
-        for e in win.re_resolve_element().find_all(control_type_id=50033)
-        if e.class_name.startswith("Afx:")
-    ]
-    assert panes, "no Afx: panes found — WinMerge's layout changed, revisit this module"
+
+    def panes_now():
+        return [
+            e
+            for e in win.re_resolve_element().find_all(control_type_id=50033)
+            if e.class_name.startswith("Afx:")
+        ]
+
+    # The window is discoverable before the MFC child views are created, so this
+    # counted 0 panes on a slower machine. Polled for the same reason the band
+    # count is.
+    count = settled(lambda: len(panes_now()), lambda n: n > 0, timeout=20.0)
+    assert count > 0, "no Afx: panes found — WinMerge's layout changed, revisit this module"
+    panes = panes_now()
     assert all(p.supported_patterns() == [] for p in panes), (
         "an Afx: pane now supports patterns; UIA may be able to read the diff directly"
     )
@@ -194,3 +202,50 @@ def test_identical_files_show_no_highlight(compare):
         time.sleep(0.35)
     assert len(readings) >= 4, f"never got a stable reading, saw {readings}"
     assert readings[-1] == 0, f"identical files should highlight nothing, counted {readings[-1]}"
+
+
+def _status_texts(win: Window) -> list[str]:
+    """Everything the status bar is currently saying.
+
+    The strings are localized, so nothing here reads them — only whether they
+    changed. `找到 3 個差異` becomes `3 個差異中 第 1 個` after Next Difference on a
+    zh-TW machine, and the equivalent pair on any other one.
+    """
+    texts = []
+    for bar in win.re_resolve_element().find_all(control_type_id=50017):
+        if bar.name:
+            texts.append(bar.name)
+        for text in bar.find_all(control_type_id=50020):
+            if text.name:
+                texts.append(text.name)
+    return texts
+
+
+def test_toolbar_button_click_changes_the_status_bar(compare):
+    """A button is clicked and something observable happens.
+
+    Reachability is not the same as working: the earlier test only asserts that
+    named buttons exist. This one clicks `Next Difference` and requires the status
+    bar to say something different afterwards, which is the app confirming it
+    moved to a difference.
+
+    Compared as a whole list and never parsed. The text is translated, so any
+    assertion on its content would pass on an English runner and fail on a
+    localized one — the trap this suite keeps running into.
+    """
+    win = compare(3)
+    before = settled(lambda: _status_texts(win), lambda t: len(t) > 0, timeout=20.0)
+    assert before, "the status bar never reported anything"
+
+    buttons = {
+        b.name: b for b in win.re_resolve_element().find_all(control_type_id=50000) if b.name
+    }
+    name = next((n for n in buttons if "Next Difference" in n), None)
+    assert name, f"no 'Next Difference' button among {sorted(buttons)[:12]}"
+    buttons[name].click()
+
+    after = settled(lambda: _status_texts(win), lambda t: t != before, timeout=15.0)
+    assert after != before, (
+        f"clicking {name!r} left the status bar unchanged: {before!r}. "
+        "Either the click did not land or the difference navigation is broken."
+    )

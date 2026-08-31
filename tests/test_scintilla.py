@@ -17,6 +17,7 @@ from waits import settled
 
 from wintegrate import EolMode, ScintillaView, Window, is_scintilla
 from wintegrate.apps import sweep_processes_verified
+from wintegrate.diagnostics import WindowCensus
 from wintegrate.interop import send_char_input, send_keys
 
 pytestmark = [
@@ -29,6 +30,10 @@ pytestmark = [
 NPP_CANDIDATES = (
     Path(r"C:\Program Files\Notepad++\notepad++.exe"),
     Path(r"C:\Program Files (x86)\Notepad++\notepad++.exe"),
+)
+
+SCROLLBAR_PART_IDS = frozenset(
+    {"UpButton", "DownButton", "UpPageButton", "DownPageButton", "LeftButton", "RightButton"}
 )
 
 LINES = ("alpha", "beta", "gamma")
@@ -163,3 +168,64 @@ def test_from_element_refuses_a_non_scintilla_control(editor):
     root = win.re_resolve_element()
     with pytest.raises(ValueError, match="not a Scintilla control"):
         ScintillaView.from_element(root)
+
+
+def test_toolbar_buttons_expose_no_automation_id(editor):
+    """Characterisation: an MFC toolbar offers nothing but its translated names.
+
+    Every button in Notepad++'s main window has an empty `automation_id`, so the
+    only handle on them is `name` — and the names are localized (`新增(N)` on a
+    zh-TW machine, `New` on an English one). That rules out addressing them
+    portably, which is why the button test below uses a dialog instead.
+
+    Position is not a fallback either: sorting by bounding rectangle puts two 0x0
+    phantom buttons first, and clicking the topmost-leftmost one did nothing.
+    """
+    win, _ = editor
+    buttons = win.re_resolve_element().find_all(control_type_id=50000)
+    assert len(buttons) > 10, f"only {len(buttons)} buttons — is the toolbar hidden?"
+    # A scroll bar's arrow and paging buttons are Buttons too, and those *do* carry
+    # ids — but they are UIA's own standard names for scroll bar parts, not
+    # anything Notepad++ named. Excluded so the assertion is about the toolbar.
+    with_id = [b for b in buttons if b.automation_id and b.automation_id not in SCROLLBAR_PART_IDS]
+    assert not with_id, (
+        "some Notepad++ toolbar buttons now carry an automation_id "
+        f"({[b.automation_id for b in with_id][:5]}) — they could be addressed directly"
+    )
+
+
+def test_dialog_buttons_carry_their_win32_control_id(editor):
+    """A button click with an observable result, addressed language-independently.
+
+    Notepad++'s Find dialog is a plain Win32 `#32770`, and UIA reports each
+    control's *control ID* as its automation id — `1` for IDOK, `2` for IDCANCEL,
+    and Notepad++'s own ids for the rest. Numbers do not get translated, so this
+    is the one route to a button in this application that survives a locale
+    change.
+
+    The dialog is a separate top-level window, not a descendant of the main one,
+    so it has to be found on the desktop rather than under the editor.
+    """
+    win, edit = editor
+    edit.set_focus()
+    send_keys("^f")
+
+    def find_dialog():
+        for snap in WindowCensus.capture():
+            if snap.is_visible and snap.class_name == "#32770" and snap.pid == win.pid:
+                return Window(snap.hwnd, snap.pid)
+        return None
+
+    dialog = settled(find_dialog, lambda d: d is not None, timeout=15.0)
+    assert dialog is not None, "Ctrl+F did not open a #32770 dialog"
+
+    buttons = {
+        b.automation_id: b for b in dialog.re_resolve_element().find_all(control_type_id=50000)
+    }
+    assert "1" in buttons, f"no IDOK button; ids present: {sorted(buttons)}"
+    cancel = buttons.get("2")
+    assert cancel is not None, f"no IDCANCEL button; ids present: {sorted(buttons)}"
+
+    cancel.click()
+    gone = settled(find_dialog, lambda d: d is None, timeout=15.0)
+    assert gone is None, "clicking IDCANCEL left the Find dialog open"

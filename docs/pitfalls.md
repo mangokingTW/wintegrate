@@ -71,6 +71,51 @@ Window.launch_and_discover(
 )
 ```
 
+## A window can be off-screen and behave normally until you click
+
+A window positioned outside the virtual screen is still visible, still
+foreground, and its UIA tree still resolves. Patterns that do not involve a
+pointer keep working — `select_verified()` goes through SelectionItem and
+succeeds. What stops is anything that clicks: a synthesised click at a negative
+coordinate lands nowhere, `click()` returns without complaint, and the test fails
+on its post-condition with no hint that the cursor never arrived.
+
+Measured on DB Browser for SQLite, which restores its last window position: on an
+800x600 screen it came back at `(0, 0, 820, 620)`, and elements reported
+coordinates like `(-701, -525, -494, -469)`. Applications that remember their
+geometry will restore a position saved on a machine with a different screen
+layout, so this is worth checking rather than assuming.
+
+`window.ensure_onscreen()` moves it back, and returns True when the window is
+on-screen afterwards — including when it already was.
+
+Note that a negative coordinate alone does not mean off-screen: the virtual
+screen's origin is negative when a monitor sits above or to the left of the
+primary one. The comparison has to be against `SM_XVIRTUALSCREEN` and friends.
+
+Hidden widgets can report off-screen rectangles for a different reason. Qt gives
+a collapsed dock's children coordinates far outside the window, so "the rectangle
+is off-screen" can mean "this control is not currently shown" rather than "the
+window is misplaced".
+
+## A modal dialog leaves every element query working
+
+An application that opens a modal over its own window keeps its whole UIA tree
+readable. Elements resolve, names and values come back, and every assertion about
+structure passes — while keyboard accelerators and synthesised clicks go to the
+modal instead of the control.
+
+Files does this on an elevated machine, which every CI runner is: it shows a
+"Files is running as administrator" dialog on first launch. Four tests failed with
+`Ctrl+T did not open a tab (1 -> 1)` and `the new-tab button did not open a tab`,
+and nothing in the failures pointed at a dialog. The CI recording did, in one
+frame.
+
+Two things follow. Suppress the prompts an application shows on first run — Files
+has `ShowRunningAsAdminPrompt` in its settings JSON, alongside the session-restore
+keys. And record the run: a screenshot answered in seconds what the assertion
+messages could not answer at all.
+
 ## Being the foreground window is not the same as having focus
 
 WinUI 3 and Windows App SDK apps host their XAML in a

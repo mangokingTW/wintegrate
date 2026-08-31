@@ -13,6 +13,28 @@ documentation. Each entry names what was measured.
 
 ### Added
 
+- **Four real applications are now release test items**, one per generation of
+  Windows UI technology: Notepad++ (Scintilla), WinMerge (Win32/MFC), DB Browser
+  for SQLite (Qt) and Files (WinUI 3). 32 tests, each application on its own CI
+  runner in parallel — not `pytest-xdist`, because these drive the real desktop
+  and two of them on one machine would fight over foreground focus.
+
+  `tests/test_scintilla.py` had existed since the Scintilla work above and **had
+  never run on CI**: nothing installed Notepad++, and `skipif` is silent.
+  `WINTEGRATE_REQUIRE_TARGET_APPS` turns "not installed" into a failure that names
+  every path it tried.
+
+  Buttons are clicked, not just located: WinMerge's `Next Difference` against the
+  status bar changing, Files' `Up` and `Back` against the location it reports,
+  Notepad++'s Find dialog through its Win32 control ids, and the new-tab button in
+  Files against the tab count.
+
+- **`Window.ensure_onscreen()`** moves a window back inside the virtual screen. A
+  window outside it is visible, foreground and fully readable through UIA, and
+  every click is silently discarded. Measured on DB Browser for SQLite, which
+  restored `(0, 0, 820, 620)` onto an 800x600 screen: tab selection kept working
+  through the SelectionItem pattern while no button click landed.
+
 - **Scintilla editors are found and can be read.** `Scintilla` joins the
   text-input ladder, and a new `ScintillaView` answers the questions
   `WM_GETTEXT` cannot: caret position, selection range, line count, EOL mode, tab

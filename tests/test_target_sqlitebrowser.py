@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 from target_apps import find_executable
+from waits import settled
 
 from wintegrate import Window
 from wintegrate.apps import sweep_processes_verified
@@ -57,6 +58,7 @@ MAIN_TAB_BAR = "centralwidget.mainTab.qt_tabwidget_tabbar"
 EXPECTED_MAIN_TABS = 4
 CONTROL_TYPE_TAB_ITEM = 50019
 CONTROL_TYPE_TABLE = 50036
+CONTROL_TYPE_BUTTON = 50000
 
 
 def _sample_database(path: Path) -> Path:
@@ -80,6 +82,14 @@ def _is_running() -> bool:
     return PROCESS.lower() in result.stdout.lower()
 
 
+def _main_tabs(win: Window) -> list:
+    return [
+        tab
+        for tab in win.re_resolve_element().find_all(control_type_id=CONTROL_TYPE_TAB_ITEM)
+        if tab.automation_id.endswith(MAIN_TAB_BAR)
+    ]
+
+
 @pytest.fixture
 def browser(tmp_path):
     """The app opened on a fresh database.
@@ -95,18 +105,21 @@ def browser(tmp_path):
     )
     try:
         with win.foreground(verify=False):
+            # Qt publishes the window before QAccessible has built the tab bar,
+            # so the tab list is empty for a moment after discovery. Every test
+            # below starts by counting tabs, and all of them failed with 0 on a
+            # slower machine until this wait existed. A positive signal, not a
+            # sleep: the count is what the tests need, so wait for it.
+            found = settled(
+                lambda: len(_main_tabs(win)), lambda n: n == EXPECTED_MAIN_TABS, timeout=60.0
+            )
+            assert found == EXPECTED_MAIN_TABS, (
+                f"the main tab bar never reached {EXPECTED_MAIN_TABS} tabs (saw {found})"
+            )
             yield win
     finally:
         proc.terminate()
         sweep_processes_verified((PROCESS,), ("DB Browser",))
-
-
-def _main_tabs(win: Window) -> list:
-    return [
-        tab
-        for tab in win.re_resolve_element().find_all(control_type_id=CONTROL_TYPE_TAB_ITEM)
-        if tab.automation_id.endswith(MAIN_TAB_BAR)
-    ]
 
 
 def test_window_class_carries_the_qt_version(browser):
@@ -164,3 +177,47 @@ def test_some_tab_renders_a_table(browser):
         if browser.re_resolve_element().find_all(control_type_id=CONTROL_TYPE_TABLE):
             return
     pytest.fail("no tab produced a Table control — the data grid never rendered")
+
+
+def test_the_window_can_be_brought_onscreen(browser):
+    """This app restores its saved geometry, which may not fit this screen.
+
+    Measured on an 800x600 machine: the window came back at `(0,0,820,620)`,
+    wider and taller than the display. Everything that does not involve a pointer
+    kept working — the window was visible and foreground, its UIA tree resolved,
+    and `select_verified()` succeeded through the SelectionItem pattern — while
+    any click was silently discarded.
+    """
+    assert browser.ensure_onscreen(), "the window could not be moved onto the screen"
+
+
+def test_toolbar_buttons_are_not_addressable_by_id(browser):
+    """Characterisation, and the reason there is no toolbar-button test here.
+
+    Qt's object paths are excellent for containers and useless for the toolbar:
+    every QToolButton reports the *class name* as the last path segment rather
+    than the widget's own name, so 19 of the 38 buttons share the id
+    `…QToolButton`. Their `name` is the translated tooltip, so neither handle
+    identifies one button portably.
+
+    The buttons that do have unique ids — `buttonLogClear`, `buttonApply`,
+    `butSavePlot`, and the record-navigation set — live in dock widgets that are
+    hidden by default. Qt reports off-screen rectangles for hidden widgets
+    (`(-701, -525, -494, -469)` for the log editor while the window sat at
+    `(0, 0, 800, 600)`), so clicking them lands nowhere.
+
+    Record navigation is addressable and visible, and still not usable: with 30
+    rows there is only one page, so `buttonNext`, `buttonEnd` and `buttonBegin`
+    all leave `editGoto` reading `1`.
+
+    A failure here means Qt started exposing widget names for tool buttons, and a
+    real toolbar test becomes possible.
+    """
+    buttons = browser.re_resolve_element().find_all(control_type_id=CONTROL_TYPE_BUTTON)
+    assert buttons, "no buttons at all — the toolbar did not render"
+    tails = [b.automation_id.split(".")[-1] for b in buttons]
+    shared = [t for t in tails if t == "QToolButton"]
+    assert len(shared) > 1, (
+        "tool buttons no longer share the 'QToolButton' id — they may now be "
+        "addressable individually, so a toolbar-button test is worth adding"
+    )
