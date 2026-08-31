@@ -30,17 +30,39 @@ permissions:
   contents: read
 
 jobs:
+  # The arch input selects the matrix rather than filtering the jobs. A
+  # job-level `if` cannot see the matrix context — only github, needs, vars and
+  # inputs — and using it there fails the whole workflow at parse time with
+  # "Unrecognized named-value: 'matrix'", which shows up as the workflow having
+  # no name and refusing to dispatch at all.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          ARCH: ${{ inputs.arch }}
+        run: |
+          x64='{"arch":"x64","os":"windows-latest"}'
+          arm='{"arch":"arm64","os":"windows-11-arm"}'
+          case "$ARCH" in
+            x64)   include="[$x64]" ;;
+            arm64) include="[$arm]" ;;
+            *)     include="[$x64,$arm]" ;;
+          esac
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+          echo "$include"
+
   reproduce:
+    needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            os: windows-latest
-          - arch: arm64
-            os: windows-11-arm
-    name: notepad++ #16326 (${{ matrix.arch }})
-    if: inputs.arch == 'both' || inputs.arch == matrix.arch
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    # Quoted: an unquoted '#' starts a YAML comment, which silently truncated
+    # this to "notepad++" and threw away the matrix expression with it.
+    name: "notepad++ #16326 (${{ matrix.arch }})"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
