@@ -1,25 +1,31 @@
 """Test replacing pywinauto with wintegrate for Notepad automation workflow."""
 
 from wintegrate import NOTEPAD, UiaElement, Window
-from wintegrate.exceptions import WindowDiscoveryTimeoutError
+from wintegrate.apps import sweep_processes_verified
 
 
 class WintegrateNotepadWindow:
     """Demonstration of full pywinauto replacement for NotepadWindow using wintegrate."""
 
     def __init__(self, x: int = 100, y: int = 100, w: int = 500, h: int = 400):
-        # 1. Discover or launch Notepad window. Discovery keys off the window class,
-        # which — unlike the window title — does not change with the UI language.
-        try:
-            self.win = Window.find(class_name="Notepad", timeout=2.0)
-            self.proc = None
-        except WindowDiscoveryTimeoutError:
-            self.proc, self.win = Window.launch_and_discover(
-                ["notepad.exe"],
-                timeout=30.0,
-                process_names=NOTEPAD.process_names,
-                window_classes=NOTEPAD.window_classes,
-            )
+        # 1. Sweep, then launch. "Find an existing one, else launch" reuses whatever
+        # the previous test left behind — including its text, because Notepad
+        # restores its last session — and races its teardown: if the find misses
+        # while the old instance is still dying, the launch of a single-instance
+        # app produces no new window at all and discovery times out on something
+        # no timeout value can fix.
+        sweep_processes_verified(
+            NOTEPAD.process_names,
+            NOTEPAD.window_classes,
+            package_family_name=NOTEPAD.package_family_name,
+            session_state_dirs=NOTEPAD.session_state_dirs,
+        )
+        self.proc, self.win = Window.launch_and_discover(
+            ["notepad.exe"],
+            timeout=30.0,
+            process_names=NOTEPAD.process_names,
+            window_classes=NOTEPAD.window_classes,
+        )
 
         self.hwnd = self.win.hwnd
         self.win.move_and_resize(x, y, w, h)

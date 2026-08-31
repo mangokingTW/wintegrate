@@ -10,7 +10,13 @@ try:
 except PackageNotFoundError:  # running from a source tree without an install
     __version__ = "0.0.0.dev0"
 
-from wintegrate.apps import CALCULATOR, NOTEPAD, AppHandle, AppSpec
+from wintegrate.apps import (
+    CALCULATOR,
+    NOTEPAD,
+    AppHandle,
+    AppSpec,
+    sweep_processes_verified,
+)
 from wintegrate.controls import (
     DataGrid,
     DataGridCell,
@@ -88,6 +94,7 @@ __all__ = [
     "TreeViewItem",
     "AppHandle",
     "NOTEPAD",
+    "sweep_processes_verified",
     "CALCULATOR",
     "env",
     "PlatformCapabilities",

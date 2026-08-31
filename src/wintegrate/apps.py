@@ -19,10 +19,14 @@ don't have to rediscover them:
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
+import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from wintegrate.element import UiaElement
+from wintegrate.interop import get_process_image_name
 from wintegrate.window import Window
 
 logger = logging.getLogger(__name__)
@@ -38,6 +42,12 @@ class AppSpec:
     window_classes: tuple[str, ...] = ()
     title_pattern: str | None = None
     text_input_ladder: tuple[dict, ...] | None = None
+    # A packaged app keeps its session on disk, so terminating it is not enough to
+    # get a clean start: the next launch restores the tabs the last test left.
+    # These name the package and the LocalState subfolders holding that state, so
+    # a fresh launch can clear them.
+    package_family_name: str | None = None
+    session_state_dirs: tuple[str, ...] = ()
 
 
 NOTEPAD = AppSpec(
@@ -45,6 +55,11 @@ NOTEPAD = AppSpec(
     command=("notepad.exe",),
     process_names=("notepad.exe",),
     window_classes=("Notepad",),  # same class for classic and Store Notepad
+    # Store Notepad reopens the previous session, so a document that looks empty
+    # in a fresh launch is not: the text the last test typed comes back, and an
+    # assertion on content then fails for a reason three tests old.
+    package_family_name="Microsoft.WindowsNotepad_8wekyb3d8bbwe",
+    session_state_dirs=("TabState", "WindowState"),
 )
 
 CALCULATOR = AppSpec(
@@ -98,3 +113,104 @@ def kill_processes(names: tuple[str, ...] | list[str]) -> None:
     """Best-effort force-kill by image name (fresh-launch sweep for single-instance apps)."""
     for name in names:
         subprocess.run(["taskkill", "/F", "/IM", name], capture_output=True, check=False)
+
+
+def clear_package_session_state(
+    package_family_name: str,
+    state_dirs: tuple[str, ...] | list[str],
+    retries: int = 3,
+) -> int:
+    """Deletes a packaged app's persisted session, returning how many files went.
+
+    Terminating a packaged app does not give you a clean start: Store Notepad
+    keeps its open tabs under LocalState\\TabState and reopens them next launch,
+    so a "fresh" window arrives holding the previous test's text.
+
+    Best-effort by design. A file the dying process still has open raises
+    PermissionError, so this retries briefly and then gives up rather than
+    failing a run over cleanup — and a single surviving file does not stop the
+    next launch from coming up empty.
+    """
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        return 0
+    root = Path(local) / "Packages" / package_family_name / "LocalState"
+    removed = 0
+    for attempt in range(retries):
+        stuck = False
+        for sub in state_dirs:
+            directory = root / sub
+            if not directory.is_dir():
+                continue
+            for entry in directory.iterdir():
+                try:
+                    entry.unlink()
+                    removed += 1
+                except PermissionError:
+                    stuck = True
+                except OSError as exc:
+                    logger.debug(f"Could not clear {entry.name} ({type(exc).__name__}): {exc}")
+        if not stuck:
+            break
+        if attempt < retries - 1:
+            time.sleep(0.4)
+    return removed
+
+
+def sweep_processes_verified(
+    names: tuple[str, ...] | list[str],
+    window_classes: tuple[str, ...] | list[str] = (),
+    timeout: float = 10.0,
+    package_family_name: str | None = None,
+    session_state_dirs: tuple[str, ...] | list[str] = (),
+) -> bool:
+    """Kills leftover instances and waits until their windows are actually gone.
+
+    Terminating a packaged app is asynchronous and package-level: taskkill
+    returns long before the last window has been torn down. Sleeping a fixed
+    interval and hoping is the failure this replaces — a leaked window makes the
+    next launch of a single-instance app produce no new window at all, so
+    discovery times out on something no timeout value can fix.
+
+    Returns True when nothing matching remains, False when something outlived the
+    wait. Callers should treat False as "this launch may see a stale window"
+    rather than as a hard error: a sweep is a precaution, not the thing under
+    test.
+    """
+    from wintegrate.diagnostics import WindowCensus
+
+    kill_processes(names)
+    lowered_procs = {n.lower() for n in names}
+    lowered_classes = {c.lower() for c in window_classes}
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        survivors = []
+        for snap in WindowCensus.capture():
+            if not snap.is_visible:
+                continue
+            if lowered_classes and snap.class_name.lower() in lowered_classes:
+                survivors.append(snap)
+                continue
+            try:
+                image = get_process_image_name(snap.pid)
+            except Exception:
+                continue
+            if image and image.lower() in lowered_procs:
+                survivors.append(snap)
+        if not survivors:
+            if package_family_name and session_state_dirs:
+                # Only once the windows are gone: the files are still open until
+                # then, and clearing them early achieves nothing.
+                cleared = clear_package_session_state(package_family_name, session_state_dirs)
+                logger.debug(
+                    f"Cleared {cleared} persisted session file(s) for {package_family_name}"
+                )
+            return True
+        time.sleep(0.2)
+
+    logger.warning(
+        f"Sweep left {len(survivors)} window(s) alive after {timeout}s: "
+        f"{[(s.hwnd, s.title) for s in survivors[:3]]}"
+    )
+    return False

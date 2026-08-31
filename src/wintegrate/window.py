@@ -382,6 +382,19 @@ class Window:
                 return True
             return False
 
+        def is_ready(snap) -> bool:
+            """Whether a matching window has finished coming up.
+
+            A top-level window becomes visible before it is populated: the class
+            already matches while the title is still empty and the content child
+            does not exist yet. Handing that shell back looks like success and
+            then fails 20 seconds later inside find_text_input, on a window whose
+            title prints as ''. Treat an untitled match as "not yet" and keep
+            polling; the real window is usually milliseconds away.
+            """
+            return bool(snap.title.strip())
+
+        saw_unready = False
         while time.monotonic() < deadline:
             after = WindowCensus.capture()
             diff = WindowCensus.diff(before, after)
@@ -390,6 +403,9 @@ class Window:
             for snap in diff.added:
                 if snap.is_visible and snap.hwnd not in excluded and not is_ignorable_helper(snap):
                     if has_criteria and not matches(snap):
+                        continue
+                    if not is_ready(snap):
+                        saw_unready = True
                         continue
                     return proc, cls(snap.hwnd, snap.pid)
 
@@ -402,6 +418,9 @@ class Window:
                     and not is_ignorable_helper(snap)
                 ):
                     if has_criteria and matches(snap):
+                        if not is_ready(snap):
+                            saw_unready = True
+                            continue
                         return proc, cls(snap.hwnd, snap.pid)
 
             time.sleep(0.1)
@@ -412,6 +431,12 @@ class Window:
             proc.kill()
         except Exception:
             pass
+        detail = (
+            " A matching window existed but never gained a title, so it was still "
+            "coming up when the wait ran out."
+            if saw_unready
+            else ""
+        )
         raise WindowDiscoveryTimeoutError(
-            f"Window failed to appear within {timeout}s (cmd={cmd}, pattern={title_pattern})"
+            f"Window failed to appear within {timeout}s (cmd={cmd}, pattern={title_pattern}).{detail}"
         )
