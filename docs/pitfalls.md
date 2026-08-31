@@ -88,14 +88,19 @@ text services through TSF instead — so IMM32 hands out no context *even while 
 IME is actively swallowing keystrokes*. Read that field alone and you conclude
 the opposite of the truth.
 
-Read `layout_has_ime` alongside it (or `window.keyboard_layout_has_ime`), which
-asks the thread's active layout directly via `ImmIsIME`.
+There is no companion field, and that is deliberate. `ImmIsIME` looks like the
+answer and is not: measured on a zh-TW desktop, it returns true for a plain en-GB
+layout the moment that layout is loaded. It reports whether an HKL is *loaded*,
+so a field built on it reads True for every layout on any machine that has an
+IME installed — always True, which is worse than absent because callers branch
+on it.
 
-Note that neither field predicts interception on its own: whether a Bopomofo
-layout swallows a given letter also depends on its conversion mode at that
-moment, and with no IMM32 context there is nothing for `set_ime_conversion` to
-act on. If you need deterministic Latin input, switch the layout rather than
-trying to talk the IME out of it.
+Nothing here predicts interception anyway: whether a Bopomofo layout swallows a
+given letter also depends on its conversion mode at that moment, and with no
+IMM32 context there is nothing for `set_ime_conversion` to act on.
+
+**Do not try to detect an IME. Pin the layout instead** — and be ready for that
+to fail too (see below).
 
 ## The selection state after focus is undefined
 

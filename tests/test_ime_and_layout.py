@@ -31,7 +31,9 @@ from win32_dialog_app import DIALOG_TITLE, ID_EDIT
 
 from wintegrate import Window
 from wintegrate.interop import (
+    IME_CMODE_ALPHANUMERIC,
     IME_CMODE_NATIVE,
+    get_ime_conversion,
     get_keyboard_layout,
     get_keyboard_layout_list,
 )
@@ -121,13 +123,12 @@ def latin_dialog(dialog):
     Pinning the layout keeps the two tests below about "do scan codes arrive"
     rather than "does this machine happen to have no IME installed".
     """
-    original = dialog.keyboard_layout
-    dialog.set_keyboard_layout_verified("00000409")
+    original = get_ime_conversion(dialog.hwnd)
+    dialog.set_ime_conversion(IME_CMODE_ALPHANUMERIC)
+    time.sleep(0.3)
     yield dialog
-    try:
-        dialog.set_keyboard_layout_verified(f"{original & 0xFFFF:08x}")
-    except Exception:
-        pass
+    if original is not None:
+        dialog.set_ime_conversion(original)
 
 
 def test_physical_keys_deliver_text(latin_dialog):
@@ -148,14 +149,51 @@ def test_physical_keys_handle_shifted_characters(latin_dialog):
     assert edit.get_value() == "Ab"
 
 
-def test_layout_status_distinguishes_no_context_from_no_ime(dialog):
-    """`has_context=False` must not be readable as "there is no IME here".
+def test_status_does_not_claim_to_detect_an_ime(dialog):
+    """get_ime_status must not carry a field that claims "an IME is active".
 
-    A modern control routes text services through TSF, so IMM32 hands out no
-    context even while a Bopomofo layout is actively swallowing keystrokes.
-    Reporting has_context alone would tell a caller the opposite of the truth,
-    which is why get_ime_status also carries the layout's own answer.
+    `ImmIsIME` looks like that answer and is not: on a zh-TW desktop it returns
+    true for a plain en-GB layout as soon as that layout is loaded, so a
+    `layout_has_ime` field would read True on every loaded layout. A field that
+    is always True is worse than no field, because callers branch on it.
     """
     status = dialog.get_ime_status()
-    assert "layout_has_ime" in status
-    assert status["layout_has_ime"] == dialog.keyboard_layout_has_ime
+    assert "has_context" in status
+    assert "layout_has_ime" not in status
+    assert not hasattr(dialog, "keyboard_layout_has_ime")
+
+
+def test_native_mode_intercepts_unshifted_scan_codes(dialog):
+    """The behaviour `latin_dialog` exists to neutralise, asserted head-on.
+
+    This is what separates send_physical_keys from type_verified: scan codes
+    reach the IME. Both directions are asserted, because only the pair rules out
+    "this machine never types anything" as the explanation for the empty field.
+    """
+    if dialog.keyboard_layout & 0xFFFF not in (0x0404, 0x0411, 0x0412, 0x0804):
+        pytest.skip("no CJK layout active, so there is no IME to intercept")
+
+    edit = edit_of(dialog)
+    original = get_ime_conversion(dialog.hwnd)
+
+    dialog.set_ime_conversion(IME_CMODE_NATIVE)
+    time.sleep(0.4)
+    edit.send_keys("{HOME}+{END}{DELETE}")
+    time.sleep(0.3)
+    edit.send_physical_keys("hello")
+    time.sleep(0.7)
+    swallowed = edit.get_value()
+
+    dialog.set_ime_conversion(IME_CMODE_ALPHANUMERIC)
+    time.sleep(0.4)
+    edit.send_keys("{HOME}+{END}{DELETE}")
+    time.sleep(0.3)
+    edit.send_physical_keys("hello")
+    time.sleep(0.7)
+    delivered = edit.get_value()
+
+    if original is not None:
+        dialog.set_ime_conversion(original)
+
+    assert delivered == "hello", "alphanumeric mode must let scan codes through"
+    assert swallowed == "", "native mode must take the same keystrokes into composition"

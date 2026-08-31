@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import time
@@ -27,7 +28,6 @@ from wintegrate.interop import (
     get_window_pid,
     get_window_title,
     kernel32,
-    layout_has_ime,
     load_keyboard_layout,
     set_ime_conversion,
     set_ime_open,
@@ -107,6 +107,14 @@ class Window:
 
         The switch is requested, not commanded: only the owning thread can change
         its own layout, so this posts WM_INPUTLANGCHANGEREQUEST and then verifies.
+
+        It can legitimately fail. A layout is loaded per process, and a window in
+        another process will reject a request naming an HKL it has never loaded —
+        measured on a zh-TW Windows 11 ARM64 desktop, where every variant of the
+        request (post and send, with SYSCHARSET, FORWARD and no flag) left the
+        target thread on 0x04040404. Callers that need a known layout should treat
+        ActionVerificationError as "this machine cannot give me one" and skip,
+        rather than continuing with input that will mean something else.
         """
         hkl = load_keyboard_layout(layout_id)
         if not hkl:
@@ -121,15 +129,21 @@ class Window:
             if self.keyboard_layout == hkl:
                 return hkl
             time.sleep(0.1)
+
+        same_process = self.pid == os.getpid()
         raise ActionVerificationError(
             f"Window did not switch to layout {layout_id!r} within {timeout}s "
-            f"(still 0x{self.keyboard_layout:X})"
+            f"(still 0x{self.keyboard_layout:X}). "
+            + (
+                "The window belongs to this process, so the layout is loaded here; "
+                "the thread may not be pumping messages."
+                if same_process
+                else f"The window belongs to pid {self.pid}, and a keyboard layout is "
+                "loaded per process — that process has most likely never loaded "
+                f"{layout_id!r}, so it rejects the request. Cross-process layout "
+                "switching is not reliable; skip the test instead of assuming it worked."
+            )
         )
-
-    @property
-    def keyboard_layout_has_ime(self) -> bool:
-        """Whether this window's active layout is an IME, which changes what keys mean."""
-        return layout_has_ime(self.keyboard_layout)
 
     @property
     def keyboard_layout(self) -> int:
