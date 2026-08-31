@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 
 import pytest
+from waits import value_in, value_of
 from win32_dialog_app import DIALOG_TITLE, ID_EDIT
 
 from wintegrate import ImeConversion, Window, requires_ime
@@ -122,7 +123,6 @@ def latin_dialog(dialog):
     rather than "does this machine happen to have no IME installed".
     """
     with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
-        time.sleep(0.3)
         yield dialog
 
 
@@ -131,8 +131,7 @@ def test_physical_keys_deliver_text(latin_dialog):
     latin_dialog.set_foreground(verify=False)
     edit = edit_of(latin_dialog)
     assert edit.send_physical_keys("hello") is True
-    time.sleep(0.3)
-    assert edit.get_value() == "hello"
+    assert value_of(edit, "hello") == "hello"
 
 
 def test_physical_keys_handle_shifted_characters(latin_dialog):
@@ -140,8 +139,7 @@ def test_physical_keys_handle_shifted_characters(latin_dialog):
     latin_dialog.set_foreground(verify=False)
     edit = edit_of(latin_dialog)
     edit.send_physical_keys("Ab")
-    time.sleep(0.3)
-    assert edit.get_value() == "Ab"
+    assert value_of(edit, "Ab") == "Ab"
 
 
 def test_status_does_not_claim_to_detect_an_ime(dialog):
@@ -170,17 +168,16 @@ def test_native_mode_intercepts_unshifted_scan_codes(dialog):
 
     def type_hello() -> str:
         edit.send_keys("{HOME}+{END}{DELETE}")
-        time.sleep(0.3)
+        value_of(edit, "")
         edit.send_physical_keys("hello")
-        time.sleep(0.7)
-        return edit.get_value()
+        # Either outcome is a legitimate end state here — this waits for whichever
+        # one this mode produces and stops as soon as it has.
+        return value_in(edit, ("hello", ""))
 
     with dialog.ime_mode(ImeConversion.NATIVE):
-        time.sleep(0.4)
         swallowed = type_hello()
 
     with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
-        time.sleep(0.4)
         delivered = type_hello()
 
     assert delivered == "hello", "alphanumeric mode must let scan codes through"

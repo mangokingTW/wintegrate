@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
+from waits import value_in, value_of
 from win32_dialog_app import (
     DIALOG_TITLE,
     ID_CHECK_ONCE,
@@ -104,8 +105,7 @@ def test_combobox_expand_collapse_and_selection(dialog):
     assert [i.name for i in items] == ["Alpha layout", "Beta layout", "Gamma layout"]
 
     items[1].select_verified()
-    time.sleep(0.2)
-    assert combo.get_value() == "Beta layout"
+    assert value_of(combo, "Beta layout") == "Beta layout"
 
     combo.expand_verified(False)
     assert combo.expand_collapse_state == 0
@@ -150,8 +150,7 @@ def test_selection_state_after_focus_is_not_guaranteed(dialog):
     edit.type_verified("abc", verify_contains="abc")
 
     edit.send_keys("{BACKSPACE}")
-    time.sleep(0.2)
-    assert edit.get_value() in ("", "ab")
+    assert value_in(edit, ("", "ab")) in ("", "ab")
 
 
 def test_send_keys_named_keys_reach_the_dialog(dialog):
@@ -160,8 +159,7 @@ def test_send_keys_named_keys_reach_the_dialog(dialog):
 
     # One spec so focus is set once: {END} collapses selection, {BACKSPACE} deletes the last character.
     edit.send_keys("{END}{BACKSPACE}")
-    time.sleep(0.2)
-    assert edit.get_value() == "ab"
+    assert value_of(edit, "ab") == "ab"
 
 
 def test_send_keys_modifiers_reach_the_dialog(dialog):
@@ -178,8 +176,7 @@ def test_send_keys_modifiers_reach_the_dialog(dialog):
     # act on a different selection — and gave ARM64 runners three chances to drop
     # a keystroke instead of one.
     edit.send_keys("{HOME}+{END}{DELETE}")
-    time.sleep(0.3)
-    assert edit.get_value() == ""
+    assert value_of(edit, "") == ""
 
 
 def test_buttons_are_invokable(dialog):

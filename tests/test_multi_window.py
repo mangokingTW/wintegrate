@@ -12,6 +12,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from waits import settled
+
 from wintegrate import (
     CALCULATOR,
     NOTEPAD,
@@ -78,8 +80,10 @@ def test_multi_window_switching_and_typing():
 
                     # 5. Switch back to Window A and assert isolation in both directions
                     win_a.set_foreground(verify=False)
-                    time.sleep(0.3)
-                    res_a = editor_a.get_value()
+                    # Window A's content should not have changed at all, so wait for
+                    # the value to be what it already was rather than sleeping and
+                    # hoping the switch has settled.
+                    res_a = settled(editor_a.get_value, lambda v: "Window A Text" in v)
                     assert "Window A Text" in res_a
                     assert "7" not in res_a
 

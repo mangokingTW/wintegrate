@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from waits import settled
 from win32_dialog_app import DIALOG_TITLE, ID_EDIT
 
 from wintegrate import ImeConversion, Session, SessionConfig, Window
@@ -68,13 +69,11 @@ def test_foreground_gives_the_window_back(dialog):
             w for w in (Window(s.hwnd, s.pid) for s in _visible_dialogs()) if w.hwnd != dialog.hwnd
         )
         outsider.set_foreground(verify=False)
-        time.sleep(0.4)
-        assert get_foreground_window() == outsider.hwnd
+        assert settled(get_foreground_window, lambda h: h == outsider.hwnd) == outsider.hwnd
 
         with dialog.foreground(verify=False):
-            assert get_foreground_window() == dialog.hwnd
-        time.sleep(0.4)
-        assert get_foreground_window() == outsider.hwnd
+            assert settled(get_foreground_window, lambda h: h == dialog.hwnd) == dialog.hwnd
+        assert settled(get_foreground_window, lambda h: h == outsider.hwnd) == outsider.hwnd
     finally:
         other.terminate()
         other.wait(timeout=5)
