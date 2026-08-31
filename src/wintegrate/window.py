@@ -21,6 +21,7 @@ from wintegrate.interop import (
     SW_RESTORE,
     VK_CAPITAL,
     attach_to_input_desktop,
+    find_child_windows,
     get_composition_string,
     get_foreground_window,
     get_ime_conversion,
@@ -62,6 +63,36 @@ DEFAULT_TEXT_INPUT_LADDER: tuple[dict, ...] = (
     # around the RichEdit child, so it wins the race while the child is still
     # materializing, and its get_value() is always empty (verification can never
     # pass against it).
+)
+
+# An embedded WebView2 publishes its Chromium accessibility tree into the host's
+# UIA tree, and its root node is a Document — so it matches the Document rung of
+# the ladder above and outranks the app's own Edit controls, which sit on the rung
+# below. Measured against Files 4.2.9, whose release-notes pane made
+# find_text_input return the blog post's document instead of the path box.
+#
+# Reordering the two rungs would only move the problem: an app whose editor is a
+# Document (rich-text controls with no known window class) would then lose to any
+# unrelated Edit, such as a search box. The browser root is the part that is never
+# the answer, so reject it by name and carry on down the ladder.
+WEBVIEW2_DOCUMENT_AUTOMATION_IDS = frozenset({"RootWebArea"})
+
+
+def _is_embedded_browser_document(element: UiaElement) -> bool:
+    try:
+        return element.automation_id in WEBVIEW2_DOCUMENT_AUTOMATION_IDS
+    except Exception:
+        return False
+
+
+# WinUI 3 / Windows App SDK host their XAML content in a child window rather than
+# in the top-level HWND, and keyboard focus has to be inside it before the XAML
+# accelerators fire. `DesktopChildSiteBridge` is the current name; the older
+# `DesktopWindowContentBridge` is included for earlier Windows App SDK releases
+# but was not measured here.
+CONTENT_ISLAND_CLASS_SUBSTRINGS = (
+    "DesktopChildSiteBridge",
+    "DesktopWindowContentBridge",
 )
 
 
@@ -344,6 +375,12 @@ class Window:
                 for cond in conds:
                     try:
                         el = root.find_descendant(timeout=0.2, **cond)
+                        if el and _is_embedded_browser_document(el):
+                            logger.debug(
+                                "find_text_input: skipping embedded browser document "
+                                f"(automation_id={el.automation_id!r}) matched by {cond}"
+                            )
+                            continue
                         if el:
                             return el
                     except Exception:
@@ -354,6 +391,83 @@ class Window:
         raise ElementNotFoundError(
             f"No text-input element found in window '{self.title}' within {timeout}s"
         )
+
+    def focus_content_island(self, timeout: float = 3.0) -> bool:
+        """Puts keyboard focus inside a WinUI 3 / Windows App SDK content island.
+
+        A freshly launched WinUI 3 window can be the foreground window with UIA
+        focus still on the *top-level HWND* rather than on anything in the XAML
+        tree. Every check passes — `GetForegroundWindow()` returns the window and
+        `set_foreground()` reports success — and XAML accelerators are still
+        dropped, because the content island never sees them. Measured against
+        Files 4.2.9: `Ctrl+T` did nothing until focus moved into the island.
+
+        Returns True when focus is inside the island (including when it already
+        was), False when the island cannot be found or refuses focus. Nothing is
+        clicked, so no selection or activation happens as a side effect.
+
+        Two routes that look like they should work and do not:
+
+        - `SetFocus()` on the top-level window's own UIA element leaves focus
+          exactly where it was.
+        - focusing the first keyboard-focusable descendant lands on the caption's
+          `InputNonClientPointerSource` input sink, which takes focus off the
+          top-level window without giving it to the island — so the accelerator
+          is still dropped, and the obvious "did focus move?" check reports
+          success.
+        """
+        bridges = find_child_windows(self.hwnd, CONTENT_ISLAND_CLASS_SUBSTRINGS)
+        if not bridges:
+            logger.debug(
+                f"focus_content_island: no content island child window under {self.hwnd:#x} "
+                f"(class={self.class_name!r}) — not a WinUI 3 window?"
+            )
+            return False
+
+        deadline = time.monotonic() + timeout
+        while True:
+            for bridge in bridges:
+                if self._focus_is_inside(bridge):
+                    return True
+                try:
+                    UiaElement.from_handle(bridge).set_focus(verify=False, click=False)
+                except Exception as exc:
+                    logger.debug(f"focus_content_island: SetFocus raised: {exc}")
+            if time.monotonic() >= deadline:
+                logger.debug(
+                    f"focus_content_island: focus stayed outside the island after {timeout}s"
+                )
+                return False
+            time.sleep(0.05)
+
+    def _focus_is_inside(self, hwnd: int) -> bool:
+        """Whether the UIA-focused element is `hwnd` or a descendant of it.
+
+        The whole chain has to be walked, not just up to the first ancestor that
+        owns a native window. Measured chain for a focused button inside a
+        WinUI 3 island:
+
+            Button (no handle) -> TabView (no handle) -> InputSiteWindowClass
+            -> DesktopChildSiteBridge -> WinUIDesktopWin32WindowClass
+
+        `InputSiteWindowClass` owns a handle of its own and sits *below* the
+        bridge, so stopping at the first handle answers "not inside" for a focus
+        that is plainly inside.
+        """
+        try:
+            node = UiaElement.get_focused()
+        except Exception:
+            return False
+        for _ in range(12):
+            if node is None:
+                return False
+            try:
+                if node.handle == hwnd:
+                    return True
+            except Exception:
+                return False
+            node = node.get_parent()
+        return False
 
     def move_to_current_desktop(self):
         """Moves this window to the currently active virtual desktop if pyvda is available."""
@@ -484,6 +598,7 @@ class Window:
         exclude_hwnds: set[int] | None = None,
         process_names: tuple[str, ...] | list[str] | None = None,
         window_classes: tuple[str, ...] | list[str] | None = None,
+        require_all: bool = False,
     ) -> tuple[subprocess.Popen, Window]:
         """
         Launches an application and discovers its top-level window by diffing pre/post snapshots.
@@ -493,6 +608,14 @@ class Window:
         names) and `process_names` (executable basenames of the window's owning
         process). `title_pattern` remains as a last-resort fallback; a candidate
         window is accepted when ANY provided criterion matches.
+
+        `require_all=True` demands that every criterion given match the same window,
+        which is how you reject a dialog the app puts up *instead of* its window.
+        `process_names` alone cannot: an app's own error dialog runs in the app's
+        process, so the process name matches and a `#32770` is handed back as the
+        app. Measured against Files 4.2.9 with its .NET runtime missing — discovery
+        returned a dialog in 1.2s where the real window takes ~19s, and every
+        element lookup afterwards failed against a window that looked fine.
         """
         attach_to_input_desktop()
         before = WindowCensus.capture()
@@ -510,13 +633,16 @@ class Window:
         has_criteria = bool(compiled_re or proc_names or classes)
 
         def matches(snap) -> bool:
-            if classes and snap.class_name in classes:
-                return True
-            if proc_names and get_process_image_name(snap.pid) in proc_names:
-                return True
-            if compiled_re and compiled_re.search(snap.title):
-                return True
-            return False
+            checks = []
+            if classes:
+                checks.append(snap.class_name in classes)
+            if proc_names:
+                checks.append(get_process_image_name(snap.pid) in proc_names)
+            if compiled_re:
+                checks.append(bool(compiled_re.search(snap.title)))
+            if not checks:
+                return False
+            return all(checks) if require_all else any(checks)
 
         def is_ignorable_helper(snap) -> bool:
             title = snap.title.lower()

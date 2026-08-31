@@ -255,9 +255,14 @@ class UiaElement:
             cy = (top + bottom) // 2
             send_mouse_click(cx, cy)
 
-    def set_focus(self, verify: bool = True, timeout: float = 2.0) -> bool:
+    def set_focus(self, verify: bool = True, timeout: float = 2.0, click: bool = True) -> bool:
         """
         Sets focus to this element via UIA SetFocus and physical center click fallback.
+
+        `click=False` drops the fallback. The click is what makes this reliable on
+        controls that ignore UIA SetFocus, but it is a real click: on a container it
+        lands on whatever is at the centre, which can select or activate something.
+        Pass `click=False` when the focus change has to have no side effects.
         """
         try:
             self._element.SetFocus()
@@ -265,7 +270,8 @@ class UiaElement:
             logger.debug(f"SetFocus raised ({type(exc).__name__}): {exc}")
 
         # Physical click fallback to claim true OS foreground focus
-        self.click()
+        if click:
+            self.click()
 
         if not verify:
             return True

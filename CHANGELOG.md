@@ -5,6 +5,62 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [Unreleased]
+
+Everything here came from driving three real applications — Files (WinUI 3),
+WinMerge (Win32/MFC) and DB Browser for SQLite (Qt) — rather than from reading
+documentation. Each entry names what was measured.
+
+### Added
+
+- **Scintilla editors are found and can be read.** `Scintilla` joins the
+  text-input ladder, and a new `ScintillaView` answers the questions
+  `WM_GETTEXT` cannot: caret position, selection range, line count, EOL mode, tab
+  width, code page, modified flag. `find_text_input` on Notepad++ went from
+  failing after a 20s ladder timeout to succeeding in 718ms.
+
+  Only scalar `SCI_*` messages are exposed, deliberately. The ones that return
+  text take a pointer into the *caller's* address space, and USER32 does not
+  marshal custom messages across a process boundary — `VirtualAllocEx` in the
+  target does not help either, since the receiving code dereferences the pointer
+  as its own. Reading the buffer works anyway: `get_value()` falls through to
+  `WM_GETTEXT`, which USER32 *does* marshal, because it is a system message.
+
+- **`Window.focus_content_island()`** puts keyboard focus inside a WinUI 3 /
+  Windows App SDK content island. A freshly launched WinUI 3 window can be the
+  foreground window with UIA focus still on the top-level HWND, in which case XAML
+  accelerators are silently dropped while `GetForegroundWindow()` and
+  `set_foreground()` both report success. Measured on Files 4.2.9: `Ctrl+T` did
+  nothing until focus moved into the island. Nothing is clicked, so no selection
+  or activation happens as a side effect. Returns `False` rather than raising on a
+  window that has no island.
+
+- **`launch_and_discover(..., require_all=True)`** demands that every matching
+  criterion describe the same window. The default remains OR, so
+  `process_names` alone accepts a dialog the app puts up *instead of* its window:
+  Files with no .NET runtime shows a `#32770` owned by `Files.exe`, and discovery
+  returned it in 1.2s where the real window takes ~19s.
+
+- **`UiaElement.set_focus(..., click=False)`** drops the physical click fallback.
+  The click is what makes `set_focus` reliable on controls that ignore UIA
+  `SetFocus`, but on a container it lands on whatever is at the centre and can
+  select or activate something.
+
+- **`interop.find_child_windows(hwnd, class_substrings)`** — child HWNDs by class
+  substring, since the framework-owned child classes this is needed for carry
+  namespaced names of which only the prefix is stable.
+
+### Fixed
+
+- **`find_text_input` no longer returns an embedded WebView2's document.** A
+  hosted WebView2 publishes its Chromium accessibility tree into the host's UIA
+  tree, and its root is a UIA Document — which the ladder tries before Edit. On
+  Files 4.2.9 the release-notes pane made `find_text_input` return the blog post
+  instead of the path box, successfully and with no exception. The rungs are not
+  reordered, because a rich-text editor's own control is a Document and would then
+  lose to any unrelated search box; the browser root is rejected by automation id
+  instead.
+
 ## [0.4.1] — 2026-08-31
 
 ### Fixed
