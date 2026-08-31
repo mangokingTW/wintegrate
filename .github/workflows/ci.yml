@@ -220,7 +220,7 @@ jobs:
             tests: tests/test_target_winmerge.py
             require: WinMerge
             installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-x64-Setup.exe'
-            installerArgs: '/SILENT /NORESTART'
+            installerArgs: '/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART'
             installerExpects: 'C:\\Program Files\\WinMerge\\WinMergeU.exe'
           - app: winmerge
             os: windows-11-arm
@@ -228,7 +228,7 @@ jobs:
             tests: tests/test_target_winmerge.py
             require: WinMerge
             installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-ARM64-Setup.exe'
-            installerArgs: '/SILENT /NORESTART'
+            installerArgs: '/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART'
             installerExpects: 'C:\\Program Files\\WinMerge\\WinMergeU.exe'
           # DB Browser for SQLite v3.13.1 ships a different Qt per
           # architecture: the win64 zip carries Qt5Core.dll and the arm64
@@ -372,6 +372,10 @@ jobs:
       # $LASTEXITCODE to hide it.
       - name: Install ${{ matrix.app }} (${{ matrix.arch }})
         if: matrix.installerUrl != ''
+        # An installer waiting on a dialog nobody will click would otherwise hold
+        # the job open for hours. The arm64 WinMerge setup did exactly that with
+        # /SILENT, which shows a progress window; /VERYSILENT does not.
+        timeout-minutes: 10
         shell: pwsh
         env:
           INSTALLER_URL: ${{ matrix.installerUrl }}
@@ -398,6 +402,7 @@ jobs:
       # the application version and the Qt version together.
       - name: Install DB Browser for SQLite (${{ matrix.db4sArch }})
         if: matrix.app == 'sqlitebrowser'
+        timeout-minutes: 15
         shell: pwsh
         env:
           DB4S_VERSION: '3.13.1'
@@ -437,6 +442,7 @@ jobs:
       # so the bytes stay attributable to Files' own publisher.
       - name: Install Files
         if: matrix.app == 'files'
+        timeout-minutes: 15
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
