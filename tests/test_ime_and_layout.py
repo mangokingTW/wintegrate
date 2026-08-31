@@ -30,6 +30,7 @@ import pytest
 from win32_dialog_app import DIALOG_TITLE, ID_EDIT
 
 from wintegrate import Window
+from wintegrate.exceptions import ActionVerificationError
 from wintegrate.interop import (
     IME_CMODE_NATIVE,
     get_keyboard_layout,
@@ -122,7 +123,14 @@ def latin_dialog(dialog):
     rather than "does this machine happen to have no IME installed".
     """
     original = dialog.keyboard_layout
-    dialog.set_keyboard_layout_verified("00000409")
+    try:
+        dialog.set_keyboard_layout_verified("00000409")
+    except ActionVerificationError as exc:
+        # A layout is loaded per process, so a window owned by another process can
+        # refuse a layout it has never loaded. That is a property of the machine,
+        # not a defect in what these tests cover: skip rather than run them against
+        # whatever layout happens to be active and assert the wrong thing.
+        pytest.skip(f"cannot pin a Latin layout on this machine: {exc}")
     yield dialog
     try:
         dialog.set_keyboard_layout_verified(f"{original & 0xFFFF:08x}")
@@ -148,14 +156,15 @@ def test_physical_keys_handle_shifted_characters(latin_dialog):
     assert edit.get_value() == "Ab"
 
 
-def test_layout_status_distinguishes_no_context_from_no_ime(dialog):
-    """`has_context=False` must not be readable as "there is no IME here".
+def test_status_does_not_claim_to_detect_an_ime(dialog):
+    """get_ime_status must not carry a field that claims "an IME is active".
 
-    A modern control routes text services through TSF, so IMM32 hands out no
-    context even while a Bopomofo layout is actively swallowing keystrokes.
-    Reporting has_context alone would tell a caller the opposite of the truth,
-    which is why get_ime_status also carries the layout's own answer.
+    `ImmIsIME` looks like that answer and is not: on a zh-TW desktop it returns
+    true for a plain en-GB layout as soon as that layout is loaded, so a
+    `layout_has_ime` field would read True on every loaded layout. A field that
+    is always True is worse than no field, because callers branch on it.
     """
     status = dialog.get_ime_status()
-    assert "layout_has_ime" in status
-    assert status["layout_has_ime"] == dialog.keyboard_layout_has_ime
+    assert "has_context" in status
+    assert "layout_has_ime" not in status
+    assert not hasattr(dialog, "keyboard_layout_has_ime")
