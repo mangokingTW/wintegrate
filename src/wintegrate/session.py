@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from wintegrate.apps import AppHandle, AppSpec, kill_processes
+from wintegrate.apps import AppHandle, AppSpec, sweep_processes_verified
 from wintegrate.diagnostics import (
     ContinuousRecorder,
     WindowCensus,
@@ -480,8 +480,15 @@ class Session:
 
         do_fresh = is_ci() if fresh == "auto" else bool(fresh)
         if do_fresh and spec.process_names:
-            kill_processes(spec.process_names)
-            time.sleep(0.3)
+            # Verified, not timed: terminating a packaged app is asynchronous, and
+            # a window that outlives the sweep makes this launch of a
+            # single-instance app produce no new window at all.
+            sweep_processes_verified(
+                spec.process_names,
+                spec.window_classes,
+                package_family_name=spec.package_family_name,
+                session_state_dirs=spec.session_state_dirs,
+            )
 
         proc, win = self.launch_and_discover(
             list(spec.command),
