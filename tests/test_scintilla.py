@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,13 @@ from waits import settled
 from wintegrate import EolMode, ScintillaView, Window, is_scintilla
 from wintegrate.apps import sweep_processes_verified
 from wintegrate.diagnostics import WindowCensus
-from wintegrate.interop import send_char_input, send_keys
+from wintegrate.interop import (
+    get_foreground_window,
+    get_window_class,
+    get_window_title,
+    send_char_input,
+    send_keys,
+)
 
 pytestmark = [
     pytest.mark.target_app,
@@ -41,8 +48,38 @@ SCROLLBAR_PART_IDS = frozenset(
 )
 
 LINES = ("alpha", "beta", "gamma")
+
+
+def _describe_foreground() -> str:
+    hwnd = get_foreground_window()
+    if not hwnd:
+        return "no window"
+    return f"<hwnd={hwnd:#x} class={get_window_class(hwnd)!r} title={get_window_title(hwnd)!r}>"
+
+
+def _foreground_settled(win: Window, timeout: float = 15.0) -> bool:
+    """Whether `win` holds the foreground, retrying the request.
+
+    `Window.foreground()` is entered with verify=False across this suite because
+    the request can lose a race with whatever else the desktop is doing. Here it
+    has to be verified: a window in front of Notepad++ makes every keystroke land
+    somewhere else, and nothing else in the failure says so.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if get_foreground_window() == win.hwnd:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        win.set_foreground(verify=False)
+        time.sleep(0.25)
+
+
 # "alpha\r\nbeta\r\ngamma\r\n" — the byte length the assertions below check against.
 EXPECTED_BYTES = sum(len(line) + 2 for line in LINES)
+# What get_value() returns for that document. Scintilla reports CRLF line ends as
+# "\r\n"; the fixture waits for this exact string rather than for a line count.
+EXPECTED_TEXT = "".join(f"{line}\r\n" for line in LINES)
 
 
 @pytest.fixture
@@ -59,6 +96,16 @@ def editor():
     try:
         win = Window.find(class_name="Notepad++", timeout=60.0)
         with win.foreground(verify=False):
+            # Verified, and it says who has the foreground when it fails. Without
+            # this the symptom is that nothing typed arrives at all — length 0,
+            # get_value() empty, Ctrl+F opening no dialog — with every element
+            # still resolving and the window still looking correct. That reads as
+            # a broken editor rather than as a window in front of it.
+            assert _foreground_settled(win), (
+                "Notepad++ never became the foreground window; "
+                f"{_describe_foreground()} has it instead, so every keystroke "
+                "below would have gone there"
+            )
             edit = win.find_text_input(timeout=30.0)
             edit.set_focus()
             settled(lambda: edit.get_value(), lambda v: isinstance(v, str), timeout=5.0)
@@ -66,9 +113,16 @@ def editor():
                 for ch in line:
                     send_char_input(ch)
                 send_keys("{ENTER}")
-            # Wait for the last line to arrive rather than sleeping: typing returns
-            # once SendInput accepted the events, not once Scintilla processed them.
-            settled(edit.get_value, lambda v: v.count("\n") >= len(LINES), timeout=5.0)
+            # Wait for the whole text, not just for the newline count. Counting
+            # newlines passes while a character inside a line is missing, and the
+            # failure then surfaces as a byte length three short of expected in
+            # whichever test reads it first.
+            typed = settled(edit.get_value, lambda v: v == EXPECTED_TEXT, timeout=10.0)
+            assert typed == EXPECTED_TEXT, (
+                f"typing produced {typed!r}, expected {EXPECTED_TEXT!r} — a "
+                "keystroke was dropped, so every assertion below is measuring the "
+                "wrong document"
+            )
             yield win, edit
     finally:
         proc.terminate()
