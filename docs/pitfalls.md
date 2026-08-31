@@ -120,7 +120,9 @@ empty shell. `pyffmpeg` is `win_amd64` only; `static-ffmpeg` and
 `ffmpeg-downloader` are pure-Python downloaders.
 
 `av` (PyAV) bundles FFmpeg and **does** publish `cp311-abi3-win_arm64`, which is
-why recording here encodes in-process through PyAV rather than shelling out.
+why recording here encodes in-process through PyAV and has no external-binary
+path at all. A subprocess fallback would look like a safety net while quietly
+making recording an ARM64-only-if-the-user-installed-ffmpeg feature.
 
 ## `ctypes.windll` is process-global shared state
 

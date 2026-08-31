@@ -58,19 +58,26 @@ def test_pyav_backend_produces_a_decodable_video(tmp_path, fake_screen):
     assert decoded > 0
 
 
-def test_pyav_is_preferred_over_the_ffmpeg_subprocess(tmp_path, fake_screen, monkeypatch):
-    """A usable ffmpeg binary must not push the in-process encoder aside."""
-    monkeypatch.setattr(ContinuousRecorder, "_start_ffmpeg_subprocess", lambda self: False)
-    rec = ContinuousRecorder(tmp_path / "pref.mp4", fps=30)
+def test_recording_is_self_contained(tmp_path, fake_screen, monkeypatch):
+    """Encoding must not depend on an ffmpeg binary being installed.
+
+    PyAV is the only ffmpeg distribution on PyPI with a win_arm64 wheel, so
+    shelling out would silently make recording an ARM64-only-if-you-installed-it
+    feature. Emptying PATH proves nothing external is being reached for.
+    """
+    monkeypatch.setenv("PATH", "")
+    rec = ContinuousRecorder(tmp_path / "self.mp4", fps=30)
     assert rec.start() is True
     assert rec.backend == "pyav"
     rec.stop()
 
 
-def test_no_backend_available_disables_recording(tmp_path, fake_screen, monkeypatch):
-    """Without PyAV and without an ffmpeg binary, start() reports failure rather than raising."""
+def test_no_encoder_available_disables_recording(tmp_path, fake_screen, monkeypatch):
+    """Without PyAV, start() reports failure rather than raising.
+
+    A recording that cannot start is a missing diagnostic, not a failed test run.
+    """
     monkeypatch.setattr(ContinuousRecorder, "_start_pyav", lambda self, w, h: False)
     rec = ContinuousRecorder(tmp_path / "none.mp4", fps=30)
-    rec._ffmpeg_exe = None
     assert rec.start() is False
     assert rec.backend is None

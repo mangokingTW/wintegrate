@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 import ctypes
-import glob
 import logging
-import os
-import shutil
-import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
@@ -155,56 +151,18 @@ def capture_window_image(hwnd: int):
     return desktop.crop((rect.left - x0, rect.top - y0, rect.right - x0, rect.bottom - y0))
 
 
-def resolve_ffmpeg_exe() -> str | None:
-    """
-    Finds a verified, existing ffmpeg executable across x64 and ARM64.
-    Searches system PATH, standard Windows / Chocolatey / WinGet directories,
-    and imageio_ffmpeg.
-    """
-    # 1. System PATH
-    exe = shutil.which("ffmpeg")
-    if exe and os.path.isfile(exe):
-        return exe
-
-    # 2. Common Windows and Package Manager directories
-    common_patterns = [
-        r"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
-        r"C:\Program Files\FFmpeg\bin\ffmpeg.exe",
-        r"C:\ffmpeg\bin\ffmpeg.exe",
-        r"C:\tools\ffmpeg\bin\ffmpeg.exe",
-        r"C:\Users\*\AppData\Local\Microsoft\WinGet\Packages\*\*\bin\ffmpeg.exe",
-        r"C:\Users\*\AppData\Local\Microsoft\WinGet\Links\ffmpeg.exe",
-    ]
-    for pattern in common_patterns:
-        matches = glob.glob(pattern)
-        for m in matches:
-            if os.path.isfile(m):
-                return m
-
-    # 3. imageio_ffmpeg fallback (verify file exists)
-    try:
-        import imageio_ffmpeg
-
-        exe = imageio_ffmpeg.get_ffmpeg_exe()
-        if exe and os.path.isfile(exe):
-            return exe
-    except Exception as exc:
-        logger.debug(f"imageio_ffmpeg lookup failed ({type(exc).__name__}): {exc}")
-
-    return None
-
-
 class ContinuousRecorder:
     """
     Low-memory streaming desktop screen recorder.
 
-    Encodes in-process through PyAV (which bundles FFmpeg) when it is installed,
-    and otherwise streams raw frames to an external FFmpeg subprocess over stdin
-    with stderr redirected to a disk log, so the pipe buffer cannot deadlock.
+    Encodes in-process through PyAV, which bundles FFmpeg and is the only route
+    that works everywhere this library runs: no other ffmpeg distribution on PyPI
+    ships a `win_arm64` wheel, so shelling out to an external binary would mean
+    asking Windows ARM64 users to install one themselves.
 
-    PyAV is preferred because it is the only route that works everywhere the
-    library runs: no ffmpeg build ships a `win_arm64` wheel on PyPI, so on Windows
-    ARM64 the subprocess path depends on an ffmpeg the user installed themselves.
+    Recording is a diagnostic, never the thing under test. When PyAV is missing,
+    `start()` reports failure and the caller carries on without a video rather
+    than a run failing over a missing artifact.
     """
 
     def __init__(self, output_path: str | Path, fps: int = 30):
@@ -213,10 +171,7 @@ class ContinuousRecorder:
         self.interval = 1.0 / fps
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
-        self._proc: subprocess.Popen | None = None
-        self._stderr_file = None
         self._frame_count = 0
-        self._ffmpeg_exe = resolve_ffmpeg_exe()
         # PyAV encoding state
         self._av = None
         self._container = None
@@ -226,12 +181,8 @@ class ContinuousRecorder:
 
     @property
     def backend(self) -> str | None:
-        """ "pyav", "ffmpeg", or None when recording is not running."""
-        if self._container is not None:
-            return "pyav"
-        if self._proc is not None:
-            return "ffmpeg"
-        return None
+        """ "pyav", or None when recording is not running."""
+        return "pyav" if self._container is not None else None
 
     def _start_pyav(self, w: int, h: int) -> bool:
         try:
@@ -284,66 +235,11 @@ class ContinuousRecorder:
             )
             return True
 
-        if not self._ffmpeg_exe:
-            logger.warning(
-                "No FFmpeg available: PyAV is not installed and no ffmpeg executable was "
-                "found. Install the video extra (pip install 'wintegrate[video]') or put "
-                "ffmpeg on PATH. ContinuousRecorder video disabled."
-            )
-            return False
-
-        return self._start_ffmpeg_subprocess()
-
-    def _start_ffmpeg_subprocess(self) -> bool:
-        stderr_log_path = self.output_path.with_suffix(".ffmpeg.log")
-        self._stderr_file = open(stderr_log_path, "w", encoding="utf-8")
-
-        w = user32.GetSystemMetrics(0)
-        h = user32.GetSystemMetrics(1)
-
-        cmd = [
-            self._ffmpeg_exe,
-            "-y",
-            "-f",
-            "rawvideo",
-            "-vcodec",
-            "rawvideo",
-            "-s",
-            f"{w}x{h}",
-            "-pix_fmt",
-            "rgb24",
-            "-r",
-            str(self.fps),
-            "-i",
-            "-",
-            "-c:v",
-            "libx264" if self.output_path.suffix.lower() == ".mp4" else "libvpx-vp9",
-            "-pix_fmt",
-            "yuv420p",
-            str(self.output_path),
-        ]
-
-        try:
-            self._proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=self._stderr_file,
-            )
-        except Exception as exc:
-            self._stderr_file.close()
-            logger.error(f"Failed to start FFmpeg subprocess ({type(exc).__name__}): {exc}")
-            return False
-
-        self.stop_event.clear()
-        self._frame_count = 0
-        self.thread = threading.Thread(target=self._record_loop, daemon=True)
-        self.thread.start()
-        logger.info(
-            f"ContinuousRecorder started via FFmpeg subprocess "
-            f"(streaming to {self.output_path} @ {self.fps} FPS)"
+        logger.warning(
+            "PyAV is not installed, so no encoder is available "
+            "(pip install 'wintegrate[video]'). ContinuousRecorder video disabled."
         )
-        return True
+        return False
 
     def _encode_pyav_frame(self, img) -> None:
         w, h = self._size
@@ -366,12 +262,6 @@ class ContinuousRecorder:
                 if self._container is not None:
                     self._encode_pyav_frame(img)
                     self._frame_count += 1
-                elif self._proc and self._proc.stdin:
-                    self._proc.stdin.write(img.tobytes())
-                    self._frame_count += 1
-            except (BrokenPipeError, OSError) as exc:
-                logger.error(f"FFmpeg stdin pipe broken ({type(exc).__name__}): {exc}")
-                break
             except Exception as exc:
                 logger.debug(f"Screen capture frame skipped ({type(exc).__name__}): {exc}")
 
@@ -400,33 +290,6 @@ class ContinuousRecorder:
             self._stream = None
             logger.info(f"ContinuousRecorder stopped. Total frames recorded: {self._frame_count}")
             return self._frame_count
-
-        if self._proc:
-            try:
-                if self._proc.stdin:
-                    try:
-                        self._proc.stdin.close()
-                    except (OSError, BrokenPipeError):
-                        pass
-                self._proc.wait(timeout=timeout)
-            except (subprocess.TimeoutExpired, OSError, BrokenPipeError):
-                try:
-                    self._proc.kill()
-                except Exception:
-                    pass
-            except Exception as exc:
-                logger.debug(
-                    f"ContinuousRecorder process cleanup warning ({type(exc).__name__}): {exc}"
-                )
-            finally:
-                self._proc = None
-
-        if self._stderr_file:
-            try:
-                self._stderr_file.close()
-            except Exception:
-                pass
-            self._stderr_file = None
 
         logger.info(f"ContinuousRecorder stopped. Total frames recorded: {self._frame_count}")
         return self._frame_count

@@ -34,7 +34,7 @@ Most Windows GUI automation frameworks (e.g. `pywinauto`, `pyautogui`) are built
 - **Fail-safes panic in CI**: Moving the cursor into a corner panics interactive libraries and halts test runs.
 - **Stale COM wrappers**: Reusing resolved UI element references across seconds causes silent `COMError` failures.
 - **Launcher PID != Window PID**: Modern packaged Windows apps (like Notepad, Terminal) launch a starter shim process that does not own the visible HWND.
-- **Memory & Pipe Deadlocks**: In-memory frame capture exhausts RAM; streaming with unbuffered `stderr` pipes deadlocks subprocesses.
+- **Memory Exhaustion**: Collecting frames in memory before writing exhausts RAM — a two-minute capture at 1024x768 is over 10 GB of raw pixels.
 - **ARM64 Scancode & Input Drops**: DirectX scan-code simulation fails on Windows ARM64 virtualization; keypresses are dropped without verification.
 - **Multi-Window Discovery Collision**: Launching multiple instances of identical apps causes discovery diffs to select the existing instance rather than the new one.
 - **Unverified fire-and-forget**: Typing without post-condition assertions hides silent failures (e.g. counting `\n` while Notepad returns `\r\n` or `\r`).
@@ -77,7 +77,7 @@ Switches foreground focus cleanly using `AttachThreadInput` synchronization betw
 Supports dynamic virtual desktop isolation. When `isolated_virtual_desktop=True`, `wintegrate` creates a clean virtual desktop on the fly, switches to it, executes test operations in isolation away from background noise, and automatically destroys the test desktop on exit.
 
 ### 6. Streaming Video & Diagnostic Pipeline
-- **Low-Memory Streaming Recorder**: `ContinuousRecorder` encodes in-process through PyAV (which bundles FFmpeg), falling back to an external FFmpeg subprocess with `stderr` redirected to disk logs. PyAV is preferred because it is the only FFmpeg on PyPI with a `win_arm64` wheel — recording works out of the box on Windows ARM64, where every ffmpeg-shipping package leaves you to install a binary yourself. Frames carry wall-clock timestamps, so a capture loop that falls behind the nominal frame rate still plays back at real speed.
+- **Low-Memory Streaming Recorder**: `ContinuousRecorder` encodes in-process through PyAV, which bundles FFmpeg and is the only distribution on PyPI with a `win_arm64` wheel — so recording works out of the box on Windows ARM64 instead of asking the user to install a binary. There is deliberately no external-ffmpeg fallback: it would look like a safety net while making recording depend on something ARM64 users are unlikely to have. Frames carry wall-clock timestamps, so a capture loop that falls behind the nominal frame rate still plays back at real speed.
 - **Automatic Failure Artifacts**: Automatically dumps full-screen screenshots and pre/post `window_census.json` diffs on assertion failure.
 - **Event Timeline Logging**: Logs action timestamps and targets to human-readable `.log` and structured `.json`.
 
