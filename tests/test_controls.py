@@ -21,6 +21,7 @@ import pytest
 from win32_controls_app import DIALOG_TITLE, ID_TREE, TREE_DATA
 
 from wintegrate import Window
+from wintegrate.element import UiaElement
 from wintegrate.exceptions import ElementNotFoundError
 
 APP = Path(__file__).parent / "win32_controls_app.py"
@@ -274,12 +275,18 @@ def test_far_rows_are_genuinely_virtualized(grid):
     """The row is not merely off-screen — it has no UIA peer until realized.
 
     This is the assertion the Win32 ListView could not support: it materializes
-    every item, so realize() always answered False and the virtualization path was
-    implemented but never exercised. A WPF DataGrid creates peers only for the
-    rows near the viewport, so a row 200 deep is a real virtualized item.
+    every item, so the virtualization path was implemented but never exercised. A
+    WPF DataGrid creates peers only for the rows near the viewport, so a row 200
+    deep is a real virtualized item.
     """
+    # Ask the raw element straight from the grid pattern: get_cell() calls
+    # ensure_available() for you, and once an item is materialized its
+    # VirtualizedItem pattern is gone — so a check made after that is a race,
+    # not an assertion.
+    raw = UiaElement(grid._grid().GetItem(GRID_ROW_COUNT - 1, 0))
+    assert "VirtualizedItem" in raw.supported_patterns()
+
     cell = grid.get_cell(GRID_ROW_COUNT - 1, 0)
-    assert cell.element.realize() is True
     assert cell.value == expected_row(GRID_ROW_COUNT - 1)[0]
 
 
