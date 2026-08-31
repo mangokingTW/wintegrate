@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from win32_controls_app import DIALOG_TITLE, ID_TREE, TREE_DATA
 
 from wintegrate import Window
 from wintegrate.element import UiaElement
-from wintegrate.exceptions import ElementNotFoundError
+from wintegrate.exceptions import ElementNotFoundError, WindowDiscoveryTimeoutError
 
 APP = Path(__file__).parent / "win32_controls_app.py"
 WPF_APP = Path(__file__).parent / "wpf_grid_app.ps1"
@@ -68,19 +69,59 @@ def wpf_window():
     and a WPF DataGrid also virtualizes its rows, which is what makes the
     virtualization countermeasures testable rather than merely present.
     """
-    proc = subprocess.Popen(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(WPF_APP)]
-    )
-    try:
-        win = Window.find(title_exact=WPF_TITLE, timeout=40.0)
-        win.set_foreground(verify=False)
-        time.sleep(1.0)
-        yield win
-    finally:
+    # 90s, not the 40s this used to be. A cold Windows Server runner loading
+    # PresentationFramework, PresentationCore and WindowsBase for the first time
+    # exceeded 40s on test-x64 (3.14) while the other three Python versions on the
+    # same image were fine — a timeout tuned on a warm machine failing on a cold
+    # one, which reads as a flaky test rather than as a timeout.
+    launch_timeout = 90.0
+    log = Path(tempfile.gettempdir()) / "wpf_grid_app.stderr.log"
+    with log.open("w", encoding="utf-8") as errfile:
+        proc = subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(WPF_APP)],
+            stdout=subprocess.DEVNULL,
+            stderr=errfile,
+        )
         try:
-            proc.kill()
-        except Exception:
+            win = _await_fixture_window(proc, log, launch_timeout)
+            win.set_foreground(verify=False)
+            time.sleep(1.0)
+            yield win
+        finally:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
+def _await_fixture_window(proc, log: Path, timeout: float) -> Window:
+    """Waits for the fixture window, and says something useful when it never comes.
+
+    Waiting out the whole timeout and reporting "window not found" hides the two
+    failures that actually happen: PowerShell exited (a syntax error, a missing
+    assembly, an execution policy) or it is still starting. Polling the process
+    turns the first into an immediate, informative failure instead of a 90-second
+    mystery, and puts its stderr in the message.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            return Window.find(title_exact=WPF_TITLE, timeout=1.0)
+        except WindowDiscoveryTimeoutError:
             pass
+        code = proc.poll()
+        if code is not None:
+            detail = log.read_text(encoding="utf-8", errors="replace").strip()[-800:]
+            raise RuntimeError(
+                f"The WPF grid fixture exited with code {code} before its window "
+                f"appeared.\nPowerShell stderr:\n{detail or '(empty)'}"
+            )
+    detail = log.read_text(encoding="utf-8", errors="replace").strip()[-800:]
+    raise WindowDiscoveryTimeoutError(
+        f"The WPF grid fixture window {WPF_TITLE!r} did not appear within {timeout}s, "
+        f"and the PowerShell process is still running (pid {proc.pid}) — so it is "
+        f"starting slowly rather than broken.\nPowerShell stderr:\n{detail or '(empty)'}"
+    )
 
 
 @pytest.fixture
