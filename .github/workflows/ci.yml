@@ -65,7 +65,7 @@ jobs:
         env:
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/ -v -s
+          pytest tests/ -v -s -m "not target_app"
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
@@ -159,13 +159,109 @@ jobs:
         env:
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/ -v -s
+          pytest tests/ -v -s -m "not target_app"
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
           name: ci-artifacts-arm64-py${{ matrix.python-version }}
+          path: |
+            recording-artifacts/
+            artifacts/
+          if-no-files-found: ignore
+
+  # Four third-party applications, one per generation of Windows UI technology.
+  # A test app written for this library only proves the library agrees with
+  # itself; these prove it against software that has never heard of it.
+  #
+  # One job rather than a matrix entry: the installs take minutes, and the value
+  # is in the applications rather than in the Python version.
+  test-target-apps:
+    needs: lint
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      # Chocolatey is preinstalled on the Windows images. Versions float on
+      # purpose: the point of this job is to notice when a new release of one of
+      # these applications breaks the assumptions the tests encode.
+      - name: Install Notepad++, WinMerge and DB Browser for SQLite
+        shell: pwsh
+        run: |
+          foreach ($pkg in @('notepadplusplus', 'winmerge', 'sqlitebrowser')) {
+            Write-Host "::group::choco install $pkg"
+            choco install $pkg -y --no-progress --ignore-checksums
+            if ($LASTEXITCODE -ne 0) { Write-Host "$pkg install exit code $LASTEXITCODE" }
+            Write-Host '::endgroup::'
+          }
+          # choco's exit code is unreliable across packages; the tests themselves
+          # fail loudly when an executable is missing, which is the check that
+          # matters. Reset so a non-zero code here does not end the job before
+          # that check runs.
+          $global:LASTEXITCODE = 0
+
+      # Files is a packaged app with no installer on its GitHub releases (every
+      # release carries zero assets). The packages live on the CDN its own
+      # cd-sideload-stable.yml publishes to, addressed through an .appinstaller
+      # manifest. The CDN rejects non-browser User-Agents with 403.
+      - name: Install the .NET Desktop Runtime Files needs
+        shell: pwsh
+        run: |
+          # Files 4.x is framework-dependent. Without this, it starts and shows a
+          # #32770 message box instead of a window — and that dialog belongs to
+          # Files.exe, so discovery by process name accepts it.
+          choco install dotnet-desktopruntime -y --no-progress
+          $global:LASTEXITCODE = 0
+          & "$env:ProgramFiles\dotnet\dotnet.exe" --list-runtimes
+
+      - name: Install Files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+          $manifestUrl = 'https://cdn.files.community/files/stable/Files.Package.appinstaller'
+          $manifest = [xml](Invoke-WebRequest -Uri $manifestUrl -Headers @{ 'User-Agent' = $ua } -UseBasicParsing -TimeoutSec 120).Content
+          $bundleUrl = $manifest.AppInstaller.MainBundle.Uri
+          Write-Host "bundle: $bundleUrl (version $($manifest.AppInstaller.MainBundle.Version))"
+
+          $bundle = Join-Path $env:RUNNER_TEMP 'Files.msixbundle'
+          Invoke-WebRequest -Uri $bundleUrl -Headers @{ 'User-Agent' = $ua } -UseBasicParsing -OutFile $bundle -TimeoutSec 600
+
+          # No -DependencyPath. The .appinstaller lists VCLibs, but Files' own
+          # manifest depends only on Microsoft.WindowsAppRuntime.2 — and handing
+          # Add-AppxPackage a package the manifest does not reference fails the
+          # whole install with 0x80073CF3.
+          Add-AppxPackage -Path $bundle -ForceApplicationShutdown -ErrorAction Stop
+          Get-AppxPackage -Name 'Files' | ForEach-Object { Write-Host "installed: $($_.PackageFullName)" }
+
+      - name: Run target application tests
+        env:
+          # Turns "the application is not installed" from a skip into a failure.
+          # Without it a broken install step would leave a green job that tested
+          # nothing, which is the exact failure mode this job exists to catch.
+          WINTEGRATE_REQUIRE_TARGET_APPS: "1"
+          WINTEGRATE_RECORD_SUITE: "1"
+        run: |
+          pytest tests/ -v -s -m target_app
+
+      - name: Upload Recording Artifacts & Diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
+        with:
+          name: ci-artifacts-target-apps
           path: |
             recording-artifacts/
             artifacts/

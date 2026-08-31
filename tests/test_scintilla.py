@@ -12,17 +12,23 @@ import sys
 from pathlib import Path
 
 import pytest
+from target_apps import find_executable
 from waits import settled
 
 from wintegrate import EolMode, ScintillaView, Window, is_scintilla
 from wintegrate.apps import sweep_processes_verified
 from wintegrate.interop import send_char_input, send_keys
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="drives a live Win32 editor")
+pytestmark = [
+    pytest.mark.target_app,
+    pytest.mark.skipif(sys.platform != "win32", reason="drives a live Win32 editor"),
+]
 
-NPP = Path(r"C:\Program Files\Notepad++\notepad++.exe")
-requires_notepadpp = pytest.mark.skipif(
-    not NPP.exists(), reason="Notepad++ is not installed on this machine"
+# Chocolatey and the official installer disagree about the location, and the 32-bit
+# build lands in Program Files (x86) even on a 64-bit machine.
+NPP_CANDIDATES = (
+    Path(r"C:\Program Files\Notepad++\notepad++.exe"),
+    Path(r"C:\Program Files (x86)\Notepad++\notepad++.exe"),
 )
 
 LINES = ("alpha", "beta", "gamma")
@@ -38,8 +44,9 @@ def editor():
     singleton behaviour from handing back somebody else's window, and -noPlugin
     keeps third-party plugins out of the measurement.
     """
+    npp = find_executable("Notepad++", NPP_CANDIDATES)
     sweep_processes_verified(("notepad++.exe",), ("Notepad++",))
-    proc = subprocess.Popen([str(NPP), "-nosession", "-multiInst", "-noPlugin"])
+    proc = subprocess.Popen([str(npp), "-nosession", "-multiInst", "-noPlugin"])
     try:
         win = Window.find(class_name="Notepad++", timeout=60.0)
         with win.foreground(verify=False):
@@ -59,7 +66,6 @@ def editor():
         proc.wait(timeout=10)
 
 
-@requires_notepadpp
 def test_find_text_input_reaches_scintilla(editor):
     """The gap that made this work necessary.
 
@@ -72,7 +78,6 @@ def test_find_text_input_reaches_scintilla(editor):
     assert is_scintilla(edit.class_name), edit.describe()
 
 
-@requires_notepadpp
 def test_text_comes_through_wm_gettext(editor):
     """Reading needs no Scintilla message at all.
 
@@ -87,7 +92,6 @@ def test_text_comes_through_wm_gettext(editor):
     assert "\r\n" in text, "Scintilla ends lines with CRLF here; see eol_mode"
 
 
-@requires_notepadpp
 def test_line_count_is_asked_rather_than_counted(editor):
     """The reason this module exists.
 
@@ -100,7 +104,6 @@ def test_line_count_is_asked_rather_than_counted(editor):
     assert sci.line_count == len(LINES) + 1, "three lines plus the trailing empty one"
 
 
-@requires_notepadpp
 def test_length_is_bytes_not_characters(editor):
     """A distinction that silently breaks comparisons against len(text)."""
     _win, edit = editor
@@ -116,7 +119,6 @@ def test_length_is_bytes_not_characters(editor):
     assert len(edit.get_value()) == EXPECTED_BYTES + 2
 
 
-@requires_notepadpp
 def test_selection_is_reportable(editor):
     """What WM_GETTEXT cannot answer, and a find/replace test needs."""
     _win, edit = editor
@@ -130,7 +132,6 @@ def test_selection_is_reportable(editor):
     assert sci.line_of_position(start) == 1
 
 
-@requires_notepadpp
 def test_line_geometry_agrees_with_itself(editor):
     """Cross-checks, because a wrong message constant returns a plausible number.
 
@@ -146,7 +147,6 @@ def test_line_geometry_agrees_with_itself(editor):
         assert sci.line_of_position(sci.position_of_line(i)) == i
 
 
-@requires_notepadpp
 def test_document_state_is_visible(editor):
     _win, edit = editor
     sci = ScintillaView.from_element(edit)
@@ -157,7 +157,6 @@ def test_document_state_is_visible(editor):
     assert repr(sci).startswith("<ScintillaView")
 
 
-@requires_notepadpp
 def test_from_element_refuses_a_non_scintilla_control(editor):
     """Handing back an inert view would surface as a wrong answer elsewhere."""
     win, _edit = editor

@@ -80,6 +80,7 @@ python_files = ["test_*.py"]
 markers = [
     "desktop_only: mark test to run only on Windows Desktop / Client editions",
     "server_only: mark test to run only on Windows Server editions",
+    "target_app: drives a third-party application that has to be installed first",
 ]
 
 [tool.ruff]
