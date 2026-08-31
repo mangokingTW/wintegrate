@@ -48,6 +48,65 @@ because every call succeeds and does nothing.
 Discovery requires visibility, filters known helper classes, and prefers process
 image name and window class over titles.
 
+## An app's error dialog belongs to the app's process
+
+`process_names` cannot tell an application apart from a dialog the application
+puts up *instead of* starting. Files 4.2.9 with its .NET runtime missing shows a
+standard `#32770` message box titled `Files.exe`, owned by `Files.exe` — so the
+process name matches and discovery hands back the dialog. Every element lookup
+afterwards fails against a window that reports no problem.
+
+The tell is timing: the dialog was found in 1.2s where the real window takes
+about 19s. *Faster than expected* is a signal.
+
+Criteria in `launch_and_discover` are OR by default (any one matching accepts the
+window), so adding `window_classes` alongside `process_names` widens the search
+rather than narrowing it. Pass `require_all=True` to demand that every criterion
+describe the same window:
+
+```python
+Window.launch_and_discover(
+    cmd, process_names=("Files.exe",),
+    window_classes=("WinUIDesktopWin32WindowClass",), require_all=True,
+)
+```
+
+## Being the foreground window is not the same as having focus
+
+WinUI 3 and Windows App SDK apps host their XAML in a
+`Microsoft.UI.Content.DesktopChildSiteBridge` child window. A freshly launched
+one can be foreground with UIA focus still on the *top-level HWND*: XAML
+accelerators are dropped, while `GetForegroundWindow()` returns the window and
+`set_foreground()` reports success. Measured on Files 4.2.9, `Ctrl+T` did nothing
+in that state and worked immediately once focus moved into the island.
+
+`window.focus_content_island()` moves focus there without clicking. Two routes
+that look right and are not:
+
+- `SetFocus()` on the top-level window's own UIA element leaves focus untouched,
+  as does sending `Tab`.
+- Focusing the first keyboard-focusable descendant lands on the caption's
+  `InputNonClientPointerSource` input sink. Focus *does* leave the top-level
+  window, so a naive "did focus move?" check passes — and the accelerator is
+  still dropped.
+
+Verifying it requires walking the whole ancestor chain of the focused element,
+not stopping at the first ancestor that owns a window: `InputSiteWindowClass`
+owns a handle and sits *below* the bridge.
+
+## An embedded WebView2 outranks the app's own text box
+
+A hosted WebView2 publishes its Chromium accessibility tree into the host's UIA
+tree, and its root node is a UIA **Document**. `find_text_input`'s ladder tries
+Document before Edit, so on Files 4.2.9 the release-notes pane made it return the
+blog post's document instead of the path box — a wrong element, returned
+successfully.
+
+Reordering the two rungs only moves the problem onto rich-text editors, whose
+own control *is* a Document and would then lose to any unrelated search box. The
+browser root is the part that is never the answer, so the ladder rejects it by
+automation id (`RootWebArea`) and carries on downward.
+
 ## COM wrappers go stale
 
 A resolved UIA element held across seconds of interaction stops working — and

@@ -330,6 +330,9 @@ user32.EnumDesktopWindows.restype = wintypes.BOOL
 user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
 user32.EnumWindows.restype = wintypes.BOOL
 
+user32.EnumChildWindows.argtypes = [wintypes.HWND, WNDENUMPROC, wintypes.LPARAM]
+user32.EnumChildWindows.restype = wintypes.BOOL
+
 user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
 user32.GetWindowTextLengthW.restype = ctypes.c_int
 
@@ -955,6 +958,28 @@ def get_window_class(hwnd: int) -> str:
     buf = ctypes.create_unicode_buffer(256)
     user32.GetClassNameW(wintypes.HWND(hwnd), buf, 256)
     return buf.value
+
+
+def find_child_windows(hwnd: int, class_substrings: tuple[str, ...]) -> list[int]:
+    """Child HWNDs of `hwnd` whose class name contains any of `class_substrings`.
+
+    Substring rather than exact match: the framework-owned child window classes
+    this is used for carry versioned or namespaced names, and only the namespace
+    prefix is stable across releases.
+    """
+    found: list[int] = []
+
+    def enum_proc(child, _lparam):
+        try:
+            cls_name = get_window_class(child)
+            if any(s in cls_name for s in class_substrings):
+                found.append(child)
+        except Exception:
+            pass
+        return True
+
+    user32.EnumChildWindows(wintypes.HWND(hwnd), WNDENUMPROC(enum_proc), 0)
+    return found
 
 
 def get_window_pid(hwnd: int) -> int:
