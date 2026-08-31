@@ -56,6 +56,46 @@ DEFAULT_TEXT_INPUT_LADDER: tuple[dict, ...] = (
 )
 
 
+def _describe_desktop_now(before: list, limit: int = 12) -> str:
+    """What was on the desktop when discovery gave up, for the exception message.
+
+    "Window failed to appear" says what did not happen; the next question is
+    always what happened instead. The window census already answers that, but it
+    only ran at session start and end, so the state at the moment of failure —
+    the one that matters — was never recorded anywhere.
+
+    Newly-arrived windows come first: those are the candidates that were rejected
+    for some reason, and they are what a reader wants to see.
+    """
+    try:
+        before_hwnds = {b.hwnd for b in before}
+        now = [s for s in WindowCensus.capture() if s.is_visible]
+    except Exception as exc:
+        return f"\n  (could not census the desktop: {type(exc).__name__}: {exc})"
+
+    fresh_hwnds = {s.hwnd for s in now if s.hwnd not in before_hwnds}
+    fresh = [s for s in now if s.hwnd in fresh_hwnds]
+    # Titled windows first among the pre-existing ones. A desktop carries a dozen
+    # untitled shells — DummyDWMListenerWindow and friends — and letting them fill
+    # the budget pushes out the lines a reader came for.
+    rest = [s for s in now if s.hwnd not in fresh_hwnds]
+    rest.sort(key=lambda s: (not s.title.strip(), s.class_name))
+
+    lines = [f"\n  Visible windows at the moment discovery gave up ({len(now)} total):"]
+    shown = (fresh + rest)[:limit]
+    for snap in shown:
+        mark = "NEW " if snap.hwnd in fresh_hwnds else "    "
+        lines.append(
+            f"\n    {mark}class={snap.class_name!r} pid={snap.pid} title={snap.title[:48]!r}"
+        )
+    hidden = len(now) - len(shown)
+    if hidden > 0:
+        lines.append(f"\n    ... and {hidden} more (untitled shells last)")
+    if not fresh:
+        lines.append("\n    (nothing new appeared at all - the launch produced no window)")
+    return "".join(lines)
+
+
 class Window:
     """Represents a top-level native OS window."""
 
@@ -518,4 +558,5 @@ class Window:
         )
         raise WindowDiscoveryTimeoutError(
             f"Window failed to appear within {timeout}s (cmd={cmd}, pattern={title_pattern}).{detail}"
+            f"{_describe_desktop_now(before)}"
         )
