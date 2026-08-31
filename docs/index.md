@@ -61,5 +61,5 @@ gh attestation verify wintegrate-0.1.2-py3-none-any.whl --repo mangokingTW/winte
 
 - [Getting started](getting-started.md) — install, extras, first script
 - [What breaks in CI](pitfalls.md) — the failures this library was built against
-- [Framework comparisons](comparisons.md) — when to choose wintegrate vs FlaUI / pywinauto / Squish
+- [Use cases & real-world guides](use-cases.md) — patterns for Tauri, Qt, .NET, WinUI, and system utilities
 - [API reference](api.md) — generated from the source
