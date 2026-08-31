@@ -329,6 +329,39 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
+      # The arm64 image comes up with a 'Microsoft account' window holding the
+      # foreground, and it stays there. Every keystroke a test sends goes to it
+      # instead of to the application, which looks like a broken editor: length 0,
+      # get_value() empty, Ctrl+F opening no dialog — and every element still
+      # resolving, so nothing in the failure points at a window in front.
+      #
+      # Found because the Notepad++ fixture now names whatever holds the
+      # foreground. Closed here so it does not have to.
+      #
+      # Written with the library rather than with inline P/Invoke: it is already
+      # installed by the step above, and this is the kind of thing it is for.
+      - name: Close the shell prompts that hold the foreground
+        run: |
+          python -c "
+          import time
+          from wintegrate.interop import (
+              get_foreground_window, get_window_class, get_window_title, user32,
+          )
+          WM_CLOSE = 0x0010
+          for attempt in range(2):
+              hwnd = get_foreground_window()
+              if not hwnd:
+                  continue
+              cls, title = get_window_class(hwnd), get_window_title(hwnd)
+              print(f'pass {attempt}: foreground is class={cls!r} title={title!r}')
+              if cls == 'Windows.UI.Core.CoreWindow':
+                  user32.SendMessageW(hwnd, WM_CLOSE, 0, 0)
+                  print('  sent WM_CLOSE')
+                  time.sleep(3)
+          hwnd = get_foreground_window()
+          print(f'foreground now: {get_window_class(hwnd)!r} {get_window_title(hwnd)!r}')
+          "
+
       # The official installer, addressed by a URL that pins the version and the
       # architecture together.
       #
