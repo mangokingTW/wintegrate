@@ -13,6 +13,51 @@ documentation. Each entry names what was measured.
 
 ### Added
 
+- **Four real applications are now release test items**, one per generation of
+  Windows UI technology: Notepad++ (Scintilla), WinMerge (Win32/MFC), DB Browser
+  for SQLite (Qt) and Files (WinUI 3). 32 tests, each application on its own CI
+  runner in parallel — not `pytest-xdist`, because these drive the real desktop
+  and two of them on one machine would fight over foreground focus.
+
+  `tests/test_scintilla.py` had existed since the Scintilla work above and **had
+  never run on CI**: nothing installed Notepad++, and `skipif` is silent.
+  `WINTEGRATE_REQUIRE_TARGET_APPS` turns "not installed" into a failure that names
+  every path it tried.
+
+  Each application runs on **both a client and a server SKU** —
+  `windows-11-arm` is Windows 11 Enterprise, `windows-latest` is Windows Server
+  2025 — because the two are not interchangeable for UI automation.
+
+  DB Browser for SQLite runs on both for a second reason: v3.13.1 ships a
+  different Qt per architecture, `Qt5Core.dll` in the win64 build and
+  `Qt6Core.dll` in the arm64 one. Same application version, different
+  accessibility surface — Qt 6 exposes `SelectionItem` on tab items and Qt 5
+  exposes only `Invoke`/`Value`, with no readable selection state anywhere. The
+  tests drive both: they select through the pattern where it exists and through a
+  click where it does not, and verify through the tab bar's `name`, which reports
+  the selected tab's label on both builds.
+
+  Application versions are pinned — Chocolatey `--version=` in CI, a SHA-256 for
+  the mirrored Files package — and each module declares the same version in
+  `VERIFIED_VERSION` with one test checking it, so the pin and the assertions
+  cannot drift apart silently. Everything asserted was measured against one build:
+  a sampled highlight colour, a Qt version inside a window class, a set of
+  automation ids. A floating version would turn any upstream release into a red
+  release gate with nothing wrong on this side.
+  `WINTEGRATE_TARGET_APP_ANY_VERSION=1` relaxes the check for trying a newer build
+  deliberately.
+
+  Buttons are clicked, not just located: WinMerge's `Next Difference` against the
+  status bar changing, Files' `Up` and `Back` against the location it reports,
+  Notepad++'s Find dialog through its Win32 control ids, and the new-tab button in
+  Files against the tab count.
+
+- **`Window.ensure_onscreen()`** moves a window back inside the virtual screen. A
+  window outside it is visible, foreground and fully readable through UIA, and
+  every click is silently discarded. Measured on DB Browser for SQLite, which
+  restored `(0, 0, 820, 620)` onto an 800x600 screen: tab selection kept working
+  through the SelectionItem pattern while no button click landed.
+
 - **Scintilla editors are found and can be read.** `Scintilla` joins the
   text-input ladder, and a new `ScintillaView` answers the questions
   `WM_GETTEXT` cannot: caret position, selection range, line count, EOL mode, tab

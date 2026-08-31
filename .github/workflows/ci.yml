@@ -65,7 +65,7 @@ jobs:
         env:
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/ -v -s
+          pytest tests/ -v -s -m "not target_app"
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
@@ -159,13 +159,361 @@ jobs:
         env:
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/ -v -s
+          pytest tests/ -v -s -m "not target_app"
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
           name: ci-artifacts-arm64-py${{ matrix.python-version }}
+          path: |
+            recording-artifacts/
+            artifacts/
+          if-no-files-found: ignore
+
+  # Four third-party applications, one per generation of Windows UI technology.
+  # A test app written for this library only proves the library agrees with
+  # itself; these prove it against software that has never heard of it.
+  #
+  # One runner per application, in parallel. Not pytest-xdist: these drive the
+  # real desktop, so two of them on one machine would fight over foreground focus
+  # and produce failures that belong to neither test. Separate runners also mean
+  # each job installs only what it needs, and a red job names the application
+  # without anyone reading the log.
+  test-target-app:
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # windows-latest is Windows Server 2025; windows-11-arm is Windows 11
+          # Enterprise. Both, because a client SKU and a server SKU are not
+          # interchangeable for UI automation — this suite already carries
+          # desktop_only and server_only markers for that reason.
+          #
+          # Every application is installed from its own official installer,
+          # addressed by a URL that pins the version and the architecture
+          # together. Chocolatey was used first and removed: its community feed
+          # answered 'Unable to connect to source' from the runners, which took
+          # out two jobs, and it ships the x64 build on both architectures for
+          # applications whose arm64 build behaves differently.
+          - app: notepad++
+            os: windows-latest
+            arch: x64
+            tests: tests/test_scintilla.py
+            require: Notepad++
+            installerUrl: 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8/npp.8.9.8.Installer.x64.exe'
+            installerArgs: '/S'
+            installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
+          - app: notepad++
+            os: windows-11-arm
+            arch: arm64
+            tests: tests/test_scintilla.py
+            require: Notepad++
+            installerUrl: 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8/npp.8.9.8.Installer.arm64.exe'
+            installerArgs: '/S'
+            installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
+          - app: winmerge
+            os: windows-latest
+            arch: x64
+            tests: tests/test_target_winmerge.py
+            require: WinMerge
+            installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-x64-Setup.exe'
+            installerArgs: '/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART'
+            installerExpects: 'C:\\Program Files\\WinMerge\\WinMergeU.exe'
+          - app: winmerge
+            os: windows-11-arm
+            arch: arm64
+            tests: tests/test_target_winmerge.py
+            require: WinMerge
+            installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-ARM64-Setup.exe'
+            installerArgs: '/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART'
+            installerExpects: 'C:\\Program Files\\WinMerge\\WinMergeU.exe'
+          # DB Browser for SQLite v3.13.1 ships a different Qt per
+          # architecture: the win64 zip carries Qt5Core.dll and the arm64
+          # zip carries Qt6Core.dll. Same application version, different
+          # accessibility surface — Qt 6 exposes SelectionItem on tab items
+          # and Qt 5 does not — so running only one would leave half the
+          # users untested.
+          - app: sqlitebrowser
+            os: windows-latest
+            arch: x64
+            db4sArch: win64
+            tests: tests/test_target_sqlitebrowser.py
+            require: DB Browser for SQLite
+            installerUrl: ''
+            installerArgs: ''
+            installerExpects: ''
+          - app: sqlitebrowser
+            os: windows-11-arm
+            arch: arm64
+            db4sArch: arm64
+            tests: tests/test_target_sqlitebrowser.py
+            require: DB Browser for SQLite
+            installerUrl: ''
+            installerArgs: ''
+            installerExpects: ''
+          - app: files
+            os: windows-latest
+            arch: x64
+            tests: tests/test_target_files.py
+            require: Files
+            installerUrl: ''
+            installerArgs: ''
+            installerExpects: ''
+          - app: files
+            os: windows-11-arm
+            arch: arm64
+            tests: tests/test_target_files.py
+            require: Files
+            installerUrl: ''
+            installerArgs: ''
+            installerExpects: ''
+    name: test-target-app (${{ matrix.app }} / ${{ matrix.arch }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install WSL on ARM Runner (Stop 30s probe popups)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          # 1. Update WSL stub so the provision daemon stops spawning terminal popups every 30s
+          $p = Start-Process -FilePath wsl.exe -ArgumentList '--update', '--confirm' -NoNewWindow -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); Write-Host 'wsl --update timed out' }
+
+          # 2. Fallback to arm64 MSI if needed
+          function Get-WslStatus {
+            $prev = [Console]::OutputEncoding
+            try {
+              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+              return ((& wsl.exe --status 2>&1 | Out-String) -replace "\0", '')
+            } finally { [Console]::OutputEncoding = $prev }
+          }
+          $status = Get-WslStatus
+          Write-Host "WSL status: $status"
+          if ($status -match 'not installed') {
+            try {
+              $rel = Invoke-RestMethod 'https://api.github.com/repos/microsoft/WSL/releases/latest'
+              $asset = $rel.assets | Where-Object { $_.name -match 'arm64\.msi$' } | Select-Object -First 1
+              if ($asset) {
+                Write-Host "Downloading $($asset.name)..."
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile wsl-arm64.msi
+                Start-Process msiexec -ArgumentList '/i', 'wsl-arm64.msi', '/qn', '/norestart' -Wait
+              }
+            } catch {
+              Write-Host "WSL MSI fallback skipped: $_"
+            }
+          }
+
+          # 3. Disable Microsoft Edge First Run Experience via Registry
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "PreventFirstRunPage" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          New-Item -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+
+          # 4. Sweep existing background popups
+          Get-Process -Name "wsl","wslhost","WindowsTerminal","msedge","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE = 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      # The arm64 image comes up with a 'Microsoft account' window holding the
+      # foreground, and it stays there. Every keystroke a test sends goes to it
+      # instead of to the application, which looks like a broken editor: length 0,
+      # get_value() empty, Ctrl+F opening no dialog — and every element still
+      # resolving, so nothing in the failure points at a window in front.
+      #
+      # Found because the Notepad++ fixture now names whatever holds the
+      # foreground. Closed here so it does not have to.
+      #
+      # Written with the library rather than with inline P/Invoke: it is already
+      # installed by the step above, and this is the kind of thing it is for.
+      - name: Close the shell prompts that hold the foreground
+        run: |
+          python -c "
+          import time
+          from wintegrate.interop import (
+              get_foreground_window, get_window_class, get_window_title, user32,
+          )
+          WM_CLOSE = 0x0010
+          for attempt in range(2):
+              hwnd = get_foreground_window()
+              if not hwnd:
+                  continue
+              cls, title = get_window_class(hwnd), get_window_title(hwnd)
+              print(f'pass {attempt}: foreground is class={cls!r} title={title!r}')
+              if cls == 'Windows.UI.Core.CoreWindow':
+                  user32.SendMessageW(hwnd, WM_CLOSE, 0, 0)
+                  print('  sent WM_CLOSE')
+                  time.sleep(3)
+          hwnd = get_foreground_window()
+          print(f'foreground now: {get_window_class(hwnd)!r} {get_window_title(hwnd)!r}')
+          "
+
+      # The official installer, addressed by a URL that pins the version and the
+      # architecture together.
+      #
+      # The result is verified here rather than left to the tests. An install that
+      # fails quietly surfaces six seconds later as "Notepad++ not available: not
+      # found at any of:" from a test, which points at the wrong thing — that is
+      # what happened when Chocolatey's feed went unreachable and this step reset
+      # $LASTEXITCODE to hide it.
+      - name: Install ${{ matrix.app }} (${{ matrix.arch }})
+        if: matrix.installerUrl != ''
+        # An installer waiting on a dialog nobody will click would otherwise hold
+        # the job open for hours. The arm64 WinMerge setup did exactly that with
+        # /SILENT, which shows a progress window; /VERYSILENT does not.
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          INSTALLER_URL: ${{ matrix.installerUrl }}
+          INSTALLER_ARGS: ${{ matrix.installerArgs }}
+          INSTALLER_EXPECTS: ${{ matrix.installerExpects }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Join-Path $env:RUNNER_TEMP 'target-app-setup.exe'
+          Invoke-WebRequest -Uri $env:INSTALLER_URL -UseBasicParsing -OutFile $setup -TimeoutSec 600
+          Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $setup).Length / 1MB), $env:INSTALLER_URL)
+
+          $p = Start-Process -FilePath $setup -Wait -PassThru `
+            -ArgumentList ($env:INSTALLER_ARGS -split ' ')
+          if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
+
+          if (-not (Test-Path $env:INSTALLER_EXPECTS)) {
+            throw "installer reported success but $($env:INSTALLER_EXPECTS) does not exist"
+          }
+          Write-Host ("installed: {0}" -f (Get-Item $env:INSTALLER_EXPECTS).VersionInfo.FileVersion)
+
+      # Installed from the official msi rather than Chocolatey: the Chocolatey
+      # package wraps the win64 build on both architectures, and the whole point
+      # of running this app twice is to cover its two Qt versions. One URL pins
+      # the application version and the Qt version together.
+      - name: Install DB Browser for SQLite (${{ matrix.db4sArch }})
+        if: matrix.app == 'sqlitebrowser'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          DB4S_VERSION: '3.13.1'
+          DB4S_ARCH: ${{ matrix.db4sArch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = "https://github.com/sqlitebrowser/sqlitebrowser/releases/download/v$env:DB4S_VERSION/DB.Browser.for.SQLite-v$env:DB4S_VERSION-$env:DB4S_ARCH.msi"
+          $msi = Join-Path $env:RUNNER_TEMP 'db4s-arm64.msi'
+          Invoke-WebRequest -Uri $url -UseBasicParsing -OutFile $msi -TimeoutSec 600
+          Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $msi).Length / 1MB), $url)
+          $p = Start-Process -FilePath msiexec.exe -Wait -PassThru `
+            -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart')
+          if ($p.ExitCode -ne 0) { throw "msiexec exited $($p.ExitCode)" }
+          $dirs = @(
+            'C:\Program Files\DB Browser for SQLite',
+            'C:\Program Files (x86)\DB Browser for SQLite'
+          )
+          $dir = $dirs | Where-Object { Test-Path (Join-Path $_ 'DB Browser for SQLite.exe') } | Select-Object -First 1
+          if (-not $dir) { throw "not installed at any of: $($dirs -join ', ')" }
+          $exe = Join-Path $dir 'DB Browser for SQLite.exe'
+          $qt = if (Test-Path (Join-Path $dir 'Qt6Core.dll')) { 'Qt6' }
+                elseif (Test-Path (Join-Path $dir 'Qt5Core.dll')) { 'Qt5' }
+                else { 'unknown Qt' }
+          Write-Host ("installed: {0} ({1}) at {2}" -f (Get-Item $exe).VersionInfo.FileVersion, $qt, $dir)
+
+      # Files is fetched from a mirror rather than from its own distribution.
+      # Every GitHub release of files-community/Files carries zero assets, so the
+      # packages exist only on the CDN named in the project's own
+      # cd-sideload-stable.yml — and that CDN is behind Cloudflare bot protection,
+      # which answers a runner's datacentre IP with a "Just a moment..." challenge
+      # page instead of the 100 MB bundle. (The small .appinstaller manifest does
+      # come through; the bundle does not.) Solving a bot challenge is not this
+      # workflow's job, so the package was fetched once by hand and mirrored.
+      #
+      # The mirror is an unmodified, publisher-signed bundle. The hash is checked
+      # so the mirror is verified rather than trusted, and the signature is checked
+      # so the bytes stay attributable to Files' own publisher.
+      - name: Install Files
+        if: matrix.app == 'files'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILES_SHA256: '87bd06f897094fce4d14ec0d87f258c711477c6f1c5271b055c794b3aac7ff41'
+          FILES_SIGNER_CN: 'CN=Yair Aichenbaum'
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Files 4.x is framework-dependent; without the runtime it starts and
+          # shows a #32770 message box owned by Files.exe instead of a window, and
+          # discovery by process name accepts that dialog as the app.
+          choco install dotnet-desktopruntime -y --no-progress
+          $global:LASTEXITCODE = 0
+          & "$env:ProgramFiles\dotnet\dotnet.exe" --list-runtimes
+
+          $dir = Join-Path $env:RUNNER_TEMP 'files-pkg'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          gh release download files-4.2.9.0 `
+            --repo mangokingTW/wintegrate-test-fixtures `
+            --pattern '*.msixbundle' --dir $dir
+          if ($LASTEXITCODE -ne 0) { throw "gh release download failed ($LASTEXITCODE)" }
+
+          $bundle = (Get-ChildItem $dir -Filter '*.msixbundle' | Select-Object -First 1).FullName
+          if (-not $bundle) { throw "no msixbundle in $dir" }
+          Write-Host ("downloaded {0:N1} MB" -f ((Get-Item $bundle).Length / 1MB))
+
+          $hash = (Get-FileHash $bundle -Algorithm SHA256).Hash
+          if ($hash -ne $env:FILES_SHA256.ToUpperInvariant()) {
+            throw "SHA-256 mismatch: got $hash, expected $($env:FILES_SHA256)"
+          }
+          Write-Host "sha256 ok: $hash"
+
+          $sig = Get-AuthenticodeSignature $bundle
+          Write-Host "signature: $($sig.Status) / $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status), not Valid" }
+          if ($sig.SignerCertificate.Subject -notlike "$($env:FILES_SIGNER_CN)*") {
+            throw "unexpected signer: $($sig.SignerCertificate.Subject)"
+          }
+
+          # No -DependencyPath. The .appinstaller lists VCLibs, but Files' own
+          # manifest depends only on Microsoft.WindowsAppRuntime.2 — and handing
+          # Add-AppxPackage a package the manifest does not reference fails the
+          # whole install with 0x80073CF3.
+          try {
+            Add-AppxPackage -Path $bundle -ForceApplicationShutdown -ErrorAction Stop
+          } catch {
+            # 0x80070005 here is usually not a permission problem: MSIX deployment
+            # needs the Process Lifetime Manager, which a non-interactive session
+            # cannot reach. The deployment log says so and the exception does not.
+            Write-Host "::error::Add-AppxPackage failed: $($_.Exception.Message)"
+            Get-WinEvent -LogName 'Microsoft-Windows-AppXDeploymentServer/Operational' -MaxEvents 25 -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host ("[{0}] id={1} {2}" -f $_.TimeCreated.ToString('HH:mm:ss'), $_.Id, ($_.Message -replace "`r?`n", ' ')) }
+            throw
+          }
+          Get-AppxPackage -Name 'Files' | ForEach-Object { Write-Host "installed: $($_.PackageFullName)" }
+
+      - name: Run ${{ matrix.app }} tests
+        env:
+          # Turns "the application is not installed" from a skip into a failure.
+          # Without it a broken install step would leave a green job that tested
+          # nothing, which is the exact failure mode this job exists to catch.
+          WINTEGRATE_REQUIRE_TARGET_APPS: ${{ matrix.require }}
+          WINTEGRATE_RECORD_SUITE: "1"
+        run: |
+          pytest ${{ matrix.tests }} -v -s -m target_app
+
+      - name: Upload Recording Artifacts & Diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
+        with:
+          name: ci-artifacts-target-app-${{ matrix.app }}-${{ matrix.arch }}
           path: |
             recording-artifacts/
             artifacts/

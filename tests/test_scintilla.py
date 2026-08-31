@@ -9,25 +9,77 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
+from target_apps import assert_version, find_executable, installed_file_version
 from waits import settled
 
 from wintegrate import EolMode, ScintillaView, Window, is_scintilla
 from wintegrate.apps import sweep_processes_verified
-from wintegrate.interop import send_char_input, send_keys
+from wintegrate.diagnostics import WindowCensus
+from wintegrate.interop import (
+    get_foreground_window,
+    get_window_class,
+    get_window_title,
+    send_char_input,
+    send_keys,
+)
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="drives a live Win32 editor")
+pytestmark = [
+    pytest.mark.target_app,
+    pytest.mark.skipif(sys.platform != "win32", reason="drives a live Win32 editor"),
+]
 
-NPP = Path(r"C:\Program Files\Notepad++\notepad++.exe")
-requires_notepadpp = pytest.mark.skipif(
-    not NPP.exists(), reason="Notepad++ is not installed on this machine"
+# Chocolatey and the official installer disagree about the location, and the 32-bit
+# build lands in Program Files (x86) even on a 64-bit machine.
+NPP_CANDIDATES = (
+    Path(r"C:\Program Files\Notepad++\notepad++.exe"),
+    Path(r"C:\Program Files (x86)\Notepad++\notepad++.exe"),
+)
+
+# The build every assertion below was measured against. Chocolatey package
+# `notepadplusplus 8.9.8` installs this file version.
+VERIFIED_VERSION = "8.9.8.0"
+
+SCROLLBAR_PART_IDS = frozenset(
+    {"UpButton", "DownButton", "UpPageButton", "DownPageButton", "LeftButton", "RightButton"}
 )
 
 LINES = ("alpha", "beta", "gamma")
+
+
+def _describe_foreground() -> str:
+    hwnd = get_foreground_window()
+    if not hwnd:
+        return "no window"
+    return f"<hwnd={hwnd:#x} class={get_window_class(hwnd)!r} title={get_window_title(hwnd)!r}>"
+
+
+def _foreground_settled(win: Window, timeout: float = 15.0) -> bool:
+    """Whether `win` holds the foreground, retrying the request.
+
+    `Window.foreground()` is entered with verify=False across this suite because
+    the request can lose a race with whatever else the desktop is doing. Here it
+    has to be verified: a window in front of Notepad++ makes every keystroke land
+    somewhere else, and nothing else in the failure says so.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if get_foreground_window() == win.hwnd:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        win.set_foreground(verify=False)
+        time.sleep(0.25)
+
+
 # "alpha\r\nbeta\r\ngamma\r\n" — the byte length the assertions below check against.
 EXPECTED_BYTES = sum(len(line) + 2 for line in LINES)
+# What get_value() returns for that document. Scintilla reports CRLF line ends as
+# "\r\n"; the fixture waits for this exact string rather than for a line count.
+EXPECTED_TEXT = "".join(f"{line}\r\n" for line in LINES)
 
 
 @pytest.fixture
@@ -38,11 +90,22 @@ def editor():
     singleton behaviour from handing back somebody else's window, and -noPlugin
     keeps third-party plugins out of the measurement.
     """
+    npp = find_executable("Notepad++", NPP_CANDIDATES)
     sweep_processes_verified(("notepad++.exe",), ("Notepad++",))
-    proc = subprocess.Popen([str(NPP), "-nosession", "-multiInst", "-noPlugin"])
+    proc = subprocess.Popen([str(npp), "-nosession", "-multiInst", "-noPlugin"])
     try:
         win = Window.find(class_name="Notepad++", timeout=60.0)
         with win.foreground(verify=False):
+            # Verified, and it says who has the foreground when it fails. Without
+            # this the symptom is that nothing typed arrives at all — length 0,
+            # get_value() empty, Ctrl+F opening no dialog — with every element
+            # still resolving and the window still looking correct. That reads as
+            # a broken editor rather than as a window in front of it.
+            assert _foreground_settled(win), (
+                "Notepad++ never became the foreground window; "
+                f"{_describe_foreground()} has it instead, so every keystroke "
+                "below would have gone there"
+            )
             edit = win.find_text_input(timeout=30.0)
             edit.set_focus()
             settled(lambda: edit.get_value(), lambda v: isinstance(v, str), timeout=5.0)
@@ -50,16 +113,22 @@ def editor():
                 for ch in line:
                     send_char_input(ch)
                 send_keys("{ENTER}")
-            # Wait for the last line to arrive rather than sleeping: typing returns
-            # once SendInput accepted the events, not once Scintilla processed them.
-            settled(edit.get_value, lambda v: v.count("\n") >= len(LINES), timeout=5.0)
+            # Wait for the whole text, not just for the newline count. Counting
+            # newlines passes while a character inside a line is missing, and the
+            # failure then surfaces as a byte length three short of expected in
+            # whichever test reads it first.
+            typed = settled(edit.get_value, lambda v: v == EXPECTED_TEXT, timeout=10.0)
+            assert typed == EXPECTED_TEXT, (
+                f"typing produced {typed!r}, expected {EXPECTED_TEXT!r} — a "
+                "keystroke was dropped, so every assertion below is measuring the "
+                "wrong document"
+            )
             yield win, edit
     finally:
         proc.terminate()
         proc.wait(timeout=10)
 
 
-@requires_notepadpp
 def test_find_text_input_reaches_scintilla(editor):
     """The gap that made this work necessary.
 
@@ -72,7 +141,6 @@ def test_find_text_input_reaches_scintilla(editor):
     assert is_scintilla(edit.class_name), edit.describe()
 
 
-@requires_notepadpp
 def test_text_comes_through_wm_gettext(editor):
     """Reading needs no Scintilla message at all.
 
@@ -87,7 +155,6 @@ def test_text_comes_through_wm_gettext(editor):
     assert "\r\n" in text, "Scintilla ends lines with CRLF here; see eol_mode"
 
 
-@requires_notepadpp
 def test_line_count_is_asked_rather_than_counted(editor):
     """The reason this module exists.
 
@@ -100,7 +167,6 @@ def test_line_count_is_asked_rather_than_counted(editor):
     assert sci.line_count == len(LINES) + 1, "three lines plus the trailing empty one"
 
 
-@requires_notepadpp
 def test_length_is_bytes_not_characters(editor):
     """A distinction that silently breaks comparisons against len(text)."""
     _win, edit = editor
@@ -110,13 +176,20 @@ def test_length_is_bytes_not_characters(editor):
 
     for ch in "中文":
         send_char_input(ch)
-    settled(lambda: sci.length, lambda n: n > EXPECTED_BYTES, timeout=5.0)
+
     # Two CJK characters: six UTF-8 bytes, two UTF-16 characters.
-    assert sci.length == EXPECTED_BYTES + 6
+    expected = EXPECTED_BYTES + 6
+    # Waited for the exact length, not merely for an increase. `n > EXPECTED_BYTES`
+    # is satisfied as soon as the *first* character lands, so a dropped second one
+    # surfaced as `assert 23 == 26` with no hint that a keystroke went missing.
+    length = settled(lambda: sci.length, lambda n: n == expected, timeout=10.0)
+    assert length == expected, (
+        f"typed two CJK characters but Scintilla reports {length} bytes, expected "
+        f"{expected} — {(expected - length) // 3} of them never arrived"
+    )
     assert len(edit.get_value()) == EXPECTED_BYTES + 2
 
 
-@requires_notepadpp
 def test_selection_is_reportable(editor):
     """What WM_GETTEXT cannot answer, and a find/replace test needs."""
     _win, edit = editor
@@ -130,7 +203,6 @@ def test_selection_is_reportable(editor):
     assert sci.line_of_position(start) == 1
 
 
-@requires_notepadpp
 def test_line_geometry_agrees_with_itself(editor):
     """Cross-checks, because a wrong message constant returns a plausible number.
 
@@ -146,7 +218,6 @@ def test_line_geometry_agrees_with_itself(editor):
         assert sci.line_of_position(sci.position_of_line(i)) == i
 
 
-@requires_notepadpp
 def test_document_state_is_visible(editor):
     _win, edit = editor
     sci = ScintillaView.from_element(edit)
@@ -157,10 +228,76 @@ def test_document_state_is_visible(editor):
     assert repr(sci).startswith("<ScintillaView")
 
 
-@requires_notepadpp
 def test_from_element_refuses_a_non_scintilla_control(editor):
     """Handing back an inert view would surface as a wrong answer elsewhere."""
     win, _edit = editor
     root = win.re_resolve_element()
     with pytest.raises(ValueError, match="not a Scintilla control"):
         ScintillaView.from_element(root)
+
+
+def test_toolbar_buttons_expose_no_automation_id(editor):
+    """Characterisation: an MFC toolbar offers nothing but its translated names.
+
+    Every button in Notepad++'s main window has an empty `automation_id`, so the
+    only handle on them is `name` — and the names are localized (`新增(N)` on a
+    zh-TW machine, `New` on an English one). That rules out addressing them
+    portably, which is why the button test below uses a dialog instead.
+
+    Position is not a fallback either: sorting by bounding rectangle puts two 0x0
+    phantom buttons first, and clicking the topmost-leftmost one did nothing.
+    """
+    win, _ = editor
+    buttons = win.re_resolve_element().find_all(control_type_id=50000)
+    assert len(buttons) > 10, f"only {len(buttons)} buttons — is the toolbar hidden?"
+    # A scroll bar's arrow and paging buttons are Buttons too, and those *do* carry
+    # ids — but they are UIA's own standard names for scroll bar parts, not
+    # anything Notepad++ named. Excluded so the assertion is about the toolbar.
+    with_id = [b for b in buttons if b.automation_id and b.automation_id not in SCROLLBAR_PART_IDS]
+    assert not with_id, (
+        "some Notepad++ toolbar buttons now carry an automation_id "
+        f"({[b.automation_id for b in with_id][:5]}) — they could be addressed directly"
+    )
+
+
+def test_dialog_buttons_carry_their_win32_control_id(editor):
+    """A button click with an observable result, addressed language-independently.
+
+    Notepad++'s Find dialog is a plain Win32 `#32770`, and UIA reports each
+    control's *control ID* as its automation id — `1` for IDOK, `2` for IDCANCEL,
+    and Notepad++'s own ids for the rest. Numbers do not get translated, so this
+    is the one route to a button in this application that survives a locale
+    change.
+
+    The dialog is a separate top-level window, not a descendant of the main one,
+    so it has to be found on the desktop rather than under the editor.
+    """
+    win, edit = editor
+    edit.set_focus()
+    send_keys("^f")
+
+    def find_dialog():
+        for snap in WindowCensus.capture():
+            if snap.is_visible and snap.class_name == "#32770" and snap.pid == win.pid:
+                return Window(snap.hwnd, snap.pid)
+        return None
+
+    dialog = settled(find_dialog, lambda d: d is not None, timeout=15.0)
+    assert dialog is not None, "Ctrl+F did not open a #32770 dialog"
+
+    buttons = {
+        b.automation_id: b for b in dialog.re_resolve_element().find_all(control_type_id=50000)
+    }
+    assert "1" in buttons, f"no IDOK button; ids present: {sorted(buttons)}"
+    cancel = buttons.get("2")
+    assert cancel is not None, f"no IDCANCEL button; ids present: {sorted(buttons)}"
+
+    cancel.click()
+    gone = settled(find_dialog, lambda d: d is None, timeout=15.0)
+    assert gone is None, "clicking IDCANCEL left the Find dialog open"
+
+
+def test_notepadpp_is_the_verified_version():
+    """Pins the build. See `assert_version` for why a release gate needs this."""
+    npp = find_executable("Notepad++", NPP_CANDIDATES)
+    assert_version("Notepad++", installed_file_version(npp, "Notepad++"), VERIFIED_VERSION)
