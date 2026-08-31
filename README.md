@@ -120,6 +120,70 @@ with Session(config) as session:
 
 ---
 
+## CI/CD Integration
+
+`wintegrate` is purpose-built to eliminate the frustration of debugging headless or unattended Windows GUI test failures on CI runners without RDP access.
+
+### Zero-RDP CI Diagnostics
+
+When a test run completes or encounters an assertion failure in GitHub Actions or Azure Pipelines, `wintegrate` automatically bundles a complete diagnostic package to `artifacts/`:
+
+1. **Full-Motion Video Recording (`.mp4`)**: In-process low-overhead screen capture via PyAV, capturing the exact visual state and timing of the runner.
+2. **Window Census Diff (`window_census.json`)**: Pre- and post-test snapshots of all desktop HWNDs, titles, process IDs, and visibility states — immediately revealing rogue popups, leaked instances, or focus-stealing dialogs.
+3. **Structured Event Timeline (`session_events.json` / `.log`)**: Millisecond-accurate trace of every window launch, focus transition, and verified keystroke.
+4. **Failure Screenshots (`.png`)**: Instant high-resolution captures of the desktop and target window at the exact moment of failure.
+
+### GitHub Actions Workflow Example
+
+Add GUI integration testing with automatic diagnostic artifact collection to your repository in a few lines:
+
+```yaml
+name: Windows GUI Integration Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test-windows:
+    strategy:
+      matrix:
+        os: [ windows-latest, windows-11-arm64 ]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "wintegrate[all]" pytest
+
+      - name: Run Windows Integration Tests
+        run: |
+          pytest tests/ -v
+
+      - name: Upload Diagnostic Artifacts (Videos & Census)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wintegrate-diagnostics-${{ matrix.os }}
+          path: ./artifacts/
+          if-no-files-found: ignore
+```
+
+### Real-World Adoption
+
+See [`ImeModePersistence`](https://github.com/mangokingTW/ImeModePersistence) for a live production example: a Windows system utility that uses `wintegrate` in GitHub Actions CI to drive end-to-end integration tests with live screen recording, focus verification, and IME state assertions across both x64 and ARM64 Windows.
+
+---
+
 Full documentation: **<https://mangokingtw.github.io/wintegrate/>** — including
 [what breaks in CI](https://mangokingtw.github.io/wintegrate/pitfalls/), a catalogue of the
 failures this library was built against.
