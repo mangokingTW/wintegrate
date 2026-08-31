@@ -198,13 +198,20 @@ jobs:
             require: Notepad++
             choco: notepadplusplus
             chocoVersion: '8.9.8'
+            installerUrl: ''
+            installerArgs: ''
+          # The native arm64 build, not Chocolatey's x64 one under emulation.
+          # Emulated, nothing typed reached Scintilla at all: length=0, lines=1,
+          # is_modified=False and get_value()=='' while every element resolved.
           - app: notepad++
             os: windows-11-arm
             arch: arm64
             tests: tests/test_scintilla.py
             require: Notepad++
-            choco: notepadplusplus
-            chocoVersion: '8.9.8'
+            choco: ''
+            chocoVersion: ''
+            installerUrl: 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8/npp.8.9.8.Installer.arm64.exe'
+            installerArgs: '/S'
           - app: winmerge
             os: windows-latest
             arch: x64
@@ -212,13 +219,19 @@ jobs:
             require: WinMerge
             choco: winmerge
             chocoVersion: '2.16.58.2'
+            installerUrl: ''
+            installerArgs: ''
+          # The native arm64 build. Emulated, the Next Difference button click
+          # left the status bar unchanged while the other eight tests passed.
           - app: winmerge
             os: windows-11-arm
             arch: arm64
             tests: tests/test_target_winmerge.py
             require: WinMerge
-            choco: winmerge
-            chocoVersion: '2.16.58.2'
+            choco: ''
+            chocoVersion: ''
+            installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-ARM64-Setup.exe'
+            installerArgs: '/SILENT /NORESTART'
           # Both architectures, because DB Browser for SQLite v3.13.1 ships a
           # different Qt per architecture: the win64 zip carries Qt5Core.dll and
           # the arm64 zip carries Qt6Core.dll. Same application version, different
@@ -234,6 +247,8 @@ jobs:
             require: DB Browser for SQLite
             choco: ''
             chocoVersion: ''
+            installerUrl: ''
+            installerArgs: ''
           - app: sqlitebrowser
             os: windows-11-arm
             arch: arm64
@@ -242,6 +257,8 @@ jobs:
             require: DB Browser for SQLite
             choco: ''
             chocoVersion: ''
+            installerUrl: ''
+            installerArgs: ''
           - app: files
             os: windows-latest
             arch: x64
@@ -249,6 +266,8 @@ jobs:
             require: Files
             choco: ''
             chocoVersion: ''
+            installerUrl: ''
+            installerArgs: ''
           - app: files
             os: windows-11-arm
             arch: arm64
@@ -256,6 +275,8 @@ jobs:
             require: Files
             choco: ''
             chocoVersion: ''
+            installerUrl: ''
+            installerArgs: ''
     name: test-target-app (${{ matrix.app }} / ${{ matrix.arch }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -335,6 +356,24 @@ jobs:
           # do not end the job before it runs.
           $global:LASTEXITCODE = 0
 
+      # An arch-specific official installer, for the applications whose native
+      # arm64 build behaves differently from the x64 one under emulation. Pinning
+      # a URL pins the version and the architecture in one place.
+      - name: Install ${{ matrix.app }} (${{ matrix.arch }} native)
+        if: matrix.installerUrl != ''
+        shell: pwsh
+        env:
+          INSTALLER_URL: ${{ matrix.installerUrl }}
+          INSTALLER_ARGS: ${{ matrix.installerArgs }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:RUNNER_TEMP 'target-app-setup.exe'
+          Invoke-WebRequest -Uri $env:INSTALLER_URL -UseBasicParsing -OutFile $exe -TimeoutSec 600
+          Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $exe).Length / 1MB), $env:INSTALLER_URL)
+          $p = Start-Process -FilePath $exe -Wait -PassThru `
+            -ArgumentList ($env:INSTALLER_ARGS -split ' ')
+          if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
+
       # Installed from the official msi rather than Chocolatey: the Chocolatey
       # package wraps the win64 build on both architectures, and the whole point
       # of running this app twice is to cover its two Qt versions. One URL pins
@@ -351,7 +390,8 @@ jobs:
           $msi = Join-Path $env:RUNNER_TEMP 'db4s-arm64.msi'
           Invoke-WebRequest -Uri $url -UseBasicParsing -OutFile $msi -TimeoutSec 600
           Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $msi).Length / 1MB), $url)
-          $p = Start-Process msiexec -ArgumentList '/i', "\"$msi\"", '/qn', '/norestart' -Wait -PassThru
+          $p = Start-Process -FilePath msiexec.exe -Wait -PassThru `
+            -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart')
           if ($p.ExitCode -ne 0) { throw "msiexec exited $($p.ExitCode)" }
           $dirs = @(
             'C:\Program Files\DB Browser for SQLite',
