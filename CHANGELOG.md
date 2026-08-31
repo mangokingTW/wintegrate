@@ -5,6 +5,58 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [0.4.0] — 2026-08-31
+
+### Added
+
+- **Context managers for state that has to be established and given back.**
+
+  ```python
+  with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
+      edit.send_physical_keys("hello")     # deterministic
+  with dialog.foreground():
+      ...                                   # returned to the previous window
+  with session.step("submit the form"):
+      submit.invoke()                       # named in the timeline and the artifacts
+  ```
+
+  `Window.ime_mode` also neutralises **Caps Lock**, which was not planned:
+  refactoring the IME tests onto this API failed with `assert 'HELLO' == 'hello'`
+  because an earlier probe had left the toggle latched. Caps Lock is
+  desktop-global, owned by nobody, survives everything, and affects only letters —
+  so function-key tests pass while typing tests fail, and the message points at
+  the key injection rather than at a toggle nobody set on purpose.
+
+  Restoration restores only what could be **read**. A `None` conversion mode means
+  no IME window answered, which is not the same as alphanumeric; restoring a guess
+  leaves the desktop in a state the caller never asked for.
+
+  `Session.step` records the step's start, duration and outcome in the event
+  timeline, captures a screenshot named after the step, and prefixes the exception
+  message — on a machine you cannot connect to, *which step* is more useful than
+  *which line*. The original exception is re-raised untouched.
+
+- `ImeConversion`, an `IntFlag`: `9` reprs as `ImeConversion.NATIVE|FULLSHAPE`
+  instead of `9`. Members are ints, so the `IME_CMODE_*` constants still work.
+- `get_toggle_key_state()` and `set_caps_lock()`.
+- `@requires_ime` and `@requires_windows_build(n)`, alongside the existing
+  `@desktop_only`. `requires_ime` keys off the layout's *language*, not `ImmIsIME`
+  — that function reports whether an HKL is loaded, which is why 0.3.0 removed the
+  field built on it.
+- `__repr__` on `Window` and `UiaElement`, so a failed assertion says what it was
+  holding. Both tolerate a dead target: a repr that raises replaces a useful
+  message with a traceback about formatting.
+
+### Changed
+
+- `UiaElement.__eq__` now goes through UIA's `CompareElements`. Two COM pointers
+  to one element are not the same pointer, so the default `==` answered False for
+  elements that are the same thing.
+- **`UiaElement` is no longer hashable** (`__hash__ = None`). A handle that can go
+  stale has no stable hash — two unequal elements can become equal — so a `set` or
+  dict key would rely on a guarantee that does not exist. This is the breaking
+  change in this release; it fails loudly rather than silently.
+
 ## [0.3.0] — 2026-08-31
 
 Four defects, all shipped in 0.1.4 or earlier, none caught by CI. The common
