@@ -7,11 +7,25 @@ below.
 
 ## [0.5.0b1] — 2026-09-01
 
-Everything here came from driving three real applications — Files (WinUI 3),
-WinMerge (Win32/MFC) and DB Browser for SQLite (Qt) — rather than from reading
-documentation. Each entry names what was measured.
+Everything here came from driving four real applications rather than from reading
+documentation — Notepad++ (Scintilla), WinMerge (Win32/MFC), DB Browser for
+SQLite (Qt) and Files (WinUI 3), one per generation of Windows UI technology.
+Each entry names what was measured.
 
 ### Added
+
+- **Scintilla editors are found and can be read.** `Scintilla` joins the
+  text-input ladder, and a new `ScintillaView` answers the questions
+  `WM_GETTEXT` cannot: caret position, selection range, line count, EOL mode, tab
+  width, code page, modified flag. `find_text_input` on Notepad++ went from
+  failing after a 20s ladder timeout to succeeding in 718ms.
+
+  Only scalar `SCI_*` messages are exposed, deliberately. The ones that return
+  text take a pointer into the *caller's* address space, and USER32 does not
+  marshal custom messages across a process boundary — `VirtualAllocEx` in the
+  target does not help either, since the receiving code dereferences the pointer
+  as its own. Reading the buffer works anyway: `get_value()` falls through to
+  `WM_GETTEXT`, which USER32 *does* marshal, because it is a system message.
 
 - **Four real applications are now release test items**, one per generation of
   Windows UI technology: Notepad++ (Scintilla), WinMerge (Win32/MFC), DB Browser
@@ -57,19 +71,6 @@ documentation. Each entry names what was measured.
   every click is silently discarded. Measured on DB Browser for SQLite, which
   restored `(0, 0, 820, 620)` onto an 800x600 screen: tab selection kept working
   through the SelectionItem pattern while no button click landed.
-
-- **Scintilla editors are found and can be read.** `Scintilla` joins the
-  text-input ladder, and a new `ScintillaView` answers the questions
-  `WM_GETTEXT` cannot: caret position, selection range, line count, EOL mode, tab
-  width, code page, modified flag. `find_text_input` on Notepad++ went from
-  failing after a 20s ladder timeout to succeeding in 718ms.
-
-  Only scalar `SCI_*` messages are exposed, deliberately. The ones that return
-  text take a pointer into the *caller's* address space, and USER32 does not
-  marshal custom messages across a process boundary — `VirtualAllocEx` in the
-  target does not help either, since the receiving code dereferences the pointer
-  as its own. Reading the buffer works anyway: `get_value()` falls through to
-  `WM_GETTEXT`, which USER32 *does* marshal, because it is a system message.
 
 - **`Window.focus_content_island()`** puts keyboard focus inside a WinUI 3 /
   Windows App SDK content island. A freshly launched WinUI 3 window can be the
