@@ -13,6 +13,20 @@ A Python library for driving Windows GUIs **from CI**, where no human is watchin
 
 ---
 
+## What a CI run actually looks like
+
+Every CI run records itself. Below is the **complete test suite** on both architectures — not a highlight reel, not a staged demo: the entire run, unedited, at 8× speed. Nothing was cropped or cleaned up, so you are also seeing the runner's own console spam and whatever Windows decided to pop up that morning. That is the point.
+
+| `windows-latest` (x64) — 108s | `windows-11-arm` (ARM64) — 125s |
+|---|---|
+| ![Full test suite on x64](assets/full-suite-x64.gif) | ![Full test suite on ARM64](assets/full-suite-arm64.gif) |
+
+Watch the same scenario on both: in these two runs, Notepad went from launch to a discoverable window in **0.10s on x64 and 17.18s on ARM64**. A discovery timeout tuned on the left-hand machine fails intermittently on the right-hand one, and the failure reads like a flaky test rather than a cold start. This is the class of problem `wintegrate` exists to make visible.
+
+The full-resolution recordings are `recording-artifacts/full-suite-<arch>.mp4`, attached to the artifacts of [every CI run](https://github.com/mangokingTW/wintegrate/actions/workflows/ci.yml), along with the window census, the event timeline, and the failure screenshots.
+
+---
+
 ## Why wintegrate?
 
 Most Windows GUI automation frameworks (e.g. `pywinauto`, `pyautogui`) are built for interactive desktop use on developer workstations. In unattended CI runners (`windows-latest`, `windows-11-arm`), standard interactive assumptions break down:
