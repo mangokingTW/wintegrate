@@ -79,6 +79,7 @@ from wintegrate.recorder import (
     TextActionTimelineRecorder,
     inspect_desktop_tree,
 )
+from wintegrate.scintilla import EolMode, ScintillaView, is_scintilla
 from wintegrate.session import Session, SessionConfig
 from wintegrate.text import count_lines, normalize_line_endings
 from wintegrate.window import Window
@@ -86,6 +87,9 @@ from wintegrate.window import Window
 __all__ = [
     "ImeConversion",
     "__version__",
+    "EolMode",
+    "ScintillaView",
+    "is_scintilla",
     "Session",
     "SessionConfig",
     "Window",
