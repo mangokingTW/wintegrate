@@ -232,19 +232,41 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+          $headers = @{ 'User-Agent' = $ua }
           $manifestUrl = 'https://cdn.files.community/files/stable/Files.Package.appinstaller'
-          $manifest = [xml](Invoke-WebRequest -Uri $manifestUrl -Headers @{ 'User-Agent' = $ua } -UseBasicParsing -TimeoutSec 120).Content
+
+          # Downloaded to a file rather than cast from the response. PowerShell 7
+          # returns .Content as a byte array when the content type is not text,
+          # and the CDN serves .appinstaller as one — so `[xml]$response.Content`
+          # fails with 'Cannot convert value "System.Byte[]"'. Reading the file
+          # back does not depend on the content type at all.
+          $manifestFile = Join-Path $env:RUNNER_TEMP 'Files.appinstaller'
+          Invoke-WebRequest -Uri $manifestUrl -Headers $headers -UseBasicParsing -OutFile $manifestFile -TimeoutSec 120
+          $manifest = [xml](Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8)
           $bundleUrl = $manifest.AppInstaller.MainBundle.Uri
+          if (-not $bundleUrl) { throw "no MainBundle Uri in $manifestUrl" }
           Write-Host "bundle: $bundleUrl (version $($manifest.AppInstaller.MainBundle.Version))"
 
           $bundle = Join-Path $env:RUNNER_TEMP 'Files.msixbundle'
-          Invoke-WebRequest -Uri $bundleUrl -Headers @{ 'User-Agent' = $ua } -UseBasicParsing -OutFile $bundle -TimeoutSec 600
+          Invoke-WebRequest -Uri $bundleUrl -Headers $headers -UseBasicParsing -OutFile $bundle -TimeoutSec 600
+          Write-Host ("downloaded {0:N1} MB" -f ((Get-Item $bundle).Length / 1MB))
 
           # No -DependencyPath. The .appinstaller lists VCLibs, but Files' own
           # manifest depends only on Microsoft.WindowsAppRuntime.2 — and handing
           # Add-AppxPackage a package the manifest does not reference fails the
           # whole install with 0x80073CF3.
-          Add-AppxPackage -Path $bundle -ForceApplicationShutdown -ErrorAction Stop
+          try {
+            Add-AppxPackage -Path $bundle -ForceApplicationShutdown -ErrorAction Stop
+          } catch {
+            # 0x80070005 here is usually not a permission problem: MSIX
+            # deployment needs the Process Lifetime Manager, which a
+            # non-interactive session cannot reach. The deployment log says so
+            # and the exception does not, so print it either way.
+            Write-Host "::error::Add-AppxPackage failed: $($_.Exception.Message)"
+            Get-WinEvent -LogName 'Microsoft-Windows-AppXDeploymentServer/Operational' -MaxEvents 25 -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host ("[{0}] id={1} {2}" -f $_.TimeCreated.ToString('HH:mm:ss'), $_.Id, ($_.Message -replace "`r?`n", ' ')) }
+            throw
+          }
           Get-AppxPackage -Name 'Files' | ForEach-Object { Write-Host "installed: $($_.PackageFullName)" }
 
       - name: Run target application tests
