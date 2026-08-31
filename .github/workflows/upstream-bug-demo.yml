@@ -1,0 +1,131 @@
+# Reproduces a fixed upstream bug against the build that had it.
+#
+# Not part of CI. This asks a different question from the release gate: not
+# "does wintegrate still work" but "can wintegrate catch a real bug in software
+# that has never heard of it". It downloads two old builds to answer that, so it
+# runs on request rather than on every push.
+#
+# The case: Notepad++ #16326. Ctrl+Shift+D inserted an invisible EOT (0x04) at
+# the caret. Scintilla maps Ctrl+Shift+<letter> to the matching C0 control
+# character, and the setting that suppresses it shipped off in the portable
+# package because config.xml was missing npcNoInputC0 — a missing boolean
+# defaults to false. Commit 38ee65fd added the attribute; v8.7.9 is behind it,
+# v8.8 contains it.
+#
+# What makes it worth demonstrating: the failure is invisible. The character does
+# not render, so a human following the reproduction steps sees nothing at all.
+# SCI_GETLENGTH answers in one call.
+name: Upstream bug demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: Which runner to reproduce on
+        type: choice
+        options: [both, x64, arm64]
+        default: both
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: windows-latest
+          - arch: arm64
+            os: windows-11-arm
+    name: notepad++ #16326 (${{ matrix.arch }})
+    if: inputs.arch == 'both' || inputs.arch == matrix.arch
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      # The arm64 image comes up with a 'Microsoft account' window holding the
+      # foreground; every keystroke a test sends goes there instead.
+      - name: Close the shell prompts that hold the foreground
+        run: |
+          python -c "
+          import time
+          from wintegrate.interop import (
+              get_foreground_window, get_window_class, get_window_title, user32,
+          )
+          WM_CLOSE = 0x0010
+          for attempt in range(2):
+              hwnd = get_foreground_window()
+              if not hwnd:
+                  continue
+              cls, title = get_window_class(hwnd), get_window_title(hwnd)
+              print(f'pass {attempt}: foreground is class={cls!r} title={title!r}')
+              if cls == 'Windows.UI.Core.CoreWindow':
+                  user32.SendMessageW(hwnd, WM_CLOSE, 0, 0)
+                  print('  sent WM_CLOSE')
+                  time.sleep(3)
+          hwnd = get_foreground_window()
+          print(f'foreground now: {get_window_class(hwnd)!r} {get_window_title(hwnd)!r}')
+          "
+
+      # Portable rather than installed, twice over: the fix *is* in the portable
+      # package's config.xml, and doLocalConf.xml keeps each build's settings in
+      # its own directory so the two cannot contaminate each other.
+      - name: Fetch Notepad++ 8.7.9 (bug) and 8.8 (fixed)
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          NPP_ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\npp'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $base = 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download'
+          foreach ($v in @('8.7.9', '8.8')) {
+            $url = "$base/v$v/npp.$v.portable.$env:NPP_ARCH.zip"
+            $zip = Join-Path $root "npp-$v.zip"
+            $dir = Join-Path $root $v
+            Invoke-WebRequest -Uri $url -UseBasicParsing -OutFile $zip -TimeoutSec 600
+            Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+            $exe = Join-Path $dir 'notepad++.exe'
+            if (-not (Test-Path $exe)) { throw "no notepad++.exe in $dir" }
+            # The whole demonstration rests on this one attribute, so it is
+            # checked here rather than assumed.
+            $has = Select-String -Path (Join-Path $dir 'config.xml') -Pattern 'npcNoInputC0' -Quiet
+            $want = ($v -eq '8.8')
+            if ($has -ne $want) {
+              throw "npcNoInputC0 present=$has in $v config.xml, expected $want"
+            }
+            Write-Host ("{0}: {1}  npcNoInputC0={2}" -f $v, (Get-Item $exe).VersionInfo.FileVersion, $has)
+          }
+
+      - name: Reproduce
+        env:
+          # A fetch step that silently produced nothing must not leave a green run.
+          WINTEGRATE_REQUIRE_UPSTREAM_BUILDS: "1"
+          WINTEGRATE_RECORD_SUITE: "1"
+        run: |
+          pytest tests/test_regression_notepadpp_16326.py -v -s
+
+      - name: Upload Recording Artifacts & Diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
+        with:
+          name: upstream-bug-demo-${{ matrix.arch }}
+          path: |
+            recording-artifacts/
+            artifacts/
+          if-no-files-found: ignore

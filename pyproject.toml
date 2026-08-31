@@ -81,6 +81,7 @@ markers = [
     "desktop_only: mark test to run only on Windows Desktop / Client editions",
     "server_only: mark test to run only on Windows Server editions",
     "target_app: drives a third-party application that has to be installed first",
+    "upstream_bug: reproduces a fixed upstream bug against the build that had it",
 ]
 
 [tool.ruff]
