@@ -39,6 +39,8 @@ from wintegrate.env import (
     env,
     is_windows_desktop,
     is_windows_server,
+    requires_ime,
+    requires_windows_build,
     server_only,
 )
 from wintegrate.exceptions import (
@@ -52,6 +54,7 @@ from wintegrate.exceptions import (
 )
 from wintegrate.interop import (
     KEY_NAMES,
+    ImeConversion,
     get_composition_string,
     get_foreground_window,
     get_ime_status,
@@ -81,6 +84,7 @@ from wintegrate.text import count_lines, normalize_line_endings
 from wintegrate.window import Window
 
 __all__ = [
+    "ImeConversion",
     "__version__",
     "Session",
     "SessionConfig",
@@ -100,6 +104,8 @@ __all__ = [
     "PlatformCapabilities",
     "is_windows_server",
     "is_windows_desktop",
+    "requires_ime",
+    "requires_windows_build",
     "desktop_only",
     "server_only",
     "normalize_line_endings",
