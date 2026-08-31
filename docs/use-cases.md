@@ -186,3 +186,123 @@ To run tests reliably in unattended CI without human intervention or RDP access:
 1. **Automatic Video Recording**: Set `record_video=True` in `SessionConfig` to stream in-process video via PyAV directly to disk (`.mp4`).
 2. **Window Census Diffs**: Capture `WindowCensus.capture()` before and after operations to track rogue popups or focus stealers.
 3. **Automatic Cleanup**: Wrap tests with `Session` and `session.app()` context managers so all launched child windows and processes are terminated cleanly on completion or unexpected failure.
+
+---
+
+## 6. Coming from AutoHotkey
+
+AutoHotkey is the tool most Windows desktop automation starts with, and for good
+reason: it is a single executable, the language is built around window and input
+operations, and a useful script is often five lines. If you already drive an
+application with AHK, the question is not which tool is better but **which parts
+of your script change when nobody is watching the screen.**
+
+The two are built for different situations. AutoHotkey targets a machine with a
+human at it — hotkeys, text expansion, a repetitive task you want a key for.
+`wintegrate` targets an unattended runner where the run has already finished by
+the time anyone looks, and the only thing left is whatever it wrote to disk.
+
+### The same check, both ways
+
+A real one: Notepad++ #16326, where `Ctrl+Shift+D` inserted an invisible `EOT`
+(0x04) into the document. Nothing rendered, so the bug was invisible on screen.
+
+```ahk
+; AutoHotkey v2
+#Requires AutoHotkey v2.0
+
+Run 'notepad++.exe -nosession -multiInst -noPlugin'
+WinWait 'ahk_class Notepad++'
+WinActivate
+SendText 'abc'
+Send '^+d'
+Sleep 500
+text := ControlGetText('Scintilla1')
+if (text != 'abc')
+    throw Error('document holds ' StrLen(text) ' chars, expected 3')
+```
+
+```python
+# wintegrate
+proc, win = Window.launch_and_discover(
+    [npp, "-nosession", "-multiInst", "-noPlugin"],
+    window_classes=("Notepad++",), process_names=("notepad++.exe",),
+    require_all=True,
+)
+with win.foreground():
+    edit = win.find_text_input(timeout=30.0)
+    edit.set_focus()
+    for character in "abc":
+        send_char_input(character)
+    settled(edit.get_value, lambda v: v == "abc", timeout=10.0)
+
+    view = ScintillaView.from_element(edit)
+    before = view.length
+    send_keys("^+d")
+    after = settled(lambda: view.length, lambda n: n != before, timeout=3.0)
+    assert after == before, f"Ctrl+Shift+D grew the document to {edit.get_value()!r}"
+```
+
+`settled` in that snippet is not part of the library — it is a small helper in
+this project's own test suite (`tests/waits.py`) that polls a callable until a
+predicate holds and **returns the last value it saw** either way, so a failed
+wait still puts the real state into the assertion message. It is shown
+here because a wait is the honest comparison to `Sleep 500`, not because it ships
+with `wintegrate`.
+
+**Both find the bug.** `ControlGetText` reads a Scintilla control fine —
+`WM_GETTEXT` is a system message, so USER32 marshals the buffer across the
+process boundary for you. Anyone claiming this needs UI Automation is wrong.
+
+The difference is in the three lines around the check.
+
+### Where it actually diverges
+
+**Waiting.** The AHK script sleeps 500 ms. Pick too short and it fails on a busy
+runner; pick too long and 40 tests cost 20 seconds of nothing. `settled` polls a
+condition and returns as soon as it holds — and returns the last value it saw
+when it does not, so the assertion message shows the real state instead of
+"timed out". AutoHotkey can do this too (`WinWait`, a `Loop` around
+`ControlGetText`); the difference is that here it is what the API already does,
+so the fast path is also the correct one.
+
+**Evidence.** When the AHK script throws at 3am, you have a message box on a
+machine nobody is looking at, and the runner is destroyed. `wintegrate` records
+the whole run to one video, snapshots the visible windows before and after, logs
+each step with a float timestamp, and writes a screenshot on failure. That is not
+a capability AutoHotkey lacks so much as one it does not assume you need —
+because on a desk you can just look.
+
+Two failures from this project's own CI make the point. Four tests failed with
+`Ctrl+T did not open a tab (1 -> 1)` while every element query succeeded; the
+answer was a modal dialog sitting over the app, and it was found in one frame of
+the recording. Another had keystrokes vanishing entirely; the answer was a system
+prompt holding the foreground, and it came from a failure message that names
+whichever window does.
+
+**Being one test among many.** An AHK script is a program: it runs, it exits with
+a code. Getting 40 of them into a report, running them in parallel, sharing
+setup, and skipping the ones whose application is not installed is work you do
+yourself. `wintegrate` is a library, so pytest already does that —
+fixtures, `-k`, parametrisation, and a summary line CI can read.
+
+**The desktop you are standing on.** Both tools hit this, and neither warns you.
+Input goes to the *thread's* desktop, which in a service, an SSH session or a
+scheduled task is not the one on screen — every call succeeds and nothing
+happens. `wintegrate` calls `attach_to_input_desktop()` before it tries to bring
+a window forward; an AHK script run the same way needs the same treatment.
+See [What breaks in CI](pitfalls.md).
+
+### When AutoHotkey is the better answer
+
+- **A hotkey, a text expansion, a macro for yourself.** This is what it is for,
+  and nothing here competes.
+- **No Python on the target machine.** A compiled `.ahk` is one file.
+- **Something to hand a non-programmer colleague.** A ten-line script beats a
+  package, a virtualenv and a test runner.
+- **Driving your own machine while you watch.** The diagnostics this library
+  spends most of its code on exist because nobody is watching. If someone is,
+  they are overhead.
+
+The dividing line is not the automation. It is whether a failure has to explain
+itself to someone who was not there.
