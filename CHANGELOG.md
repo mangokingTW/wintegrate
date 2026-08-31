@@ -5,6 +5,83 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [0.3.0] — 2026-08-31
+
+Four defects, all shipped in 0.1.4 or earlier, none caught by CI. The common
+thread is worth stating plainly: **GitHub's runners are en-US, and the first two
+only execute on a non-English desktop.** They were found by re-running the suite
+on a zh-TW Windows 11 ARM64 VM.
+
+### Fixed
+
+- **`set_ime_open` and `set_ime_conversion` did nothing when driving another
+  process** — the only case an automation library exists for. Both began with
+  `ImmGetContext`, which returns nothing across a process boundary and for any
+  control routing text services through TSF, so they returned `False` and gave up
+  silently. They now resolve the focused child with `GetGUIThreadInfo`, ask
+  `ImmGetDefaultIMEWnd` for its IME window, and send `WM_IME_CONTROL`. Measured
+  on a zh-TW ARM64 desktop, mode toggled from outside the target process:
+
+  ```
+  IME_CMODE_ALPHANUMERIC   send_physical_keys("hello") -> "hello"
+  IME_CMODE_NATIVE         send_physical_keys("hello") -> ""
+  ```
+
+- **A "fresh" launch of a packaged app was not fresh.** Three defects compounded
+  into an intermittent discovery timeout that read as a cold-start flake:
+
+  1. The sweep was timed, not verified — `kill_processes()` then `sleep(0.3)`.
+     Terminating a packaged app is asynchronous, and a window that outlives the
+     guess makes the next launch of a single-instance app produce no new window
+     at all. `sweep_processes_verified()` polls until nothing matching remains.
+  2. Terminating was never enough: Store Notepad keeps its open tabs in
+     `LocalState\TabState` and reopens them next launch, so a fresh window
+     arrived holding a previous test's text — one leftover file was 1062 bytes of
+     accumulated input. `AppSpec` gains `package_family_name` and
+     `session_state_dirs`, cleared once the windows are gone, which is the only
+     point at which those files are closed.
+  3. Discovery accepted a window that was not ready. A top-level window becomes
+     visible before it is populated — the class matches while the title is still
+     empty — so the shell was handed back and failed 20s later inside
+     `find_text_input`, on a window whose title printed as `''`. An untitled
+     match now means "not yet", and the timeout message says so.
+
+  Five consecutive full-suite runs on that VM: **3/3 runs had failures before,
+  5/5 pass after**, and the suite went from 128s to a steady 80s.
+
+- `test_far_rows_are_genuinely_virtualized` asked whether a cell was virtualized
+  *after* `get_cell()` had already realized it — a race that failed one of eight
+  CI jobs. It now asks the raw element before anything realizes it.
+
+### Added
+
+- `get_ime_conversion(hwnd)` — the conversion mode as the IME itself reports it.
+- `sweep_processes_verified()` and `clear_package_session_state()`, exported for
+  callers that launch outside `session.app()`.
+- `AppSpec.package_family_name` and `AppSpec.session_state_dirs`.
+
+### Removed
+
+- **`layout_has_ime()`, `Window.keyboard_layout_has_ime`, and the
+  `layout_has_ime` key of `get_ime_status()`.** They were built on `ImmIsIME`,
+  which reports whether an HKL is *loaded*, not whether it is an IME: loading a
+  plain en-GB layout alongside Bopomofo makes `ImmIsIME` answer true for en-GB
+  too, so the field read `True` for every loaded layout on any machine with an
+  IME installed. A field that is always true is worse than an absent one, because
+  callers branch on it. **This is the breaking change in this release.**
+
+  Use `set_ime_conversion` to *establish* the input state you need rather than
+  trying to detect it. Detection was the wrong shape of the problem.
+
+### Notes
+
+- `set_keyboard_layout_verified` remains, and remains unreliable across
+  processes by nature: a layout is loaded per process, and a window elsewhere
+  rejects one it has never loaded. Post and send, with `SYSCHARSET`, `FORWARD`,
+  no flag, `AttachThreadInput` + `ActivateKeyboardLayout`, and `HWND_BROADCAST`
+  all left the target on `0x04040404`. Its failure now names the owning pid and
+  says so. Prefer setting the conversion mode.
+
 ## [0.2.0] — 2026-08-31
 
 ### Removed
