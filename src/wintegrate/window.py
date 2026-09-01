@@ -28,6 +28,7 @@ from wintegrate.interop import (
     SWP_SHOWWINDOW,
     VK_CAPITAL,
     attach_to_input_desktop,
+    describe_dialog_contents,
     find_child_windows,
     get_composition_string,
     get_foreground_window,
@@ -103,6 +104,13 @@ CONTENT_ISLAND_CLASS_SUBSTRINGS = (
 )
 
 
+# Window classes whose contents are worth reading when one turns up unexpectedly.
+# '#32770' is the standard Win32 dialog — message boxes, property sheets, and most
+# of what an installer or a system component puts in the way. The others are the
+# common message-box-alike shells.
+DIALOG_WINDOW_CLASSES = frozenset({"#32770", "MessageBoxWindow", "Notepad++Dialog"})
+
+
 def _describe_desktop_now(before: list, limit: int = 12) -> str:
     """What was on the desktop when discovery gave up, for the exception message.
 
@@ -135,6 +143,13 @@ def _describe_desktop_now(before: list, limit: int = 12) -> str:
         lines.append(
             f"\n    {mark}class={snap.class_name!r} pid={snap.pid} title={snap.title[:48]!r}"
         )
+        # What a blocking dialog actually says. The title of the one that broke a
+        # CI run here was 'System Properties', which narrows nothing down; the
+        # static text inside it is the part somebody can act on, and nobody can
+        # look at the screen of a runner that no longer exists.
+        if snap.class_name in DIALOG_WINDOW_CLASSES:
+            for line in describe_dialog_contents(snap.hwnd):
+                lines.append(f"\n          {line}")
     hidden = len(now) - len(shown)
     if hidden > 0:
         lines.append(f"\n    ... and {hidden} more (untitled shells last)")
