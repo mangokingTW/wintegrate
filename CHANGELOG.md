@@ -9,6 +9,14 @@ below.
 
 ### Changed
 
+- **The .NET Desktop runtime is only installed when it is missing.** The runner
+  images already carry `Microsoft.WindowsDesktop.App` in 8.x, 9.x and 10.x, so
+  `choco install dotnet-desktopruntime` was re-installing something that was
+  already there — 66 seconds of a 163-second job, on three jobs. The install is
+  kept as a fallback rather than deleted, because when it *is* needed the
+  symptom is a `#32770` message box that window discovery mistakes for the
+  application.
+
 - **Every target application is installed from a verified mirror.** Notepad++,
   WinMerge and DB Browser for SQLite now come from the same fixture release that
   Files already used, instead of from three separate publisher hosts on every

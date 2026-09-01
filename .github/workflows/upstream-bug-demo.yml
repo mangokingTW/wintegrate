@@ -343,8 +343,27 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'files-builds'
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-          choco install dotnet-desktopruntime -y --no-progress
-          $global:LASTEXITCODE = 0
+          # Files 4.x is framework-dependent; without a Windows Desktop runtime it
+          # starts and shows a #32770 message box owned by Files.exe instead of a
+          # window, and discovery by process name accepts that dialog as the app.
+          #
+          # The runner images already carry Microsoft.WindowsDesktop.App — 8.x,
+          # 9.x and 10.x were all present before this step ever ran — so the
+          # install is normally redundant, and it cost 66s of a 163s job. It is
+          # kept as a fallback rather than deleted: if an image ever ships
+          # without it, the symptom is a message box that discovery mistakes for
+          # the application, which is a poor thing to debug from a log.
+          $have = & "$env:ProgramFiles\dotnet\dotnet.exe" --list-runtimes |
+            Select-String -Pattern 'Microsoft\.WindowsDesktop\.App 10\.'
+          if ($have) {
+            Write-Host "Windows Desktop runtime already present, skipping the install:"
+            $have | ForEach-Object { Write-Host "  $_" }
+          } else {
+            Write-Host "no Microsoft.WindowsDesktop.App 10.x on this image; installing"
+            choco install dotnet-desktopruntime -y --no-progress
+            $global:LASTEXITCODE = 0
+            & "$env:ProgramFiles\dotnet\dotnet.exe" --list-runtimes
+          }
 
           $builds = @(
             @{ Version = '4.2.7.0'; Tag = 'files-4.2.7.0'
