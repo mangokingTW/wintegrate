@@ -94,14 +94,37 @@ def test_a_window_on_another_virtual_desktop_is_cloaked(dialog):
 
     Windows shell-cloaks a window that is not on the current desktop. Throughout
     this, `IsWindowVisible` keeps answering True — which is the whole point.
+
+    Skipped where virtual desktops are unusable, which includes Windows Server:
+    `pyvda` raises `NotImplementedError` there. `importorskip` does not cover
+    that — it only catches the package being *absent*, and this is the package
+    being present and refusing — which is why this failed on `windows-latest`
+    while passing on Windows 11. `Session._setup_isolated_virtual_desktop`
+    already treats virtual desktops as best-effort for the same reason.
+
+    Only the setup may skip. Once the desktop switch has happened, everything
+    below is a real assertion.
     """
     pyvda = pytest.importorskip("pyvda", reason="virtual desktop control needs pyvda")
 
-    original = pyvda.VirtualDesktop.current()
     scratch = None
     try:
+        original = pyvda.VirtualDesktop.current()
         scratch = pyvda.VirtualDesktop.create()
         scratch.go()
+    except Exception as exc:  # noqa: BLE001 - an unusable host is a skip, not a failure
+        if scratch is not None:
+            try:
+                scratch.remove()
+            except Exception:
+                pass
+        pytest.skip(
+            f"virtual desktops are not usable on this host "
+            f"({type(exc).__name__}: {exc}) — the True case for cloaking is covered "
+            f"by the Windows 11 jobs"
+        )
+
+    try:
         time.sleep(1.0)
 
         # The dialog stayed on the original desktop, so it is now cloaked.
