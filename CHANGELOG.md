@@ -26,6 +26,17 @@ below.
 
 ### Added
 
+- **A second upstream-bug reproduction: WinMerge #3015.** Choosing *Insert tabs*
+  in Options and pressing OK stores *Insert spaces* on 2.16.52, and the setting
+  on 2.16.52.2. `PropEditor.cpp` had a `std::clamp(v, 1, MAX_TABSIZE)` validator
+  on the wrong option, so tab type 0 was clamped up to 1. The failure is
+  asymmetric — the spaces direction works on both builds — so the test asserts
+  that direction too, as the control that makes the other assertion mean
+  something. Driving it needed two things worth writing down: WinMerge 2.16 has
+  no `HMENU` (its MFC Feature Pack menu bar is a toolbar, and the menu item's
+  UIA `Invoke()` succeeds while opening nothing), and the Options page is found
+  by which page owns control `1038` rather than by its localised name.
+
 - **A blocking dialog now says what it is asking.** When window discovery times
   out, any `#32770` / message-box class among the visible windows has its child
   controls' text printed under it, so the failure reads

@@ -1,20 +1,29 @@
-# Reproduces a fixed upstream bug against the build that had it.
+# Reproduces fixed upstream bugs against the builds that had them.
 #
 # Not part of CI. This asks a different question from the release gate: not
 # "does wintegrate still work" but "can wintegrate catch a real bug in software
-# that has never heard of it". It downloads two old builds to answer that, so it
-# runs on request rather than on every push.
+# that has never heard of it". It fetches old builds to answer that, so it runs
+# on request rather than on every push.
 #
-# The case: Notepad++ #16326. Ctrl+Shift+D inserted an invisible EOT (0x04) at
-# the caret. Scintilla maps Ctrl+Shift+<letter> to the matching C0 control
-# character, and the setting that suppresses it shipped off in the portable
-# package because config.xml was missing npcNoInputC0 — a missing boolean
-# defaults to false. Commit 38ee65fd added the attribute; v8.7.9 is behind it,
-# v8.8 contains it.
+# The cases:
 #
-# What makes it worth demonstrating: the failure is invisible. The character does
-# not render, so a human following the reproduction steps sees nothing at all.
-# SCI_GETLENGTH answers in one call.
+#   Notepad++ #16326 — Ctrl+Shift+D inserted an invisible EOT (0x04) at the
+#     caret. Scintilla maps Ctrl+Shift+<letter> to the matching C0 control
+#     character, and the setting that suppresses it shipped off in the portable
+#     package because config.xml was missing npcNoInputC0 — a missing boolean
+#     defaults to false. Commit 38ee65fd added the attribute; v8.7.9 is behind
+#     it, v8.8 contains it. What makes it worth demonstrating: the failure is
+#     invisible. The character does not render, so a human following the
+#     reproduction steps sees nothing at all. SCI_GETLENGTH answers in one call.
+#
+#   WinMerge #3015 — PropEditor.cpp attached a std::clamp(v, 1, MAX_TABSIZE)
+#     validator to OPT_TAB_TYPE when it was meant for OPT_TAB_SIZE, so choosing
+#     "Insert tabs" (type 0) was clamped up to 1, which is "Insert spaces".
+#     Commit edc1597 fixed it; 2.16.52 is behind it, 2.16.52.2 contains it.
+#     What makes it worth demonstrating: the failure is asymmetric. The spaces
+#     direction works on both builds, so a test that only checked that the
+#     setting round-trips would pass on the broken one.
+#
 name: Upstream bug demo
 
 on:
@@ -25,6 +34,11 @@ on:
         type: choice
         options: [both, x64, arm64]
         default: both
+      case:
+        description: Which upstream bug to reproduce
+        type: choice
+        options: [all, notepad++, winmerge]
+        default: all
 
 permissions:
   contents: read
@@ -44,16 +58,31 @@ jobs:
         shell: bash
         env:
           ARCH: ${{ inputs.arch }}
+          CASE: ${{ inputs.case }}
         run: |
-          x64='{"arch":"x64","os":"windows-latest"}'
-          arm='{"arch":"arm64","os":"windows-11-arm"}'
+          set -euo pipefail
           case "$ARCH" in
-            x64)   include="[$x64]" ;;
-            arm64) include="[$arm]" ;;
-            *)     include="[$x64,$arm]" ;;
+            x64)   arches='["x64"]' ;;
+            arm64) arches='["arm64"]' ;;
+            *)     arches='["x64","arm64"]' ;;
           esac
+          case "$CASE" in
+            all) cases='["notepad++","winmerge"]' ;;
+            *)   cases="[\"$CASE\"]" ;;
+          esac
+          # The runner label is derived rather than carried, so a new arch is one
+          # entry in the list above instead of one entry per case.
+          include=$(jq -cn --argjson a "$arches" --argjson c "$cases" '
+            [ $c[] as $case | $a[] as $arch |
+              { case: $case,
+                arch: $arch,
+                os: (if $arch == "arm64" then "windows-11-arm" else "windows-latest" end),
+                issue: (if $case == "winmerge" then "3015" else "16326" end),
+                tests: (if $case == "winmerge"
+                        then "tests/test_regression_winmerge_3015.py"
+                        else "tests/test_regression_notepadpp_16326.py" end) } ]')
           echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
-          echo "$include"
+          echo "$include" | jq .
 
   reproduce:
     needs: plan
@@ -62,7 +91,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     # Quoted: an unquoted '#' starts a YAML comment, which silently truncated
     # this to "notepad++" and threw away the matrix expression with it.
-    name: "notepad++ #16326 (${{ matrix.arch }})"
+    name: "${{ matrix.case }} #${{ matrix.issue }} (${{ matrix.arch }})"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -113,6 +142,7 @@ jobs:
       # no Authenticode signature, so the sha256 is the whole check; both hashes
       # were produced twice from independent downloads and agreed.
       - name: Fetch Notepad++ 8.7.9 (bug) and 8.8 (fixed) from the fixture mirror
+        if: matrix.case == 'notepad++'
         timeout-minutes: 10
         shell: pwsh
         env:
@@ -157,19 +187,67 @@ jobs:
             Write-Host ("{0}: {1}  npcNoInputC0={2}" -f $v, (Get-Item $exe).VersionInfo.FileVersion, $has)
           }
 
+      # Unpacked rather than installed: two versions of an installed WinMerge
+      # cannot coexist, and both builds share one registry key either way, so
+      # the test clears it per launch instead of relying on separate homes.
+      - name: Fetch WinMerge 2.16.52 (bug) and 2.16.52.2 (fixed) from the fixture mirror
+        if: matrix.case == 'winmerge'
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WM_ARCH: ${{ matrix.arch == 'arm64' && 'ARM64' || 'x64' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\wm'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+          # Zips carry no Authenticode signature, so these hashes are the whole
+          # check. Each was produced twice, from independent downloads.
+          $sha = @{
+            '2.16.52'   = @{ x64 = 'B4C815072923F01CACDA189A967F377EC2DDE38EE27880B472D96B3206CE8C2C'
+                             ARM64 = '3123C519A84D5469D5C7D66FCA1DAD0F8A96AF8FED2282288D52E889D7C6811A' }
+            '2.16.52.2' = @{ x64 = '531BCE09F2F01626C2BA2B65EB4423676D5329BFACA45FA75DEDEA5D3DDCD341'
+                             ARM64 = 'AE3C9FDE2FCD0C16F33EFD680607B6A250F972C83E14B158B71EC4836C6AB579' }
+          }
+
+          foreach ($v in @('2.16.52', '2.16.52.2')) {
+            $asset = "winmerge-$v-$env:WM_ARCH-exe.zip"
+            gh release download "winmerge-$v" `
+              --repo mangokingTW/wintegrate-test-fixtures `
+              --pattern $asset --dir $root
+            if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $asset ($LASTEXITCODE)" }
+
+            $zip = Join-Path $root $asset
+            $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+            $want = $sha[$v][$env:WM_ARCH]
+            if ($hash -ne $want) { throw "SHA-256 mismatch for ${asset}: got $hash, expected $want" }
+            Write-Host "sha256 ok: $asset"
+
+            $dir = Join-Path $root $v
+            Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+            $exe = Join-Path $dir 'WinMerge\WinMergeU.exe'
+            if (-not (Test-Path $exe)) { throw "no WinMerge\WinMergeU.exe in $dir" }
+            # The comparison is between two versions, so the versions are
+            # checked here rather than assumed from the directory name.
+            $got = (Get-Item $exe).VersionInfo.FileVersion
+            if (-not $got.StartsWith($v)) { throw "$dir holds $got, expected $v" }
+            Write-Host ("{0}: {1}" -f $v, $got)
+          }
+
       - name: Reproduce
         env:
           # A fetch step that silently produced nothing must not leave a green run.
           WINTEGRATE_REQUIRE_UPSTREAM_BUILDS: "1"
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/test_regression_notepadpp_16326.py -v -s
+          pytest ${{ matrix.tests }} -v -s
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
-          name: upstream-bug-demo-${{ matrix.arch }}
+          name: upstream-bug-demo-${{ matrix.case }}-${{ matrix.arch }}
           path: |
             recording-artifacts/
             artifacts/
