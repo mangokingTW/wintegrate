@@ -57,6 +57,7 @@ from wintegrate.exceptions import (
 )
 from wintegrate.interop import (
     KEY_NAMES,
+    CloakReason,
     ImeConversion,
     get_composition_string,
     get_foreground_window,
@@ -65,6 +66,7 @@ from wintegrate.interop import (
     get_keyboard_layout_list,
     get_process_image_name,
     get_window_class,
+    get_window_cloak_reason,
     get_window_pid,
     get_window_title,
     parse_hotkey,
@@ -99,6 +101,7 @@ __all__ = [
     "capture_screen_image",
     "capture_window_image",
     "CensusDiff",
+    "CloakReason",
     "ContinuousRecorder",
     "count_lines",
     "DataGrid",
@@ -118,6 +121,7 @@ __all__ = [
     "get_keyboard_layout_list",
     "get_process_image_name",
     "get_window_class",
+    "get_window_cloak_reason",
     "get_window_pid",
     "get_window_title",
     "ImeConversion",

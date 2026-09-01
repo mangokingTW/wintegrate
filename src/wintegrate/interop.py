@@ -31,6 +31,7 @@ if sys.platform == "win32":
     imm32 = ctypes.WinDLL("imm32", use_last_error=True)
     gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
     ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+    dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
 else:
 
     class _UnsupportedPlatformFunc:
@@ -61,6 +62,7 @@ else:
     imm32 = _UnsupportedPlatformDll("imm32")
     gdi32 = _UnsupportedPlatformDll("gdi32")
     ole32 = _UnsupportedPlatformDll("ole32")
+    dwmapi = _UnsupportedPlatformDll("dwmapi")
 
 # Window Show / Sizing Constants
 SW_HIDE = 0
@@ -99,6 +101,57 @@ IMC_GETCONVERSIONMODE = 0x0001
 IMC_SETCONVERSIONMODE = 0x0002
 IMC_GETOPENSTATUS = 0x0005
 IMC_SETOPENSTATUS = 0x0006
+
+# DwmGetWindowAttribute
+DWMWA_CLOAKED = 14
+
+
+class CloakReason(enum.IntFlag):
+    """Why DWM is hiding a window, as an IntFlag so the reason prints as itself.
+
+    Cloaking is not the same thing as `IsWindowVisible` returning False, and the
+    distinction matters because **`IsWindowVisible` answers True for a cloaked
+    window**. A WinUI or UWP app that has hidden itself, and a window sitting on
+    another virtual desktop, are both still "visible" by that measure.
+
+    The reason is worth having rather than just a boolean: `SHELL` usually means
+    the window is on another virtual desktop, which `Window.move_to_current_desktop`
+    can fix, while `APP` means the application itself put it away and only the
+    application will bring it back.
+    """
+
+    APP = 0x0000_0001
+    SHELL = 0x0000_0002
+    INHERITED = 0x0000_0004
+
+
+def get_window_cloak_reason(hwnd: int) -> CloakReason | None:
+    """
+    Returns why DWM is hiding `hwnd`, `CloakReason(0)` when it is not, or None
+    when the attribute cannot be read (a dead handle, or a platform without DWM).
+
+    None and `CloakReason(0)` are deliberately different: "not cloaked" is an
+    answer, "could not ask" is not, and collapsing them is how a caller ends up
+    treating a window it cannot see as being on screen.
+    """
+    if not hwnd:
+        return None
+    value = wintypes.DWORD(0)
+    try:
+        hresult = dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd),
+            ctypes.c_uint(DWMWA_CLOAKED),
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+    except Exception as exc:  # noqa: BLE001 - no DWM at all is a None, not a crash
+        logger.debug(f"DwmGetWindowAttribute failed ({type(exc).__name__}): {exc}")
+        return None
+    if hresult != 0:
+        logger.debug(f"DwmGetWindowAttribute returned 0x{hresult & 0xFFFFFFFF:08X} for {hwnd:#x}")
+        return None
+    return CloakReason(value.value)
+
 
 # GetSystemMetrics indices
 SM_CXSCREEN = 0

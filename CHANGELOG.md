@@ -72,6 +72,25 @@ means here.
 
 - **`ValueUnavailableError`**, and `ValueReading`, exported from the package root.
 
+- **Cloaking, because `IsWindowVisible` answers True for a window nobody can see.**
+  DWM can cloak a window: it stays visible by every USER32 measure while being
+  drawn nowhere. A WinUI or UWP app that has put itself away does it, and so does
+  *any window on another virtual desktop*.
+
+  `Window.is_cloaked`, `Window.cloak_reason` (a `CloakReason` IntFlag, so a
+  diagnostic says `SHELL` rather than `2`), `Window.is_on_screen` — visible and
+  not cloaked, which is the one to assert on — and
+  `Window.exists(require_on_screen=True)`. `get_window_cloak_reason()` is the
+  underlying read.
+
+  `exists()` and `is_visible` keep their meanings: tightening them silently would
+  change what every existing caller measures.
+
+  Found because a probe of Command Palette used `IsWindowVisible` to check the
+  palette had dismissed, and its *control* failed — Esc had demonstrably worked
+  and the measurement said otherwise. `None` is deliberately distinct from
+  `False`: "could not ask" and "not cloaked" are different answers.
+
 ## [0.5.1] — 2026-09-01
 
 Four gaps found by using this library on somebody else's code — writing

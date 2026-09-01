@@ -380,3 +380,36 @@ special cases, and rejects `"space+ctrl"` rather than sending something else.
 
 Both Win keys also need `KEYEVENTF_EXTENDEDKEY`: without it the shell does not
 recognise the chord at all, and nothing reports an error.
+
+## `IsWindowVisible` answers True for a window nobody can see
+
+DWM can *cloak* a window: it stays visible by every USER32 measure while being
+drawn nowhere. Two common ways in:
+
+- a WinUI or UWP app that has put itself away — Command Palette dismissing on
+  Esc, a Store app suspending;
+- **any window on another virtual desktop**, which Windows cloaks itself.
+
+So `IsWindowVisible` cannot tell "dismissed" from "showing", and neither can
+`Window.is_visible` or the default `Window.exists()`. A test waiting for such a
+window to disappear waits forever; a test asserting it is gone passes while it is
+still there. That second one is the dangerous shape, and it has already produced a
+*control* that failed — a keystroke which demonstrably worked was reported as
+having done nothing.
+
+```python
+win.is_visible        # IsWindowVisible: True even when cloaked
+win.is_cloaked        # True / False / None when it cannot be read
+win.cloak_reason      # CloakReason.SHELL, CloakReason.APP, CloakReason(0), None
+win.is_on_screen      # visible AND not cloaked -- the one to assert on
+win.exists(require_on_screen=True)
+```
+
+`exists()` keeps its old meaning by default, because tightening it silently would
+change what every existing caller measures.
+
+The reason is worth reading, not just the boolean: `SHELL` usually means another
+virtual desktop, which `move_to_current_desktop()` can fix, while `APP` means the
+application put it away and only the application will bring it back. And `None`
+is not `False` — "could not ask" and "not cloaked" are different answers, and
+collapsing them is how a window you cannot see gets treated as on screen.
