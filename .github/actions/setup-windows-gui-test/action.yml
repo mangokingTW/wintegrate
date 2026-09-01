@@ -233,9 +233,15 @@ runs:
           # keycaps sit outside it and stay visible; the cursor ring does not.
           # Verified with one variable: the same dialog, the same click, with and
           # without HWND_TOPMOST.
+          # Offsets are 0, not Keyviz's default 50. The offset exists so the badge
+          # does not sit under the cursor graphic, which is the right trade on a
+          # desktop; on a recording it puts the marker 50px away from the thing it
+          # is marking, and a reader then has to know the offset to work out where
+          # the click actually went. The ring is centred on the cursor, so the
+          # badge may as well be too.
           mouse = @{ showClicks = $true; size = 120; color = '#ff2d55'
                      keepHighlight = $true; showIndicator = $true; keepIndicator = $true
-                     indicatorSize = 44; indicatorOffsetX = 44; indicatorOffsetY = 44 }
+                     indicatorSize = 44; indicatorOffsetX = 0; indicatorOffsetY = 0 }
         }
 
         # zustand's persist wraps state as {"state":…,"version":n} and stores it
