@@ -220,21 +220,48 @@ def _goto_editor_page(dialog: int, pid: int) -> str:
 
     The 27 node names are localised, so none of them can be matched on. What
     cannot change is that exactly one page owns control 1038.
+
+    Two things this has to be careful about, both learned from the arm64 runner
+    reporting "none of the 27 Options pages carried control 1038":
+
+    - **`click()` is a silent no-op on an element with an empty rectangle.** It
+      aims at the middle of the bounding rectangle and simply returns when there
+      isn't one, so a node that has not been laid out yet is skipped without any
+      sign. Nodes are only clicked once they have a real rectangle, and if none
+      of them ever does, the failure says that instead.
+    - **Switching pages is not instant.** A fixed sleep that is long enough on
+      one machine is not long enough on another, so this polls for the control
+      rather than sleeping and hoping.
     """
     nodes = (
         Window(dialog, pid).re_resolve_element().find_all(control_type_id=CONTROL_TYPE_TREE_ITEM)
     )
     assert nodes, "the Options dialog exposed no tree items at all"
+
+    clicked = 0
     for node in nodes:
         try:
+            left, top, right, bottom = node.bounding_rectangle
+            if right <= left or bottom <= top:
+                continue
             node.click()
         except Exception:  # noqa: BLE001 - a node that will not take a click is not the one
             continue
-        time.sleep(0.5)
-        if _control(dialog, IDC_INSERT_TABS):
-            return node.name
+        clicked += 1
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            time.sleep(0.2)
+            if _control(dialog, IDC_INSERT_TABS):
+                return node.name
+
+    assert clicked, (
+        f"none of the {len(nodes)} Options tree nodes ever had a non-empty bounding "
+        "rectangle, so every click was a no-op and no page was ever opened"
+    )
     raise AssertionError(
-        f"none of the {len(nodes)} Options pages carried control {IDC_INSERT_TABS}"
+        f"clicked {clicked} of {len(nodes)} Options pages and none carried control "
+        f"{IDC_INSERT_TABS}"
     )
 
 
