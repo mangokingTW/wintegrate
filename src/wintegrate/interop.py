@@ -31,6 +31,7 @@ if sys.platform == "win32":
     imm32 = ctypes.WinDLL("imm32", use_last_error=True)
     gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
     ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+    dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
 else:
 
     class _UnsupportedPlatformFunc:
@@ -61,6 +62,7 @@ else:
     imm32 = _UnsupportedPlatformDll("imm32")
     gdi32 = _UnsupportedPlatformDll("gdi32")
     ole32 = _UnsupportedPlatformDll("ole32")
+    dwmapi = _UnsupportedPlatformDll("dwmapi")
 
 # Window Show / Sizing Constants
 SW_HIDE = 0
@@ -99,6 +101,57 @@ IMC_GETCONVERSIONMODE = 0x0001
 IMC_SETCONVERSIONMODE = 0x0002
 IMC_GETOPENSTATUS = 0x0005
 IMC_SETOPENSTATUS = 0x0006
+
+# DwmGetWindowAttribute
+DWMWA_CLOAKED = 14
+
+
+class CloakReason(enum.IntFlag):
+    """Why DWM is hiding a window, as an IntFlag so the reason prints as itself.
+
+    Cloaking is not the same thing as `IsWindowVisible` returning False, and the
+    distinction matters because **`IsWindowVisible` answers True for a cloaked
+    window**. A WinUI or UWP app that has hidden itself, and a window sitting on
+    another virtual desktop, are both still "visible" by that measure.
+
+    The reason is worth having rather than just a boolean: `SHELL` usually means
+    the window is on another virtual desktop, which `Window.move_to_current_desktop`
+    can fix, while `APP` means the application itself put it away and only the
+    application will bring it back.
+    """
+
+    APP = 0x0000_0001
+    SHELL = 0x0000_0002
+    INHERITED = 0x0000_0004
+
+
+def get_window_cloak_reason(hwnd: int) -> CloakReason | None:
+    """
+    Returns why DWM is hiding `hwnd`, `CloakReason(0)` when it is not, or None
+    when the attribute cannot be read (a dead handle, or a platform without DWM).
+
+    None and `CloakReason(0)` are deliberately different: "not cloaked" is an
+    answer, "could not ask" is not, and collapsing them is how a caller ends up
+    treating a window it cannot see as being on screen.
+    """
+    if not hwnd:
+        return None
+    value = wintypes.DWORD(0)
+    try:
+        hresult = dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd),
+            ctypes.c_uint(DWMWA_CLOAKED),
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+    except Exception as exc:  # noqa: BLE001 - no DWM at all is a None, not a crash
+        logger.debug(f"DwmGetWindowAttribute failed ({type(exc).__name__}): {exc}")
+        return None
+    if hresult != 0:
+        logger.debug(f"DwmGetWindowAttribute returned 0x{hresult & 0xFFFFFFFF:08X} for {hwnd:#x}")
+        return None
+    return CloakReason(value.value)
+
 
 # GetSystemMetrics indices
 SM_CXSCREEN = 0
@@ -139,6 +192,8 @@ VK_BACK = 0x08
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
 VK_MENU = 0x12  # Alt
+VK_LWIN = 0x5B
+VK_RWIN = 0x5C
 
 # IME control keys. These reach the IME itself rather than the focused control.
 VK_KANA = 0x15  # also VK_HANGUL
@@ -210,6 +265,9 @@ KEY_NAMES: dict[str, int] = {
     "CTRL": VK_CONTROL,
     "CONTROL": VK_CONTROL,
     "ALT": VK_MENU,
+    "WIN": VK_LWIN,
+    "LWIN": VK_LWIN,
+    "RWIN": VK_RWIN,
     "APPS": 0x5D,  # context-menu key
     "PRTSC": 0x2C,
     # IME control keys
@@ -224,15 +282,53 @@ KEY_NAMES: dict[str, int] = {
     **{f"F{i}": 0x6F + i for i in range(1, 25)},  # F1..F24 -> 0x70..0x87
 }
 
-# Keys that must carry KEYEVENTF_EXTENDEDKEY to be delivered correctly.
-_EXTENDED_VKS = {0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x25, 0x26, 0x27, 0x28, 0x5D, 0x2C}
+# Keys that must carry KEYEVENTF_EXTENDEDKEY to be delivered correctly. Both Win
+# keys belong here: their scan codes (0xE05B/0xE05C) are in the extended set, and
+# without the flag the shell does not recognise a Win chord at all.
+_EXTENDED_VKS = {
+    0x2E,
+    0x2D,
+    0x24,
+    0x23,
+    0x21,
+    0x22,
+    0x25,
+    0x26,
+    0x27,
+    0x28,
+    0x5D,
+    0x2C,
+    VK_LWIN,
+    VK_RWIN,
+}
 
 # A repeat count above this is a typo rather than an intent: even at the default
 # 20 ms per key, a thousand keystrokes already takes 20 seconds to send.
 MAX_KEY_REPEAT = 1000
 
 # Modifier prefixes, following the pywinauto/SendKeys convention.
+#
+# There is deliberately no Win-key prefix here. AutoHotkey spells it `#`, but this
+# grammar sends everything it does not recognise as literal text, so claiming `#`
+# would silently change what `send_keys("issue #123")` types. Win chords go
+# through `send_hotkey()` instead, which is a separate grammar for a separate job:
+# this one is for typing, that one is for pressing a chord.
 _MODIFIER_PREFIXES = {"^": VK_CONTROL, "+": VK_SHIFT, "%": VK_MENU}
+
+# Names accepted as modifiers by `parse_hotkey`. Aliases are the spellings people
+# actually write in a hotkey, not the Win32 ones: nobody types "menu" for Alt.
+_HOTKEY_MODIFIERS = {
+    "CTRL": VK_CONTROL,
+    "CONTROL": VK_CONTROL,
+    "SHIFT": VK_SHIFT,
+    "ALT": VK_MENU,
+    "MENU": VK_MENU,
+    "WIN": VK_LWIN,
+    "LWIN": VK_LWIN,
+    "RWIN": VK_RWIN,
+    "SUPER": VK_LWIN,
+    "META": VK_LWIN,
+}
 
 
 class RECT(ctypes.Structure):
@@ -620,10 +716,111 @@ def send_vk_input(vk: int, modifiers: tuple[int, ...] = ()) -> bool:
     return _send_input_checked(arr, f"vk=0x{vk:02X} modifiers={modifiers}")
 
 
+def parse_hotkey(spec: str) -> tuple[tuple[int, ...], int | str]:
+    """
+    Parses a chord like `"win+alt+space"` or `"ctrl+,"` into `(modifiers, key)`.
+
+    The rule is simply that **the last token is the key and everything before it
+    must be a modifier**. That makes `"win"` (press the Win key alone, opening
+    Start) and `"win+alt+space"` the same grammar rather than two special cases,
+    and it rejects `"space+ctrl"` instead of quietly sending something else.
+
+    The key comes back as an `int` when it can be resolved without asking the
+    system — a name from `KEY_NAMES`, or a single ASCII letter or digit, whose
+    virtual key equals its uppercase codepoint. Anything else (`","`, `"/"`,
+    whose virtual key depends on the active keyboard layout) comes back as the
+    one-character `str` for `send_hotkey` to map through `VkKeyScanW`.
+
+    Pure function: no Win32 calls, so the grammar is testable on any platform.
+    Raises ValueError on an empty spec, an unknown name, or a non-modifier in a
+    non-final position.
+
+    `+` separates tokens here, and is *not* the Shift prefix it is in
+    `parse_key_spec`. These are two grammars for two jobs: that one types text,
+    this one presses a chord. Shift is spelled `"shift"`, and `"shift++"` is a
+    Shift-plus chord because only the final token is read as the key.
+    """
+    if not spec or not spec.strip():
+        raise ValueError("Empty hotkey spec")
+
+    stripped = spec.strip()
+    if stripped.endswith("+"):
+        # The key itself is "+". Both "ctrl+" and "ctrl++" mean Ctrl-plus; the
+        # separator before it is optional because requiring it would make "+"
+        # alone unspellable.
+        key_token = "+"
+        head = stripped[:-1]
+        if head.endswith("+"):
+            head = head[:-1]
+    else:
+        head, _, key_token = stripped.rpartition("+")
+        key_token = key_token.strip()
+
+    tokens = [t.strip() for t in head.split("+")] if head else []
+
+    modifiers: list[int] = []
+    for token in tokens:
+        if not token:
+            raise ValueError(
+                f"Empty token in hotkey spec {spec!r}. Only modifiers may precede "
+                f"the key; known modifiers: {', '.join(sorted(_HOTKEY_MODIFIERS))}"
+            )
+        vk = _HOTKEY_MODIFIERS.get(token.upper())
+        if vk is None:
+            raise ValueError(
+                f"{token!r} is not a modifier, so it cannot come before the key in "
+                f"{spec!r}. The last token is the key. Known modifiers: "
+                f"{', '.join(sorted(_HOTKEY_MODIFIERS))}"
+            )
+        if vk not in modifiers:
+            modifiers.append(vk)
+
+    named = KEY_NAMES.get(key_token.upper())
+    if named is not None:
+        return tuple(modifiers), named
+    if len(key_token) == 1:
+        if key_token.isascii() and key_token.isalnum():
+            return tuple(modifiers), ord(key_token.upper())
+        return tuple(modifiers), key_token
+    raise ValueError(
+        f"Unknown key {key_token!r} in hotkey spec {spec!r}. Use a single character "
+        f"or one of: {', '.join(sorted(KEY_NAMES))}"
+    )
+
+
+def send_hotkey(spec: str) -> bool:
+    """
+    Presses a chord: `send_hotkey("win+alt+space")`, `send_hotkey("ctrl+shift+p")`.
+
+    This exists because `send_keys` cannot express a Win chord and should not be
+    taught to: its grammar sends unrecognised characters as literal text, so
+    giving `#` a meaning would change what `send_keys("issue #123")` types.
+
+    Returns False if the system refused to inject the events. Raises ValueError on
+    a spec that does not parse — see `parse_hotkey`.
+    """
+    modifiers, key = parse_hotkey(spec)
+    if isinstance(key, str):
+        scan = user32.VkKeyScanW(key)
+        if scan == -1:
+            raise ValueError(
+                f"{key!r} has no virtual key on the active keyboard layout "
+                f"(0x{get_keyboard_layout():08X}), so {spec!r} cannot be sent"
+            )
+        # The layout may need Shift for this character (e.g. "?" on a US layout).
+        # That Shift is part of producing the key, so it joins the modifiers.
+        if scan & 0x0100 and VK_SHIFT not in modifiers:
+            modifiers = (*modifiers, VK_SHIFT)
+        key = scan & 0xFF
+    return send_vk_input(key, modifiers)
+
+
 def send_keys(spec: str, delay_per_key: float = 0.02) -> bool:
     """
     Sends a SendKeys-style spec: named keys in braces, `^`/`+`/`%` modifiers,
     everything else as literal Unicode text. See `parse_key_spec` for the grammar.
+
+    There is no Win-key modifier in this grammar; use `send_hotkey("win+...")`.
 
     Returns False if the system refused to inject any of the events.
     """

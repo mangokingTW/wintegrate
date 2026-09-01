@@ -27,6 +27,7 @@ from wintegrate.interop import (
     SW_RESTORE,
     SWP_SHOWWINDOW,
     VK_CAPITAL,
+    CloakReason,
     attach_to_input_desktop,
     describe_dialog_contents,
     find_child_windows,
@@ -38,6 +39,7 @@ from wintegrate.interop import (
     get_process_image_name,
     get_toggle_key_state,
     get_window_class,
+    get_window_cloak_reason,
     get_window_pid,
     get_window_title,
     kernel32,
@@ -272,7 +274,46 @@ class Window:
 
     @property
     def is_visible(self) -> bool:
+        """`IsWindowVisible`, which is **not** the same as "on screen".
+
+        A window DWM has cloaked — a WinUI or UWP app that has hidden itself, or
+        anything on another virtual desktop — still answers True here. Use
+        `is_on_screen` when the question is whether a user could see it.
+        """
         return bool(user32.IsWindowVisible(self.hwnd))
+
+    @property
+    def cloak_reason(self) -> CloakReason | None:
+        """Why DWM is hiding this window; `CloakReason(0)` if it is not.
+
+        None means the attribute could not be read at all, which is not the same
+        answer as "not cloaked" — see `get_window_cloak_reason`.
+        """
+        return get_window_cloak_reason(self.hwnd)
+
+    @property
+    def is_cloaked(self) -> bool | None:
+        """Whether DWM is hiding this window. None when it cannot be determined."""
+        reason = self.cloak_reason
+        return None if reason is None else bool(reason)
+
+    @property
+    def is_on_screen(self) -> bool:
+        """Whether this window is somewhere a user could actually see it.
+
+        `IsWindowVisible` and not cloaked. The second half is the part that gets
+        left out: a Command Palette that has dismissed itself, a Store app that
+        has been put away, and a window on another virtual desktop all report
+        `is_visible == True`, so a test waiting for one of them to disappear waits
+        forever and a test asserting one is gone passes while it is still there.
+
+        A window whose cloak state cannot be read falls back to `is_visible` —
+        that is the best available answer, not a silent False.
+        """
+        if not self.is_visible:
+            return False
+        cloaked = self.is_cloaked
+        return True if cloaked is None else not cloaked
 
     def get_ime_status(self) -> dict[str, object]:
         """
@@ -376,10 +417,21 @@ class Window:
             logger.info(f"Saved window capture to {path}")
         return img
 
-    def exists(self, require_visible: bool = True) -> bool:
-        """Returns whether this window handle is still a live (and optionally visible) window."""
+    def exists(self, require_visible: bool = True, require_on_screen: bool = False) -> bool:
+        """Returns whether this window handle is still a live window.
+
+        `require_visible` is `IsWindowVisible`, which a *cloaked* window passes —
+        so for a WinUI or UWP window that hides itself, this returns True after it
+        has gone away. Pass `require_on_screen=True` when the question is whether
+        it is somewhere a user could see it; see `is_on_screen`.
+
+        The default is unchanged deliberately: quietly tightening it would change
+        what every existing caller measures.
+        """
         if not user32.IsWindow(self.hwnd):
             return False
+        if require_on_screen:
+            return self.is_on_screen
         return bool(user32.IsWindowVisible(self.hwnd)) if require_visible else True
 
     def re_resolve_element(self) -> UiaElement:

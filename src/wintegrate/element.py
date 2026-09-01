@@ -6,6 +6,7 @@ import ctypes
 import logging
 import sys
 import time
+from typing import NamedTuple
 
 if sys.platform == "win32":
     import comtypes
@@ -18,6 +19,7 @@ from wintegrate.exceptions import (
     ElementNotFoundError,
     FocusStealDetectedError,
     TextMismatchError,
+    ValueUnavailableError,
 )
 from wintegrate.interop import (
     WM_GETTEXT,
@@ -50,6 +52,20 @@ UIA_ItemContainerPatternId = 10019
 UIA_VirtualizedItemPatternId = 10020
 
 TreeScope_Children = 2
+
+
+class ValueReading(NamedTuple):
+    """What an element's text read back as, and where it came from.
+
+    `source` is one of `"TextPattern"`, `"ValuePattern"`, `"WM_GETTEXT"` or
+    `"Name"`. The first three are the element's contents. `"Name"` is not — it is
+    the element's label, reported only because there was nothing else to read,
+    and it is the reason this type exists rather than a bare `str`.
+    """
+
+    text: str
+    source: str
+
 
 # UIA control types used to recognise grid and tree structure.
 UIA_DataItemControlTypeId = 50029
@@ -872,8 +888,18 @@ class UiaElement:
         time.sleep(0.05)
         return send_keys(spec, delay_per_key=delay_per_key)
 
-    def get_value(self) -> str:
-        """Reads element text via TextPattern, ValuePattern, or window text fallback."""
+    def read_value(self) -> ValueReading:
+        """
+        Reads the element's text and reports **which source answered**.
+
+        The sources are tried in order of authority: `TextPattern` (a document),
+        `ValuePattern` (a value-bearing control), `WM_GETTEXT` (a native window),
+        and finally `Name` — which is not the element's text at all but its
+        *label*, and is reported as such rather than passed off as content.
+
+        Never raises: a reading always comes back, and the `source` says how much
+        it is worth. `get_value()` is the version that refuses the weak answer.
+        """
         try:
             text_pattern = self._element.GetCurrentPattern(UIA_TextPatternId)
             if text_pattern:
@@ -882,7 +908,7 @@ class UiaElement:
                 if doc_range:
                     txt = doc_range.GetText(-1)
                     if txt is not None:
-                        return txt
+                        return ValueReading(txt, "TextPattern")
         except Exception:
             pass
 
@@ -892,19 +918,55 @@ class UiaElement:
                 val_pat = val_pattern.QueryInterface(IUIAutomationValuePattern)
                 val = val_pat.CurrentValue
                 if val is not None:
-                    return val
+                    return ValueReading(val, "ValuePattern")
         except Exception:
             pass
 
-        # Fallback: check window text if handle exists
         if self.handle:
+            # A zero length is the answer "this window's text is empty", not
+            # "the query did not work" — DefWindowProc answers WM_GETTEXTLENGTH
+            # for every window. Treating 0 as a miss is what used to send an
+            # empty native Edit on to the Name fallback and have it report its
+            # label as its contents.
             length = user32.SendMessageW(self.handle, WM_GETTEXTLENGTH, 0, 0)
             if length > 0:
                 buf = ctypes.create_unicode_buffer(length + 1)
                 user32.SendMessageW(self.handle, WM_GETTEXT, length + 1, ctypes.byref(buf))
-                return buf.value
+                return ValueReading(buf.value, "WM_GETTEXT")
+            return ValueReading("", "WM_GETTEXT")
 
-        return self.name
+        return ValueReading(self.name, "Name")
+
+    def get_value(self, allow_name_fallback: bool = False) -> str:
+        """
+        Reads the element's text, refusing to return its Name in place of it.
+
+        When nothing in the element can be asked what text it holds, the only
+        thing left is the Name — the element's *label*. Returning that silently is
+        how a caller ends up asserting against a placeholder: the field driving
+        this change is a WinUI `TextBox` whose Name is `'n'` (from `{n}`), so an
+        empty field read back as `'n'` and every "the field is not empty" check
+        would have passed on nothing.
+
+        `allow_name_fallback=True` opts back into it, for the controls where the
+        Name genuinely *is* the displayed text — a ComboBox reflecting its
+        selection, a grid cell — and `read_value()` gives the reading plus its
+        source when the caller would rather decide for itself.
+
+        Raises `ValueUnavailableError` when there is no text source. An empty
+        string from a real source is returned as `''`, because that is an answer.
+        """
+        reading = self.read_value()
+        if reading.source == "Name" and not allow_name_fallback:
+            raise ValueUnavailableError(
+                f"{self.describe()} exposes no text source (no TextPattern, no "
+                f"ValuePattern, no window handle), so the only reading available "
+                f"is its Name, {reading.text!r} — which is the element's label, "
+                f"not its contents. Pass allow_name_fallback=True if the Name is "
+                f"what you actually want here, or use read_value() to inspect the "
+                f"source yourself."
+            )
+        return reading.text
 
     def set_value_verified(self, text: str, timeout: float = 3.0) -> bool:
         """Sets text via ValuePattern and verifies the value immediately."""
