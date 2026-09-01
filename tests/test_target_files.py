@@ -173,26 +173,42 @@ def _type_path_verified(win: Window, target: str) -> None:
         current = _maybe(win.re_resolve_element(), automation_id="PART_TextBox")
         return current.get_value() if current else ""
 
-    interop.send_keys("^a")
-    interop.send_keys("{DELETE}")
-
     # Recorded, not asserted. The reading only reflects the edit buffer once the
     # breadcrumb is in edit mode; at Home it answers with the display value
     # ('Home') whatever the buffer holds, so "the box is empty" is not reliably
-    # observable. It is still worth knowing when the typing below goes wrong —
-    # on CI, Ctrl+A once failed to select and the path was appended instead,
-    # giving 'HomeC:\Windows'.
+    # observable.
     before_typing = buffer_now()
 
-    for character in target:
-        interop.send_char_input(character)
+    def clear_and_type() -> str:
+        interop.send_keys("^a")
+        interop.send_keys("{DELETE}")
+        for character in target:
+            interop.send_char_input(character)
+        return settled(buffer_now, lambda v: v == target, timeout=10.0)
 
-    typed = settled(buffer_now, lambda v: v == target, timeout=10.0)
+    typed = clear_and_type()
+
+    # Files' address bar is a breadcrumb until it enters edit mode, and until then
+    # Ctrl+A has nothing to select: the clear silently does nothing and the path
+    # is appended, giving 'HomeC:\Windows'. The transition is not directly
+    # observable — the reading answers with the display value either way — so
+    # instead of asserting a precondition that cannot be read, the *signature* of
+    # having missed it is recognised and one more pass is made. The box is
+    # certainly in edit mode by now, so the second pass is decisive rather than
+    # hopeful, and it is reported rather than silent: a retry nobody can see is
+    # how a flake becomes permanent.
+    if typed != target and typed.endswith(target):
+        print(
+            f"path box was still showing the breadcrumb when Ctrl+A arrived "
+            f"(read {typed!r}); clearing again now that it is in edit mode"
+        )
+        typed = clear_and_type()
+
     assert typed == target, (
         f"typing {target!r} into the path box left it reading {typed!r} "
-        f"(it read {before_typing!r} after Ctrl+A and Delete). Either a keystroke "
-        "was dropped or the clear did not take, and Enter would then navigate "
-        "somewhere unintended"
+        f"(it read {before_typing!r} before the first clear). Either a keystroke "
+        "was dropped or the clear did not take even on the second pass, and Enter "
+        "would then navigate somewhere unintended"
     )
     interop.send_keys("{ENTER}")
 
