@@ -212,13 +212,55 @@ runs:
           border = @{ enabled = $true; width = 3; color = '#000000'; radius = 0.25 }
           # Opaque: the default #ffffff99 lets the application show through the label.
           background = @{ enabled = $true; color = '#ffffffff' }
-          # showClicks draws a ring where the button went down. It only lands in
-          # the right place because send_mouse_click injects a move event as well
-          # (wintegrate >= 0.5.3); with SetCursorPos alone the ring stays wherever
-          # Keyviz last saw the cursor.
+          # keepHighlight and keepIndicator are ON, which is the difference between
+          # a recording that shows where the pointer is and one that does not.
+          #
+          # showClicks alone animates a ring on press, and that animation lasts
+          # about half a second -- four or five frames at 10 fps. Sampling a
+          # recording any coarser than that misses it entirely, and between clicks
+          # there is nothing on screen saying where the pointer went. Keeping the
+          # highlight and the indicator visible means the cursor is locatable in
+          # every frame, and the click itself still reads as a `Left` keycap.
+          #
+          # The ring only lands in the right place because send_mouse_click injects
+          # a move event as well (wintegrate >= 0.5.3); with SetCursorPos alone it
+          # stays wherever Keyviz last saw the cursor.
+          #
+          # One limitation this does not fix: an activated topmost window covers
+          # everything the overlay draws inside its own rectangle. The overlay
+          # carries WS_EX_NOACTIVATE so it never becomes the active window, and
+          # between two topmost windows the activated one draws above.
+          #
+          # Measured on the VM with the highlight on, one variable -- the same
+          # window, the same click point, only WS_EX_TOPMOST changing:
+          #
+          #   normal                  ring pixels inside the window: 2032
+          #   topmost                                                   0
+          #   topmost, right after a keystroke                          0
+          #   normal again                                           2032
+          #
+          # The last row rules out drift, and the third rules out the other
+          # candidate explanation, that Keyviz merely re-asserts topmost on key
+          # events. Clicking OUTSIDE the topmost window's rectangle draws the ring
+          # normally (783 px, identical with and without topmost), so the layer is
+          # not suppressed -- this is plain occlusion.
+          #
+          # It applies to the keycaps too, not just the cursor: in that experiment
+          # the probe window covered the bottom strip and the keycaps vanished with
+          # the ring. Command Palette does not cover the bottom strip, which is why
+          # its recordings show keys but no cursor.
+          #
+          # Giving the overlay activation would fix the drawing and break the test:
+          # CmdPal dismisses itself on focus loss.
+          # Offsets are 0, not Keyviz's default 50. The offset exists so the badge
+          # does not sit under the cursor graphic, which is the right trade on a
+          # desktop; on a recording it puts the marker 50px away from the thing it
+          # is marking, and a reader then has to know the offset to work out where
+          # the click actually went. The ring is centred on the cursor, so the
+          # badge may as well be too.
           mouse = @{ showClicks = $true; size = 120; color = '#ff2d55'
-                     keepHighlight = $false; showIndicator = $true; keepIndicator = $false
-                     indicatorSize = 44; indicatorOffsetX = 44; indicatorOffsetY = 44 }
+                     keepHighlight = $true; showIndicator = $true; keepIndicator = $true
+                     indicatorSize = 44; indicatorOffsetX = 0; indicatorOffsetY = 0 }
         }
 
         # zustand's persist wraps state as {"state":…,"version":n} and stores it
