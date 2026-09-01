@@ -80,6 +80,9 @@ IDC_INSERT_TABS = 1038
 IDC_INSERT_SPACES = 1040
 IDOK = 1
 
+# How long the Options page must hold still before the walk believes it.
+PAGE_SETTLE = 0.5
+
 # Part of the Options item's name in every locale; see _open_options.
 OPTIONS_ACCELERATOR = "Ctrl+,"
 
@@ -270,15 +273,25 @@ def _goto_editor_page(dialog: int, pid: int) -> str:
 
 
 def _wait_for_editor_page(dialog: int, timeout: float = 0.8) -> bool:
-    """Polls for the tab-type radios rather than sleeping a fixed amount.
+    """Polls for the tab-type radios, and requires them to stay.
 
-    A sleep long enough on one machine is not long enough on another, and this
-    runs once per node, so it has to be short when the answer is no.
+    Polling alone is not enough, and the arm64 runner proved it: the walk found
+    control 1038, returned, and by the time the caller looked the control was
+    gone again — "control 1038 is not on the visible page", intermittently, from
+    a run whose only other change was in an unrelated file.
+
+    The cause is that arrow keys queue. Each Down is sent, polled for briefly,
+    and followed by the next one; on a slower machine the earlier keystrokes are
+    still being processed, so the Editor page appears and is then carried past
+    by presses that were already in flight. Requiring the control to be present
+    twice, either side of a settle, means the page has stopped moving before the
+    walk stops.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if _control(dialog, IDC_INSERT_TABS):
-            return True
+            time.sleep(PAGE_SETTLE)
+            return _control(dialog, IDC_INSERT_TABS) is not None
         time.sleep(0.15)
     return False
 

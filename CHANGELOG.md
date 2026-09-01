@@ -9,6 +9,12 @@ below.
 
 ### Changed
 
+- **The upstream-bug demo now installs WSL on arm64, like the release gate
+  does.** Without it the arm64 image's provisioning daemon spawns a terminal
+  popup every 30 seconds, which takes the foreground away from whatever is being
+  driven. The demo workflow was written without the step and WinMerge's arm64
+  job failed roughly one run in three.
+
 - **The .NET Desktop runtime is only installed when it is missing.** The runner
   images already carry `Microsoft.WindowsDesktop.App` in 8.x, 9.x and 10.x, so
   `choco install dotnet-desktopruntime` was re-installing something that was
