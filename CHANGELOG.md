@@ -1,11 +1,19 @@
 # Changelog
 
 All notable changes are recorded here. This project follows
-[Semantic Versioning](https://semver.org/); while the version is below 1.0 the
-API may still change between minor versions, and any such change is called out
-below.
+[Semantic Versioning](https://semver.org/), with one honest qualification: while
+the version is below 1.0, **any release may change the API**, patch releases
+included. Every such change is called out under `### Changed` and says what to
+do about it — that callout is the guarantee, not the version number.
 
-## [Unreleased]
+## [0.5.1] — 2026-09-01
+
+Four gaps found by using this library on somebody else's code — writing
+reproductions for open upstream bugs inside Notepad++, DB Browser for SQLite and
+Files' own repositories.
+
+**This patch release contains an API change.** See the note above about what
+below-1.0 means here; the change is the first entry.
 
 ### Changed
 
