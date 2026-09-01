@@ -24,6 +24,15 @@
 #     direction works on both builds, so a test that only checked that the
 #     setting round-trips would pass on the broken one.
 #
+#
+#   DB Browser for SQLite #3735 — copying one cell from Browse Data put an extra
+#     end-of-line on the clipboard, so pasting it into the app's own "Find in
+#     table" box matched nothing. Fixed by 20f481a1, which `git compare` places
+#     behind v3.13.1. What makes it worth demonstrating: the post-condition is
+#     outside the application entirely — the clipboard — so nothing about the
+#     check depends on Qt's accessibility surface, which is the least dependable
+#     of the four applications this project drives.
+#
 name: Upstream bug demo
 
 on:
@@ -37,7 +46,7 @@ on:
       case:
         description: Which upstream bug to reproduce
         type: choice
-        options: [all, notepad++, winmerge]
+        options: [all, notepad++, winmerge, sqlitebrowser]
         default: all
 
 permissions:
@@ -66,21 +75,30 @@ jobs:
             arm64) arches='["arm64"]' ;;
             *)     arches='["x64","arm64"]' ;;
           esac
-          case "$CASE" in
-            all) cases='["notepad++","winmerge"]' ;;
-            *)   cases="[\"$CASE\"]" ;;
-          esac
-          # The runner label is derived rather than carried, so a new arch is one
-          # entry in the list above instead of one entry per case.
-          include=$(jq -cn --argjson a "$arches" --argjson c "$cases" '
-            [ $c[] as $case | $a[] as $arch |
-              { case: $case,
-                arch: $arch,
-                os: (if $arch == "arm64" then "windows-11-arm" else "windows-latest" end),
-                issue: (if $case == "winmerge" then "3015" else "16326" end),
-                tests: (if $case == "winmerge"
-                        then "tests/test_regression_winmerge_3015.py"
-                        else "tests/test_regression_notepadpp_16326.py" end) } ]')
+          # Each case declares the architectures it can actually run on, rather
+          # than every case being crossed with every arch. DB Browser 3.13.0 has
+          # no arm64 package at all, and running the x64 build under emulation
+          # would report an arm64 result that was never measured on arm64.
+          include=$(jq -cn --argjson want "$arches" --arg case "$CASE" '
+            [ { case: "notepad++", issue: "16326",
+                tests: "tests/test_regression_notepadpp_16326.py",
+                arches: ["x64", "arm64"] },
+              { case: "winmerge", issue: "3015",
+                tests: "tests/test_regression_winmerge_3015.py",
+                arches: ["x64", "arm64"] },
+              { case: "sqlitebrowser", issue: "3735",
+                tests: "tests/test_regression_sqlitebrowser_3735.py",
+                arches: ["x64"] }
+            ]
+            | map(select($case == "all" or .case == $case))
+            | [ .[] as $c
+                | ($c.arches | map(select(. as $a | $want | index($a))))[] as $arch
+                | { case: $c.case, issue: $c.issue, tests: $c.tests, arch: $arch,
+                    os: (if $arch == "arm64" then "windows-11-arm" else "windows-latest" end) } ]')
+          if [ "$(echo "$include" | jq 'length')" -eq 0 ]; then
+            echo "::error::case=$CASE and arch=$ARCH select no jobs"
+            exit 1
+          fi
           echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
           echo "$include" | jq .
 
@@ -233,6 +251,53 @@ jobs:
             $got = (Get-Item $exe).VersionInfo.FileVersion
             if (-not $got.StartsWith($v)) { throw "$dir holds $got, expected $v" }
             Write-Host ("{0}: {1}" -f $v, $got)
+          }
+
+      # Both portable builds write to HKCU\Software\sqlitebrowser, so unlike
+      # Notepad++'s doLocalConf.xml this is not per-directory — the test writes
+      # the settings it needs before each launch rather than once here.
+      - name: Fetch DB Browser 3.13.0 (bug) and 3.13.1 (fixed) from the fixture mirror
+        if: matrix.case == 'sqlitebrowser'
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\db4s'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+          # Zips are unsigned, so these hashes are the whole check. Both were
+          # produced twice, from independent downloads.
+          $builds = @(
+            @{ Version = '3.13.0'; Tag = 'sqlitebrowser-3.13.0'
+               Sha = '69465171D0EACA2A3D68EC5A5048F62EE192D136412A6F6747538D4535C18BBE' },
+            @{ Version = '3.13.1'; Tag = 'sqlitebrowser-3.13.1-portable'
+               Sha = '22375E275EC42D96DE1D3B8E9EA4ED86D2A3505C4D0FFCBD1AF67AA4003E5E4D' }
+          )
+
+          foreach ($b in $builds) {
+            $asset = "DB.Browser.for.SQLite-v$($b.Version)-win64.zip"
+            gh release download $b.Tag `
+              --repo mangokingTW/wintegrate-test-fixtures `
+              --pattern $asset --dir $root
+            if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $asset ($LASTEXITCODE)" }
+
+            $zip = Join-Path $root $asset
+            $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+            if ($hash -ne $b.Sha) { throw "SHA-256 mismatch for ${asset}: got $hash, expected $($b.Sha)" }
+            Write-Host "sha256 ok: $asset"
+
+            $dir = Join-Path $root $b.Version
+            Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+            $exe = Join-Path $dir 'DB Browser for SQLite.exe'
+            if (-not (Test-Path $exe)) { throw "no DB Browser for SQLite.exe in $dir" }
+            # Both sides must be the same Qt, or the comparison measures Qt
+            # rather than the fix.
+            if (-not (Test-Path (Join-Path $dir 'Qt5Core.dll'))) {
+              throw "$dir is not the Qt 5 build"
+            }
+            Write-Host ("{0}: {1} (Qt5)" -f $b.Version, (Get-Item $exe).VersionInfo.FileVersion)
           }
 
       - name: Reproduce

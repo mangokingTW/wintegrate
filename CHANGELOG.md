@@ -37,6 +37,12 @@ below.
   UIA `Invoke()` succeeds while opening nothing), and the Options page is found
   by which page owns control `1038` rather than by its localised name.
 
+- **The DB Browser #3735 reproduction is wired into the demo workflow.** It runs
+  on x64 only: 3.13.0 has no arm64 package, and running the x64 build under
+  emulation would report an arm64 result that was never measured on arm64. The
+  workflow now takes a `case` input, and a selection that matches no job fails
+  rather than passing as an empty matrix.
+
 - **A blocking dialog now says what it is asking.** When window discovery times
   out, any `#32770` / message-box class among the visible windows has its child
   controls' text printed under it, so the failure reads
