@@ -413,3 +413,53 @@ virtual desktop, which `move_to_current_desktop()` can fix, while `APP` means th
 application put it away and only the application will bring it back. And `None`
 is not `False` — "could not ask" and "not cloaked" are different answers, and
 collapsing them is how a window you cannot see gets treated as on screen.
+
+## `SetCursorPos` moves the pointer without telling anyone
+
+`SetCursorPos` is not an input event. The pointer relocates, but nothing that
+watches the mouse is notified — a `WH_MOUSE_LL` hook, an overlay drawing where
+clicks land, an application that updates hover state on `WM_MOUSEMOVE`. They all
+carry on believing the cursor is wherever they last saw it.
+
+The click that follows still lands in the right place, which is what makes this
+hard to notice: nothing fails. It surfaced only when a keystroke visualiser was
+pointed at a run and drew every click marker in the top-left corner, where the
+cursor had been when *it* started.
+
+So `send_mouse_click()` injects an absolute move first. Two details:
+
+- **`MOUSEEVENTF_VIRTUALDESK`, not just `MOUSEEVENTF_ABSOLUTE`.** Absolute
+  coordinates without it map 0..65535 onto the primary monitor, so a click aimed
+  at a second screen lands on the first one.
+- **`SetCursorPos` still runs, last.** The move event's coordinates are quantized
+  to 1/65535 of the virtual desktop; this way the final position is the exact
+  pixel that was asked for.
+
+Verify a move like this through a real hook, not by reading the cursor position
+afterwards — `SetCursorPos` on its own satisfies that check, which is precisely
+the bug.
+
+## A scan code means whatever the *input state* says it means
+
+Related to the layout pitfall above, and the distinction is worth separating:
+switching the **keyboard layout** and switching the **IME mode** are different
+actions, and only one of them is what a user does.
+
+With a Bopomofo layout active, `send_physical_keys("hey")` puts nothing in the
+field — `h` is a phonetic key there. That is not a fault in the injection; it is
+what a real keyboard does. The fix is not to swap the layout to en-US, which no
+user would do to type a word; it is to put the IME into alphanumeric mode, the
+way pressing Shift does:
+
+```python
+with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
+    send_physical_keys("hey")        # 'hey' lands; the layout never changes
+```
+
+Measured on a zh-TW machine: without the block the field stays empty, with it the
+field reads `hey`, and `get_keyboard_layout()` returns `0x04040404` throughout.
+
+And the mode has to be **established, not detected**: `get_ime_status()` reports
+`has_context: False` for that window — no IMM32 context answers — while
+`WM_IME_CONTROL` still takes effect. So there is nothing to branch on; set it
+unconditionally.

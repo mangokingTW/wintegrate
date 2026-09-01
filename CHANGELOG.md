@@ -6,6 +6,32 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.3] — 2026-09-01
+
+### Changed
+
+- **`send_mouse_click()` now injects a mouse-move event as well**, not just
+  `SetCursorPos`. `move_event=False` restores the older behaviour.
+
+  `SetCursorPos` relocates the pointer without producing any input event, so
+  nothing watching the mouse learns it moved: a low-level hook, an overlay drawing
+  where clicks land, an application that only updates hover state on
+  `WM_MOUSEMOVE`. They see a click at whatever position they last knew about.
+
+  Found by pointing a keystroke visualiser at a wintegrate run: every click drew
+  its marker at the top-left corner, where the cursor had been when the tool
+  started, regardless of where the click actually went. The click itself was
+  landing correctly the whole time, which is why nothing had failed.
+
+  The injected move is `MOUSEEVENTF_MOVE | ABSOLUTE | VIRTUALDESK`. `VIRTUALDESK`
+  matters: `ABSOLUTE` alone maps 0..65535 onto the *primary* monitor, so on a
+  multi-monitor runner a click meant for a second screen would land on the first.
+  `SetCursorPos` still runs, and last, because the move event's coordinates are
+  quantized to 1/65535 of the virtual desktop — so the pointer ends up at exactly
+  the requested pixel rather than the rounded one.
+
+  This is also closer to a real click, which is always preceded by movement.
+
 ## [0.5.2] — 2026-09-01
 
 Two gaps found the same way as the last release's four: by writing a reproduction

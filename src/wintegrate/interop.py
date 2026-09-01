@@ -183,6 +183,9 @@ MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_ABSOLUTE = 0x8000
+# Maps absolute coordinates onto the whole virtual desktop instead of the primary
+# monitor, which is what ABSOLUTE alone does.
+MOUSEEVENTF_VIRTUALDESK = 0x4000
 
 # Virtual Key Codes
 VK_RETURN = 0x0D
@@ -1125,8 +1128,53 @@ def load_keyboard_layout(layout_id: str, flags: int = 1) -> int:
     return int(user32.LoadKeyboardLayoutW(layout_id, flags) or 0)
 
 
-def send_mouse_click(x: int, y: int):
-    """Positions cursor and performs a standard left mouse click."""
+def send_mouse_click(x: int, y: int, move_event: bool = True):
+    """
+    Positions the cursor and performs a standard left mouse click.
+
+    `SetCursorPos` moves the pointer without producing an input event, so anything
+    watching the mouse — a low-level hook, an overlay drawing where clicks land,
+    an application tracking hover — never learns the pointer moved. It sees a
+    click at whatever position it last knew about.
+
+    So an absolute `MOUSEEVENTF_MOVE` is injected as well, which is also closer to
+    what a real click looks like: a user's click is always preceded by movement,
+    and some applications only update hover state on `WM_MOUSEMOVE` before acting
+    on the button. `move_event=False` returns to the older behaviour for a caller
+    that specifically does not want the extra event.
+
+    `SetCursorPos` still runs, and last, because the normalized coordinates the
+    move event carries are quantized to 1/65535 of the virtual desktop — close
+    enough to be invisible, but this way the final pointer position is exactly
+    the one that was asked for rather than the rounded one.
+    """
+    if move_event:
+        # Normalize to the virtual desktop rather than the primary monitor:
+        # MOUSEEVENTF_ABSOLUTE alone maps 0..65535 onto the primary display, so
+        # on a multi-monitor runner a click meant for a secondary monitor lands
+        # on the primary one instead.
+        vx = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        vy = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        vw = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN) or 1
+        vh = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN) or 1
+        nx = int(round((x - vx) * 65535 / vw))
+        ny = int(round((y - vy) * 65535 / vh))
+        inp_move = INPUT(
+            type=INPUT_MOUSE,
+            u=_INPUT_UNION(
+                mi=MOUSEINPUT(
+                    dx=max(0, min(65535, nx)),
+                    dy=max(0, min(65535, ny)),
+                    mouseData=0,
+                    dwFlags=MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                    time=0,
+                    dwExtraInfo=0,
+                )
+            ),
+        )
+        move_arr = (INPUT * 1)(inp_move)
+        user32.SendInput(1, move_arr, ctypes.sizeof(INPUT))
+
     user32.SetCursorPos(x, y)
     inp_down = INPUT(
         type=INPUT_MOUSE,
