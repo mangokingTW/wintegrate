@@ -9,6 +9,20 @@ below.
 
 ### Changed
 
+- **The upstream-bug demo now installs WSL on arm64, like the release gate
+  does.** Without it the arm64 image's provisioning daemon spawns a terminal
+  popup every 30 seconds, which takes the foreground away from whatever is being
+  driven. The demo workflow was written without the step and WinMerge's arm64
+  job failed roughly one run in three.
+
+- **The .NET Desktop runtime is only installed when it is missing.** The runner
+  images already carry `Microsoft.WindowsDesktop.App` in 8.x, 9.x and 10.x, so
+  `choco install dotnet-desktopruntime` was re-installing something that was
+  already there — 66 seconds of a 163-second job, on three jobs. The install is
+  kept as a fallback rather than deleted, because when it *is* needed the
+  symptom is a `#32770` message box that window discovery mistakes for the
+  application.
+
 - **Every target application is installed from a verified mirror.** Notepad++,
   WinMerge and DB Browser for SQLite now come from the same fixture release that
   Files already used, instead of from three separate publisher hosts on every
@@ -25,6 +39,34 @@ below.
   served. `docs/test-fixtures.md` records what is mirrored and why.
 
 ### Added
+
+- **A second upstream-bug reproduction: WinMerge #3015.** Choosing *Insert tabs*
+  in Options and pressing OK stores *Insert spaces* on 2.16.52, and the setting
+  on 2.16.52.2. `PropEditor.cpp` had a `std::clamp(v, 1, MAX_TABSIZE)` validator
+  on the wrong option, so tab type 0 was clamped up to 1. The failure is
+  asymmetric — the spaces direction works on both builds — so the test asserts
+  that direction too, as the control that makes the other assertion mean
+  something. Driving it needed two things worth writing down: WinMerge 2.16 has
+  no `HMENU` (its MFC Feature Pack menu bar is a toolbar, and the menu item's
+  UIA `Invoke()` succeeds while opening nothing), and the Options page is found
+  by which page owns control `1038` rather than by its localised name.
+
+- **The DB Browser #3735 reproduction is wired into the demo workflow**, on both
+  architectures. 3.13.0 has no arm64 package, so both sides of the pair are the
+  win64 (Qt 5) build and the arm64 job runs it under emulation — which is the
+  only coverage here of driving an emulated process, and is still measured on
+  arm64 hardware. The workflow now takes a `case` input, and a selection that
+  matches no job fails rather than passing as an empty matrix.
+
+- **A third upstream-bug reproduction: Files #18815.** Alt+Enter put
+  `DefWindowProc` into its menu-tracking path, which sends `WM_MENUCHAR` looking
+  for a mnemonic; nothing matched, the default answer is `MNC_IGNORE`, and that
+  plays the Asterisk sound. 4.2.7.0 answers `0`, 4.2.9.0 answers `MNC_CLOSE`.
+  **The entire symptom is a sound** — the two builds are pixel-identical, so no
+  screenshot and no screen recording can show it, while one message's return
+  value settles it with no UI interaction to time. `WM_MENUCHAR` is `0x0120`,
+  below `WM_USER`, so USER32 dispatches it into the other process's window
+  subclass; a custom message would have gone across as two integers.
 
 - **A blocking dialog now says what it is asking.** When window discovery times
   out, any `#32770` / message-box class among the visible windows has its child

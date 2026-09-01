@@ -1,20 +1,46 @@
-# Reproduces a fixed upstream bug against the build that had it.
+# Reproduces fixed upstream bugs against the builds that had them.
 #
 # Not part of CI. This asks a different question from the release gate: not
 # "does wintegrate still work" but "can wintegrate catch a real bug in software
-# that has never heard of it". It downloads two old builds to answer that, so it
-# runs on request rather than on every push.
+# that has never heard of it". It fetches old builds to answer that, so it runs
+# on request rather than on every push.
 #
-# The case: Notepad++ #16326. Ctrl+Shift+D inserted an invisible EOT (0x04) at
-# the caret. Scintilla maps Ctrl+Shift+<letter> to the matching C0 control
-# character, and the setting that suppresses it shipped off in the portable
-# package because config.xml was missing npcNoInputC0 — a missing boolean
-# defaults to false. Commit 38ee65fd added the attribute; v8.7.9 is behind it,
-# v8.8 contains it.
+# The cases:
 #
-# What makes it worth demonstrating: the failure is invisible. The character does
-# not render, so a human following the reproduction steps sees nothing at all.
-# SCI_GETLENGTH answers in one call.
+#   Notepad++ #16326 — Ctrl+Shift+D inserted an invisible EOT (0x04) at the
+#     caret. Scintilla maps Ctrl+Shift+<letter> to the matching C0 control
+#     character, and the setting that suppresses it shipped off in the portable
+#     package because config.xml was missing npcNoInputC0 — a missing boolean
+#     defaults to false. Commit 38ee65fd added the attribute; v8.7.9 is behind
+#     it, v8.8 contains it. What makes it worth demonstrating: the failure is
+#     invisible. The character does not render, so a human following the
+#     reproduction steps sees nothing at all. SCI_GETLENGTH answers in one call.
+#
+#   WinMerge #3015 — PropEditor.cpp attached a std::clamp(v, 1, MAX_TABSIZE)
+#     validator to OPT_TAB_TYPE when it was meant for OPT_TAB_SIZE, so choosing
+#     "Insert tabs" (type 0) was clamped up to 1, which is "Insert spaces".
+#     Commit edc1597 fixed it; 2.16.52 is behind it, 2.16.52.2 contains it.
+#     What makes it worth demonstrating: the failure is asymmetric. The spaces
+#     direction works on both builds, so a test that only checked that the
+#     setting round-trips would pass on the broken one.
+#
+#
+#   DB Browser for SQLite #3735 — copying one cell from Browse Data put an extra
+#     end-of-line on the clipboard, so pasting it into the app's own "Find in
+#     table" box matched nothing. Fixed by 20f481a1, which `git compare` places
+#     behind v3.13.1. What makes it worth demonstrating: the post-condition is
+#     outside the application entirely — the clipboard — so nothing about the
+#     check depends on Qt's accessibility surface, which is the least dependable
+#     of the four applications this project drives.
+#
+#
+#   Files #18815 — Alt+Enter put DefWindowProc into its menu-tracking path, which
+#     sends WM_MENUCHAR looking for a mnemonic; nothing matched, the default
+#     answer is MNC_IGNORE, and that plays the Asterisk sound. PR #18815 answers
+#     MNC_CLOSE from Files' own subclass. What makes it worth demonstrating: the
+#     entire symptom is a *sound*. The two builds are pixel-identical, so even a
+#     screen recording cannot show it — but the return value of one message can.
+#
 name: Upstream bug demo
 
 on:
@@ -25,6 +51,11 @@ on:
         type: choice
         options: [both, x64, arm64]
         default: both
+      case:
+        description: Which upstream bug to reproduce
+        type: choice
+        options: [all, notepad++, winmerge, sqlitebrowser, files]
+        default: all
 
 permissions:
   contents: read
@@ -44,16 +75,50 @@ jobs:
         shell: bash
         env:
           ARCH: ${{ inputs.arch }}
+          CASE: ${{ inputs.case }}
         run: |
-          x64='{"arch":"x64","os":"windows-latest"}'
-          arm='{"arch":"arm64","os":"windows-11-arm"}'
+          set -euo pipefail
           case "$ARCH" in
-            x64)   include="[$x64]" ;;
-            arm64) include="[$arm]" ;;
-            *)     include="[$x64,$arm]" ;;
+            x64)   arches='["x64"]' ;;
+            arm64) arches='["arm64"]' ;;
+            *)     arches='["x64","arm64"]' ;;
           esac
+          # Each case declares the architectures it can actually run on, rather
+          # than every case being crossed with every arch.
+          #
+          # DB Browser runs its x64 build on both, because 3.13.0 has no arm64
+          # package and the two sides have to be the same Qt or the comparison
+          # measures Qt rather than the fix. On arm64 that means x64 emulation —
+          # which is worth having rather than worth avoiding: it is the only
+          # place in this repository that covers driving an emulated process,
+          # and the arm64 result is still measured on arm64 hardware. Verified
+          # on a Windows 11 ARM64 VM: both builds are x64 PE / Qt 5 and the
+          # reproduction holds.
+          include=$(jq -cn --argjson want "$arches" --arg case "$CASE" '
+            [ { case: "notepad++", issue: "16326",
+                tests: "tests/test_regression_notepadpp_16326.py",
+                arches: ["x64", "arm64"] },
+              { case: "winmerge", issue: "3015",
+                tests: "tests/test_regression_winmerge_3015.py",
+                arches: ["x64", "arm64"] },
+              { case: "sqlitebrowser", issue: "3735",
+                tests: "tests/test_regression_sqlitebrowser_3735.py",
+                arches: ["x64", "arm64"] },
+              { case: "files", issue: "18815",
+                tests: "tests/test_regression_files_18815.py",
+                arches: ["x64", "arm64"] }
+            ]
+            | map(select($case == "all" or .case == $case))
+            | [ .[] as $c
+                | ($c.arches | map(select(. as $a | $want | index($a))))[] as $arch
+                | { case: $c.case, issue: $c.issue, tests: $c.tests, arch: $arch,
+                    os: (if $arch == "arm64" then "windows-11-arm" else "windows-latest" end) } ]')
+          if [ "$(echo "$include" | jq 'length')" -eq 0 ]; then
+            echo "::error::case=$CASE and arch=$ARCH select no jobs"
+            exit 1
+          fi
           echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
-          echo "$include"
+          echo "$include" | jq .
 
   reproduce:
     needs: plan
@@ -62,13 +127,59 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     # Quoted: an unquoted '#' starts a YAML comment, which silently truncated
     # this to "notepad++" and threw away the matrix expression with it.
-    name: "notepad++ #16326 (${{ matrix.arch }})"
+    name: "${{ matrix.case }} #${{ matrix.issue }} (${{ matrix.arch }})"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           persist-credentials: false
 
+      - name: Install WSL on ARM Runner (Stop 30s probe popups)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          # 1. Update WSL stub so the provision daemon stops spawning terminal popups every 30s
+          $p = Start-Process -FilePath wsl.exe -ArgumentList '--update', '--confirm' -NoNewWindow -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); Write-Host 'wsl --update timed out' }
+
+          # 2. Fallback to arm64 MSI if needed
+          function Get-WslStatus {
+            $prev = [Console]::OutputEncoding
+            try {
+              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+              return ((& wsl.exe --status 2>&1 | Out-String) -replace "\0", '')
+            } finally { [Console]::OutputEncoding = $prev }
+          }
+          $status = Get-WslStatus
+          Write-Host "WSL status: $status"
+          if ($status -match 'not installed') {
+            try {
+              $rel = Invoke-RestMethod 'https://api.github.com/repos/microsoft/WSL/releases/latest'
+              $asset = $rel.assets | Where-Object { $_.name -match 'arm64\.msi$' } | Select-Object -First 1
+              if ($asset) {
+                Write-Host "Downloading $($asset.name)..."
+                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile wsl-arm64.msi
+                Start-Process msiexec -ArgumentList '/i', 'wsl-arm64.msi', '/qn', '/norestart' -Wait
+              }
+            } catch {
+              Write-Host "WSL MSI fallback skipped: $_"
+            }
+          }
+
+          # 3. Disable Microsoft Edge First Run Experience via Registry
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "PreventFirstRunPage" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          New-Item -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+
+          # 4. Sweep existing background popups
+          Get-Process -Name "wsl","wslhost","WindowsTerminal","msedge","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE = 0
+
+      # Python 3.12+ ships pre-installed in the windows-11-arm image's tool cache,
+      # but 3.11 does not: setup-python downloads and installs it on every run
+      # (~90s). Cache the installed toolchain so later runs restore it instead.
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
@@ -113,6 +224,7 @@ jobs:
       # no Authenticode signature, so the sha256 is the whole check; both hashes
       # were produced twice from independent downloads and agreed.
       - name: Fetch Notepad++ 8.7.9 (bug) and 8.8 (fixed) from the fixture mirror
+        if: matrix.case == 'notepad++'
         timeout-minutes: 10
         shell: pwsh
         env:
@@ -157,19 +269,200 @@ jobs:
             Write-Host ("{0}: {1}  npcNoInputC0={2}" -f $v, (Get-Item $exe).VersionInfo.FileVersion, $has)
           }
 
+      # Unpacked rather than installed: two versions of an installed WinMerge
+      # cannot coexist, and both builds share one registry key either way, so
+      # the test clears it per launch instead of relying on separate homes.
+      - name: Fetch WinMerge 2.16.52 (bug) and 2.16.52.2 (fixed) from the fixture mirror
+        if: matrix.case == 'winmerge'
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WM_ARCH: ${{ matrix.arch == 'arm64' && 'ARM64' || 'x64' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\wm'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+          # Zips carry no Authenticode signature, so these hashes are the whole
+          # check. Each was produced twice, from independent downloads.
+          $sha = @{
+            '2.16.52'   = @{ x64 = 'B4C815072923F01CACDA189A967F377EC2DDE38EE27880B472D96B3206CE8C2C'
+                             ARM64 = '3123C519A84D5469D5C7D66FCA1DAD0F8A96AF8FED2282288D52E889D7C6811A' }
+            '2.16.52.2' = @{ x64 = '531BCE09F2F01626C2BA2B65EB4423676D5329BFACA45FA75DEDEA5D3DDCD341'
+                             ARM64 = 'AE3C9FDE2FCD0C16F33EFD680607B6A250F972C83E14B158B71EC4836C6AB579' }
+          }
+
+          foreach ($v in @('2.16.52', '2.16.52.2')) {
+            $asset = "winmerge-$v-$env:WM_ARCH-exe.zip"
+            gh release download "winmerge-$v" `
+              --repo mangokingTW/wintegrate-test-fixtures `
+              --pattern $asset --dir $root
+            if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $asset ($LASTEXITCODE)" }
+
+            $zip = Join-Path $root $asset
+            $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+            $want = $sha[$v][$env:WM_ARCH]
+            if ($hash -ne $want) { throw "SHA-256 mismatch for ${asset}: got $hash, expected $want" }
+            Write-Host "sha256 ok: $asset"
+
+            $dir = Join-Path $root $v
+            Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+            $exe = Join-Path $dir 'WinMerge\WinMergeU.exe'
+            if (-not (Test-Path $exe)) { throw "no WinMerge\WinMergeU.exe in $dir" }
+            # The comparison is between two versions, so the versions are
+            # checked here rather than assumed from the directory name.
+            $got = (Get-Item $exe).VersionInfo.FileVersion
+            if (-not $got.StartsWith($v)) { throw "$dir holds $got, expected $v" }
+            Write-Host ("{0}: {1}" -f $v, $got)
+          }
+
+      # Both portable builds write to HKCU\Software\sqlitebrowser, so unlike
+      # Notepad++'s doLocalConf.xml this is not per-directory — the test writes
+      # the settings it needs before each launch rather than once here.
+      - name: Fetch DB Browser 3.13.0 (bug) and 3.13.1 (fixed) from the fixture mirror
+        if: matrix.case == 'sqlitebrowser'
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\db4s'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+          # Zips are unsigned, so these hashes are the whole check. Both were
+          # produced twice, from independent downloads.
+          $builds = @(
+            @{ Version = '3.13.0'; Tag = 'sqlitebrowser-3.13.0'
+               Sha = '69465171D0EACA2A3D68EC5A5048F62EE192D136412A6F6747538D4535C18BBE' },
+            @{ Version = '3.13.1'; Tag = 'sqlitebrowser-3.13.1-portable'
+               Sha = '22375E275EC42D96DE1D3B8E9EA4ED86D2A3505C4D0FFCBD1AF67AA4003E5E4D' }
+          )
+
+          foreach ($b in $builds) {
+            $asset = "DB.Browser.for.SQLite-v$($b.Version)-win64.zip"
+            gh release download $b.Tag `
+              --repo mangokingTW/wintegrate-test-fixtures `
+              --pattern $asset --dir $root
+            if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $asset ($LASTEXITCODE)" }
+
+            $zip = Join-Path $root $asset
+            $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+            if ($hash -ne $b.Sha) { throw "SHA-256 mismatch for ${asset}: got $hash, expected $($b.Sha)" }
+            Write-Host "sha256 ok: $asset"
+
+            $dir = Join-Path $root $b.Version
+            Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+            $exe = Join-Path $dir 'DB Browser for SQLite.exe'
+            if (-not (Test-Path $exe)) { throw "no DB Browser for SQLite.exe in $dir" }
+            # Both sides must be the same Qt, or the comparison measures Qt
+            # rather than the fix.
+            if (-not (Test-Path (Join-Path $dir 'Qt5Core.dll'))) {
+              throw "$dir is not the Qt 5 build"
+            }
+            Write-Host ("{0}: {1} (Qt5)" -f $b.Version, (Get-Item $exe).VersionInfo.FileVersion)
+          }
+
+      # Files is an MSIX package, so the two builds cannot be installed at once —
+      # unlike the other three cases, which unpack side by side. Each build is
+      # installed in turn and the assertions that belong to it are selected with
+      # `-k`. Installing an older package over a newer one is refused, so the
+      # newer one is removed first.
+      #
+      # `-k` is what makes this fail-closed: the per-build gate in the test calls
+      # pytest.fail rather than pytest.skip when WINTEGRATE_REQUIRE_UPSTREAM_BUILDS
+      # is set, so selecting a test against the wrong build is a failure instead
+      # of a green run that asserted nothing.
+      # Quoted for the same reason the job name is: an unquoted '#' starts a YAML
+      # comment, and this read as "Reproduce Files" until it was.
+      - name: "Reproduce Files #18815 against both builds"
+        if: matrix.case == 'files'
+        timeout-minutes: 40
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINTEGRATE_REQUIRE_UPSTREAM_BUILDS: "1"
+          WINTEGRATE_RECORD_SUITE: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'files-builds'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+          # Files 4.x is framework-dependent; without a Windows Desktop runtime it
+          # starts and shows a #32770 message box owned by Files.exe instead of a
+          # window, and discovery by process name accepts that dialog as the app.
+          #
+          # The runner images already carry Microsoft.WindowsDesktop.App — 8.x,
+          # 9.x and 10.x were all present before this step ever ran — so the
+          # install is normally redundant, and it cost 66s of a 163s job. It is
+          # kept as a fallback rather than deleted: if an image ever ships
+          # without it, the symptom is a message box that discovery mistakes for
+          # the application, which is a poor thing to debug from a log.
+          $have = & "$env:ProgramFiles\dotnet\dotnet.exe" --list-runtimes |
+            Select-String -Pattern 'Microsoft\.WindowsDesktop\.App 10\.'
+          if ($have) {
+            Write-Host "Windows Desktop runtime already present, skipping the install:"
+            $have | ForEach-Object { Write-Host "  $_" }
+          } else {
+            Write-Host "no Microsoft.WindowsDesktop.App 10.x on this image; installing"
+            choco install dotnet-desktopruntime -y --no-progress
+            $global:LASTEXITCODE = 0
+            & "$env:ProgramFiles\dotnet\dotnet.exe" --list-runtimes
+          }
+
+          $builds = @(
+            @{ Version = '4.2.7.0'; Tag = 'files-4.2.7.0'
+               Sha = 'DB74F9ABC2B84FDC7476B72358A0190AF9AC48AF924B2420B5898005BF0E4FED'
+               Select = 'unanswered or other_characters' },
+            @{ Version = '4.2.9.0'; Tag = 'files-4.2.9.0'
+               Sha = '87BD06F897094FCE4D14EC0D87F258C711477C6F1C5271B055C794B3AAC7FF41'
+               Select = 'answered_on_the_fixed or other_characters' }
+          )
+
+          foreach ($b in $builds) {
+            $asset = "Files.Package_$($b.Version)_x64_arm64.msixbundle"
+            $pkg = Join-Path $dir $asset
+            if (-not (Test-Path $pkg)) {
+              gh release download $b.Tag `
+                --repo mangokingTW/wintegrate-test-fixtures `
+                --pattern $asset --dir $dir
+              if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $asset ($LASTEXITCODE)" }
+            }
+
+            $hash = (Get-FileHash $pkg -Algorithm SHA256).Hash
+            if ($hash -ne $b.Sha) { throw "SHA-256 mismatch for ${asset}: got $hash, expected $($b.Sha)" }
+            $sig = Get-AuthenticodeSignature $pkg
+            if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status), not Valid" }
+            Write-Host "sha256 and signature ok: $asset"
+
+            Get-AppxPackage -Name 'Files' | ForEach-Object {
+              Write-Host "removing $($_.Version)"
+              Remove-AppxPackage -Package $_.PackageFullName
+            }
+            Add-AppxPackage -Path $pkg -ForceApplicationShutdown -ErrorAction Stop
+            $installed = (Get-AppxPackage -Name 'Files').Version
+            if ($installed -ne $b.Version) { throw "installed $installed, wanted $($b.Version)" }
+            Write-Host "installed: $installed"
+
+            pytest tests/test_regression_files_18815.py -v -s -k "$($b.Select)"
+            if ($LASTEXITCODE -ne 0) { throw "pytest failed on Files $($b.Version)" }
+          }
+
       - name: Reproduce
+        if: matrix.case != 'files'
         env:
           # A fetch step that silently produced nothing must not leave a green run.
           WINTEGRATE_REQUIRE_UPSTREAM_BUILDS: "1"
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/test_regression_notepadpp_16326.py -v -s
+          pytest ${{ matrix.tests }} -v -s
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
-          name: upstream-bug-demo-${{ matrix.arch }}
+          name: upstream-bug-demo-${{ matrix.case }}-${{ matrix.arch }}
           path: |
             recording-artifacts/
             artifacts/

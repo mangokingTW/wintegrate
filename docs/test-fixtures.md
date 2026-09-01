@@ -78,12 +78,15 @@ fixed it. These run on request, not on every push.
 | Notepad++ [#16326][npp] | `notepadpp-8.7.9` | `notepadpp-8.8` | Ctrl+Shift+D inserts an invisible `0x04` |
 | DB Browser [#3735][db4s] | `sqlitebrowser-3.13.0` | `sqlitebrowser-3.13.1-portable` | copying one cell appends a trailing newline |
 | WinMerge [#3015][wm] | `winmerge-2.16.52` | `winmerge-2.16.52.2` | "Insert tabs" resets on leaving Options |
-| Files [#18820][files] | `files-4.2.7.0` | `files-4.2.9.0` | rename-flyout accelerators do not fire |
+| Files [#18815][files] | `files-4.2.7.0` | `files-4.2.9.0` | Alt+Enter plays the Asterisk sound |
 
 [npp]: https://github.com/notepad-plus-plus/notepad-plus-plus/issues/16326
 [db4s]: https://github.com/sqlitebrowser/sqlitebrowser/issues/3735
 [wm]: https://github.com/WinMerge/winmerge/issues/3015
-[files]: https://github.com/files-community/Files/issues/18820
+[files]: https://github.com/files-community/Files/issues/18815
+
+Files is the exception to that: it is an MSIX package, so the two builds cannot
+be installed at once and the workflow installs each in turn.
 
 Portable packages are used for the demos wherever they exist, for two reasons:
 two versions of an installed application cannot be present at once, and for
@@ -101,6 +104,12 @@ Where the two versions must be the same build flavour for the comparison to mean
 anything, they are. DB Browser 3.13.0 has no arm64 package at all, so both sides
 of that pair are the win64 (Qt 5) zip — comparing a Qt 5 build against a Qt 6
 build would be measuring the Qt version, not the fix.
+
+That pair still runs on the arm64 runner, under x64 emulation, and that is worth
+having rather than worth avoiding: it is the only place here that covers driving
+an emulated process, and the result is still measured on arm64 hardware. What it
+does *not* cover is DB Browser's own arm64 build — the release gate does that,
+where the arm64 package exists and carries Qt 6.
 
 ## Adding to the mirror
 
