@@ -105,6 +105,12 @@ anything, they are. DB Browser 3.13.0 has no arm64 package at all, so both sides
 of that pair are the win64 (Qt 5) zip — comparing a Qt 5 build against a Qt 6
 build would be measuring the Qt version, not the fix.
 
+That pair still runs on the arm64 runner, under x64 emulation, and that is worth
+having rather than worth avoiding: it is the only place here that covers driving
+an emulated process, and the result is still measured on arm64 hardware. What it
+does *not* cover is DB Browser's own arm64 build — the release gate does that,
+where the arm64 package exists and carries Qt 6.
+
 ## Adding to the mirror
 
 1. Download the asset from upstream and record its SHA-256.

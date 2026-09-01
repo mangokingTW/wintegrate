@@ -84,9 +84,16 @@ jobs:
             *)     arches='["x64","arm64"]' ;;
           esac
           # Each case declares the architectures it can actually run on, rather
-          # than every case being crossed with every arch. DB Browser 3.13.0 has
-          # no arm64 package at all, and running the x64 build under emulation
-          # would report an arm64 result that was never measured on arm64.
+          # than every case being crossed with every arch.
+          #
+          # DB Browser runs its x64 build on both, because 3.13.0 has no arm64
+          # package and the two sides have to be the same Qt or the comparison
+          # measures Qt rather than the fix. On arm64 that means x64 emulation —
+          # which is worth having rather than worth avoiding: it is the only
+          # place in this repository that covers driving an emulated process,
+          # and the arm64 result is still measured on arm64 hardware. Verified
+          # on a Windows 11 ARM64 VM: both builds are x64 PE / Qt 5 and the
+          # reproduction holds.
           include=$(jq -cn --argjson want "$arches" --arg case "$CASE" '
             [ { case: "notepad++", issue: "16326",
                 tests: "tests/test_regression_notepadpp_16326.py",
@@ -96,7 +103,7 @@ jobs:
                 arches: ["x64", "arm64"] },
               { case: "sqlitebrowser", issue: "3735",
                 tests: "tests/test_regression_sqlitebrowser_3735.py",
-                arches: ["x64"] },
+                arches: ["x64", "arm64"] },
               { case: "files", issue: "18815",
                 tests: "tests/test_regression_files_18815.py",
                 arches: ["x64", "arm64"] }

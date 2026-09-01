@@ -37,11 +37,12 @@ below.
   UIA `Invoke()` succeeds while opening nothing), and the Options page is found
   by which page owns control `1038` rather than by its localised name.
 
-- **The DB Browser #3735 reproduction is wired into the demo workflow.** It runs
-  on x64 only: 3.13.0 has no arm64 package, and running the x64 build under
-  emulation would report an arm64 result that was never measured on arm64. The
-  workflow now takes a `case` input, and a selection that matches no job fails
-  rather than passing as an empty matrix.
+- **The DB Browser #3735 reproduction is wired into the demo workflow**, on both
+  architectures. 3.13.0 has no arm64 package, so both sides of the pair are the
+  win64 (Qt 5) build and the arm64 job runs it under emulation — which is the
+  only coverage here of driving an emulated process, and is still measured on
+  arm64 hardware. The workflow now takes a `case` input, and a selection that
+  matches no job fails rather than passing as an empty matrix.
 
 - **A third upstream-bug reproduction: Files #18815.** Alt+Enter put
   `DefWindowProc` into its menu-tracking path, which sends `WM_MENUCHAR` looking
