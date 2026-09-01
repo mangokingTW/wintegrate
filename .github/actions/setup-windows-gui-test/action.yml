@@ -167,15 +167,18 @@ runs:
         $dir = Join-Path $env:APPDATA 'org.keyviz'
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-        # filter "custom": wintegrate types via KEYEVENTF_UNICODE, which Windows
-        # delivers as vkCode=VK_PACKET with the character in scanCode. Keyviz
-        # reads scanCode as if it were a virtual key, so 'a' (97) renders as
-        # Numpad1 (VK 0x61) and 'q' (113) as F2 (VK 0x71). Only keys whose label
-        # comes from a real virtual key are allowed through — a crisper wrong
-        # label is worse than no label.
+        # filter "none" shows every keystroke, which is only safe because the
+        # tests type through send_physical_keys: that sends real virtual keys.
+        #
+        # Unicode-injected text would be mislabelled. wintegrate's send_char_input
+        # uses KEYEVENTF_UNICODE, which Windows delivers as vkCode=VK_PACKET with
+        # the character in scanCode, and Keyviz reads scanCode as if it were a
+        # virtual key -- so 'a' (97) renders as Numpad1 (VK 0x61) and 'q' (113) as
+        # F2 (VK 0x71). If a test goes back to Unicode typing, set this to
+        # 'custom' with an explicit list rather than showing wrong labels.
         $keyEvent = @{
           dragThreshold = 50
-          filter = 'custom'
+          filter = 'none'
           allowedKeys = @(
             'ControlLeft','ControlRight','ShiftLeft','ShiftRight','Alt','AltGr',
             'MetaLeft','MetaRight','Escape','Return','Tab','Backspace','Delete',
@@ -183,22 +186,28 @@ runs:
             'PageUp','PageDown','Space'
           )
           showEventHistory = $true    # the sequence, not just the last key
-          maxHistory = 4
+          maxHistory = 5
           lingerDurationMs = 3000     # ~30 frames at 10 fps; nothing falls between samples
           toggleShortcut = @('ShiftLeft','F10')
         }
         $keyStyle = @{
           # animation "none": a 0.25s fade leaves the first frames of every
           # keystroke half-transparent, which at 10 fps is most of them.
-          appearance = @{ monitor = $null; flexDirection = 'row'; alignment = 'top-center'
-                          marginX = 60; marginY = 40; animation = 'none'
+          # bottom-center with a small margin: every position overlaps something
+          # once the app under test is maximised, and the bottom strip is the
+          # least informative one on a runner -- the taskbar lives there and
+          # nothing under test does. The 100px default put it over the dialog's
+          # own buttons.
+          appearance = @{ monitor = $null; flexDirection = 'row'; alignment = 'bottom-center'
+                          marginX = 20; marginY = 10; animation = 'none'
                           animationDuration = 0; style = 'minimal' }
           layout = @{ showIcon = $false; showSymbol = $false; showPressCount = $true
                       iconAlignment = 'flex-end' }
           color = @{ color = '#ffffff'; secondaryColor = '#1a1a1a'; useGradient = $false }
           modifier = @{ highlight = $true; color = '#ffd166'; secondaryColor = '#000000'
                         textColor = '#000000'; borderColor = '#000000' }
-          text = @{ size = 30; color = '#000000'; caps = 'capitalize'
+          # 24, not 30: a row of five labels has to fit across the screen.
+          text = @{ size = 24; color = '#000000'; caps = 'capitalize'
                     variant = 'text'; alignment = 'center' }
           border = @{ enabled = $true; width = 3; color = '#000000'; radius = 0.25 }
           # Opaque: the default #ffffff99 lets the application show through the label.
