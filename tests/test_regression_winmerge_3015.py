@@ -27,10 +27,16 @@ Two things about driving this dialog are worth knowing:
   opens nothing* — another call that reports success and leaves no result.
   `Alt+E` opens it; the popup is a plain `#32768` whose items UIA reads fine.
 - **The page is found by what it contains, not by what it is called.** The
-  Options tree has 27 nodes, all localised — on this machine the editor page is
-  `'編輯器'`. Each node is clicked until control **1038** appears. Resource IDs
-  are not translated, which is the same reason Notepad++'s Find dialog is
-  testable in any language while its toolbar is not.
+  Options tree has 27 nodes, all localised — `'編輯器'` on a Chinese desktop,
+  `'Editor'` on an English one. Each node is clicked until control **1038**
+  appears. Resource ids are not translated, which is the same reason Notepad++'s
+  Find dialog is testable in any language while its toolbar is not.
+
+  The menu item is reached the same way, and getting it wrong cost a CI round:
+  the first version matched `'(O)'`, the parenthesised mnemonic. That reads as
+  language-independent on a Chinese desktop and is a CJK convention — English
+  Windows writes `&Options...`. What both spellings share is the accelerator
+  `Ctrl+,`, so that is what is matched.
 """
 
 from __future__ import annotations
@@ -73,6 +79,9 @@ TAB_TYPE_SPACES = "0x1"
 IDC_INSERT_TABS = 1038
 IDC_INSERT_SPACES = 1040
 IDOK = 1
+
+# Part of the Options item's name in every locale; see _open_options.
+OPTIONS_ACCELERATOR = "Ctrl+,"
 
 BM_GETCHECK = 0x00F0
 BM_CLICK = 0x00F5
@@ -165,9 +174,22 @@ def _open_options(window: Window) -> int:
         .re_resolve_element()
         .find_all(control_type_id=CONTROL_TYPE_MENU_ITEM)
     )
-    # The mnemonic in parentheses survives localisation; the label around it
-    # does not. On this machine the item reads ' 選項 (O)...\tCtrl+,'.
-    options = next(item for item in items if "(O)" in (item.name or ""))
+    # Matched on the *accelerator*, which is part of the item's name and is the
+    # only part of it that reads the same in every locale:
+    #
+    #   zh-TW   ' 選項 (O)...\tCtrl+,'
+    #   en-US   '&Options...\tCtrl+,'
+    #
+    # The first version matched '(O)', which looks language-independent on a
+    # Chinese desktop and is in fact a CJK convention — English Windows puts the
+    # mnemonic in an embedded '&'. Every test here failed on the runners with a
+    # bare StopIteration.
+    names = [item.name or "" for item in items]
+    options = next((item for item in items if OPTIONS_ACCELERATOR in (item.name or "")), None)
+    assert options is not None, (
+        f"no Edit-menu item carries the accelerator {OPTIONS_ACCELERATOR!r}; "
+        f"the menu offered {names!r}"
+    )
     options.invoke()
 
     deadline = time.monotonic() + 12.0
