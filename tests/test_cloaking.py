@@ -96,19 +96,20 @@ def test_a_window_on_another_virtual_desktop_is_cloaked(dialog):
     this, `IsWindowVisible` keeps answering True — which is the whole point.
 
     Skipped where virtual desktops are unusable, which includes Windows Server:
-    `pyvda` raises `NotImplementedError` there. `importorskip` does not cover
-    that — it only catches the package being *absent*, and this is the package
-    being present and refusing — which is why this failed on `windows-latest`
-    while passing on Windows 11. `Session._setup_isolated_virtual_desktop`
-    already treats virtual desktops as best-effort for the same reason.
+    `pyvda` raises `NotImplementedError` from its own module body there, at
+    `pyvda/__init__.py:50`. So **the import is what fails**, not the first call —
+    which is why `pytest.importorskip` did not help: it converts `ImportError`
+    into a skip and lets everything else through. The import is inside the guard
+    for that reason. `Session._setup_isolated_virtual_desktop` wraps the same
+    calls and degrades with a warning, for the same reason.
 
     Only the setup may skip. Once the desktop switch has happened, everything
     below is a real assertion.
     """
-    pyvda = pytest.importorskip("pyvda", reason="virtual desktop control needs pyvda")
-
     scratch = None
     try:
+        import pyvda
+
         original = pyvda.VirtualDesktop.current()
         scratch = pyvda.VirtualDesktop.create()
         scratch.go()
