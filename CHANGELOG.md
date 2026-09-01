@@ -6,6 +6,72 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.6.0] — 2026-09-01
+
+Two gaps found the same way as the last release's four: by writing a reproduction
+for an open upstream bug — this time PowerToys' Command Palette, whose default
+hotkey could not be expressed and whose placeholder field could not be read
+honestly.
+
+**This release contains an API change.** See the note above about what below-1.0
+means here.
+
+### Changed
+
+- **`UiaElement.get_value()` no longer returns the element's Name** when nothing
+  else can answer. It raises `ValueUnavailableError` instead.
+
+  UIA offers four sources, and they are not equally trustworthy: `TextPattern`,
+  `ValuePattern`, `WM_GETTEXT` on a native handle, and `Name`. The first three are
+  the control's contents; `Name` is its *label*. Substituting one for the other is
+  silent, which is the whole problem — the reading comes back a plausible string
+  and every assertion against it passes on nothing.
+
+  The case that found it: a WinUI `TextBox` bound to a `{n}` placeholder, whose
+  Name is `'n'`. An empty field read back as `'n'`, so "the field is not empty"
+  held while the field was empty.
+
+  If the Name is what you want — a ComboBox reflecting its selection, a grid cell —
+  pass `allow_name_fallback=True`. If you would rather decide for yourself, use
+  `read_value()`, which returns the text and its source and never raises.
+
+  In practice this reaches very little code: every Win32 control has an HWND, so
+  `WM_GETTEXT` answers and the Name path is unreachable. Only handle-less elements
+  (WPF, WinUI, UWP below the top-level window) get that far.
+
+- **An empty native control now reads as `''` rather than as its Name.**
+  `WM_GETTEXTLENGTH` returning 0 was treated as "the query did not work" and fell
+  through to the Name fallback. It is the answer "this window's text is empty";
+  `DefWindowProc` answers it for every window, so there is no case where 0 means
+  failure. Same `length > 0` mistake as using a non-empty result to mean a query
+  succeeded.
+
+### Added
+
+- **`send_hotkey(spec)`** for chords: `send_hotkey("win+alt+space")`,
+  `send_hotkey("ctrl+shift+p")`, `send_hotkey("ctrl+,")`.
+
+  `send_keys` deliberately does not grow a Win-key modifier. Its grammar sends
+  unrecognised characters as literal text, so claiming AutoHotkey's `#` would
+  change what `send_keys("issue #123")` types, and `+` is already Shift. A chord
+  is a different job from typing, so it gets a different grammar: the last token
+  is the key and everything before it must be a modifier, which makes `"win"` and
+  `"win+alt+space"` one rule rather than two special cases and rejects
+  `"space+ctrl"` instead of sending something else.
+
+  `parse_hotkey()` is exposed alongside it and is pure, so the grammar is testable
+  off Windows.
+
+- **`LWIN`, `RWIN` and `WIN` in `KEY_NAMES`**, and both Win keys added to the
+  extended-key set — without `KEYEVENTF_EXTENDEDKEY` the shell does not recognise
+  a Win chord at all, and nothing reports an error.
+
+- **`UiaElement.read_value()`** returning a `ValueReading(text, source)`, where
+  `source` is `"TextPattern"`, `"ValuePattern"`, `"WM_GETTEXT"` or `"Name"`. Never
+  raises; the source says what the reading is worth.
+
+- **`ValueUnavailableError`**, and `ValueReading`, exported from the package root.
+
 ## [0.5.1] — 2026-09-01
 
 Four gaps found by using this library on somebody else's code — writing

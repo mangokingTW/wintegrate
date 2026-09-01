@@ -43,8 +43,15 @@ class DataGridCell:
 
     @property
     def value(self) -> str:
-        """The cell's text, from its value or, failing that, its name."""
-        text = self.element.get_value()
+        """The cell's text, from its value or, failing that, its name.
+
+        The Name fallback is deliberate here and not the hazard it is elsewhere:
+        a grid cell is one of the controls where UIA genuinely puts the displayed
+        text in Name and exposes no value pattern. `read_value()` is used rather
+        than `get_value()` so the fallback stays a decision made here, in the one
+        place it is correct, instead of a default that applies everywhere.
+        """
+        text = self.element.read_value().text
         return text if text else self.element.name
 
     def _grid_item(self):

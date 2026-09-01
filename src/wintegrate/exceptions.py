@@ -41,3 +41,14 @@ class FocusStealDetectedError(ActionVerificationError):
 
 class DiagnosticPipelineError(WintegrateError):
     """Raised when a diagnostic subsystem (e.g. streaming recorder) fails."""
+
+
+class ValueUnavailableError(WintegrateError):
+    """Raised when an element holds no readable text source.
+
+    Not "the text is empty" — that is an answer, and it is returned as `''`. This
+    is "nothing in this element can be asked what text it holds", where the only
+    thing left to report would be the element's Name, which is its *label*.
+    Substituting a label for content is how an empty field comes back looking
+    like it has something in it.
+    """

@@ -323,3 +323,60 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 This one is worth knowing regardless of this library: any package that pins
 argtypes on `ctypes.windll` is a hazard to everything else in the process.
+
+## An element's Name is its label, not its text
+
+UIA gives four ways to read what a control holds, and they are not equally
+trustworthy: `TextPattern`, `ValuePattern`, `WM_GETTEXT` on a native handle, and
+finally `Name`. The first three are the control's contents. `Name` is its
+**label**, and reaching for it when the others are silent produces a reading that
+looks like an answer and is not one.
+
+The case that made this concrete: a WinUI `TextBox` bound to a bookmark's `{n}`
+placeholder. Its Name is `'n'`. An empty field read back as `'n'`, so every check
+of the form "the field is not empty" passed while the field was empty.
+
+`read_value()` reports the source, and `get_value()` refuses the weak one:
+
+```python
+reading = element.read_value()
+if reading.source == "Name":
+    ...              # this is a label; decide what that means here
+
+element.get_value()                             # raises ValueUnavailableError
+element.get_value(allow_name_fallback=True)     # opt in, for a ComboBox or a grid cell
+```
+
+Reachability is worth knowing when writing a test for this: **every Win32 control
+has an HWND**, so `WM_GETTEXT` always answers and `Name` is unreachable. Only
+handle-less elements — WPF, WinUI, UWP below the top-level window — get that far.
+
+A related trap in the same code: `WM_GETTEXTLENGTH` returning 0 is the answer
+"this window's text is empty", not "the query did not work". `DefWindowProc`
+answers it for every window, so there is no case where 0 means failure. Treating
+it as a miss is what used to pass an empty native control on to the `Name`
+fallback.
+
+## `send_keys` has no Win key, on purpose
+
+`send_keys`'s grammar sends anything it does not recognise as literal text. Giving
+a character a modifier meaning is therefore not additive — AutoHotkey spells the
+Win key `#`, and claiming `#` would silently change what `send_keys("issue #123")`
+types. `+` is already Shift, so the usual hotkey separator cannot live there
+either.
+
+Chords go through a separate function, with a separate grammar:
+
+```python
+send_hotkey("win+alt+space")     # Command Palette
+send_hotkey("ctrl+shift+p")
+send_hotkey("ctrl+,")            # layout-dependent keys are resolved at send time
+send_hotkey("win")               # the last token is the key, so this opens Start
+```
+
+The rule is that the last token is the key and everything before it must be a
+modifier, which makes `"win"` and `"win+alt+space"` one grammar instead of two
+special cases, and rejects `"space+ctrl"` rather than sending something else.
+
+Both Win keys also need `KEYEVENTF_EXTENDEDKEY`: without it the shell does not
+recognise the chord at all, and nothing reports an error.
