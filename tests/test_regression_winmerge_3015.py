@@ -216,53 +216,71 @@ def _settled_popup() -> int:
 
 
 def _goto_editor_page(dialog: int, pid: int) -> str:
-    """Clicks tree nodes until the visible page carries the tab-type radios.
+    """Walks the Options tree until the visible page carries the tab-type radios.
 
     The 27 node names are localised, so none of them can be matched on. What
     cannot change is that exactly one page owns control 1038.
 
-    Two things this has to be careful about, both learned from the arm64 runner
-    reporting "none of the 27 Options pages carried control 1038":
+    Navigation is by **arrow key**, not by clicking each node, and that took two
+    CI rounds to arrive at:
 
-    - **`click()` is a silent no-op on an element with an empty rectangle.** It
-      aims at the middle of the bounding rectangle and simply returns when there
-      isn't one, so a node that has not been laid out yet is skipped without any
-      sign. Nodes are only clicked once they have a real rectangle, and if none
-      of them ever does, the failure says that instead.
-    - **Switching pages is not instant.** A fixed sleep that is long enough on
-      one machine is not long enough on another, so this polls for the control
-      rather than sleeping and hoping.
+    - `click()` aims at the middle of an element's bounding rectangle and
+      silently returns when there isn't one. Nodes scrolled out of the tree's
+      viewport have no rectangle, so they were skipped with no sign at all.
+    - The runners have a smaller desktop than the development VM, so *more* of
+      the tree is out of view there. Clicking every node worked locally and
+      reported "clicked 23 of 27 pages and none carried control 1038" on arm64.
+
+    A tree view scrolls its own caret into view, so Down reaches every node
+    regardless of the viewport. One click is still needed first, to put focus in
+    the tree — and for that any laid-out node will do.
     """
-    nodes = (
-        Window(dialog, pid).re_resolve_element().find_all(control_type_id=CONTROL_TYPE_TREE_ITEM)
-    )
+    root = Window(dialog, pid).re_resolve_element()
+    nodes = root.find_all(control_type_id=CONTROL_TYPE_TREE_ITEM)
     assert nodes, "the Options dialog exposed no tree items at all"
 
-    clicked = 0
+    anchored = False
     for node in nodes:
         try:
             left, top, right, bottom = node.bounding_rectangle
-            if right <= left or bottom <= top:
-                continue
-            node.click()
-        except Exception:  # noqa: BLE001 - a node that will not take a click is not the one
+            if right > left and bottom > top:
+                node.click()
+                anchored = True
+                break
+        except Exception:  # noqa: BLE001 - try the next node
             continue
-        clicked += 1
-
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            time.sleep(0.2)
-            if _control(dialog, IDC_INSERT_TABS):
-                return node.name
-
-    assert clicked, (
-        f"none of the {len(nodes)} Options tree nodes ever had a non-empty bounding "
-        "rectangle, so every click was a no-op and no page was ever opened"
+    assert anchored, (
+        f"none of the {len(nodes)} Options tree nodes had a non-empty bounding rectangle, "
+        "so the tree could not be given focus and every click would have been a no-op"
     )
+
+    if _wait_for_editor_page(dialog):
+        return "the page the tree opened on"
+
+    # One Down per node, plus slack for parents that expand into extra rows.
+    for _ in range(len(nodes) * 2):
+        send_keys("{DOWN}")
+        if _wait_for_editor_page(dialog):
+            return "reached by arrow key"
+
     raise AssertionError(
-        f"clicked {clicked} of {len(nodes)} Options pages and none carried control "
+        f"walked the whole Options tree ({len(nodes)} nodes) and no page carried control "
         f"{IDC_INSERT_TABS}"
     )
+
+
+def _wait_for_editor_page(dialog: int, timeout: float = 0.8) -> bool:
+    """Polls for the tab-type radios rather than sleeping a fixed amount.
+
+    A sleep long enough on one machine is not long enough on another, and this
+    runs once per node, so it has to be short when the answer is no.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _control(dialog, IDC_INSERT_TABS):
+            return True
+        time.sleep(0.15)
+    return False
 
 
 def _choose_and_confirm(window: Window, control_id: int) -> tuple[str | None, bool]:
