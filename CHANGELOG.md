@@ -6,7 +6,7 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
-## [0.6.0] — 2026-09-01
+## [0.5.2] — 2026-09-01
 
 Two gaps found the same way as the last release's four: by writing a reproduction
 for an open upstream bug — this time PowerToys' Command Palette, whose default
