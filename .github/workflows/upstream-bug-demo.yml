@@ -33,6 +33,14 @@
 #     check depends on Qt's accessibility surface, which is the least dependable
 #     of the four applications this project drives.
 #
+#
+#   Files #18815 — Alt+Enter put DefWindowProc into its menu-tracking path, which
+#     sends WM_MENUCHAR looking for a mnemonic; nothing matched, the default
+#     answer is MNC_IGNORE, and that plays the Asterisk sound. PR #18815 answers
+#     MNC_CLOSE from Files' own subclass. What makes it worth demonstrating: the
+#     entire symptom is a *sound*. The two builds are pixel-identical, so even a
+#     screen recording cannot show it — but the return value of one message can.
+#
 name: Upstream bug demo
 
 on:
@@ -46,7 +54,7 @@ on:
       case:
         description: Which upstream bug to reproduce
         type: choice
-        options: [all, notepad++, winmerge, sqlitebrowser]
+        options: [all, notepad++, winmerge, sqlitebrowser, files]
         default: all
 
 permissions:
@@ -88,7 +96,10 @@ jobs:
                 arches: ["x64", "arm64"] },
               { case: "sqlitebrowser", issue: "3735",
                 tests: "tests/test_regression_sqlitebrowser_3735.py",
-                arches: ["x64"] }
+                arches: ["x64"] },
+              { case: "files", issue: "18815",
+                tests: "tests/test_regression_files_18815.py",
+                arches: ["x64", "arm64"] }
             ]
             | map(select($case == "all" or .case == $case))
             | [ .[] as $c
@@ -300,7 +311,74 @@ jobs:
             Write-Host ("{0}: {1} (Qt5)" -f $b.Version, (Get-Item $exe).VersionInfo.FileVersion)
           }
 
+      # Files is an MSIX package, so the two builds cannot be installed at once —
+      # unlike the other three cases, which unpack side by side. Each build is
+      # installed in turn and the assertions that belong to it are selected with
+      # `-k`. Installing an older package over a newer one is refused, so the
+      # newer one is removed first.
+      #
+      # `-k` is what makes this fail-closed: the per-build gate in the test calls
+      # pytest.fail rather than pytest.skip when WINTEGRATE_REQUIRE_UPSTREAM_BUILDS
+      # is set, so selecting a test against the wrong build is a failure instead
+      # of a green run that asserted nothing.
+      # Quoted for the same reason the job name is: an unquoted '#' starts a YAML
+      # comment, and this read as "Reproduce Files" until it was.
+      - name: "Reproduce Files #18815 against both builds"
+        if: matrix.case == 'files'
+        timeout-minutes: 40
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINTEGRATE_REQUIRE_UPSTREAM_BUILDS: "1"
+          WINTEGRATE_RECORD_SUITE: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'files-builds'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+          choco install dotnet-desktopruntime -y --no-progress
+          $global:LASTEXITCODE = 0
+
+          $builds = @(
+            @{ Version = '4.2.7.0'; Tag = 'files-4.2.7.0'
+               Sha = 'DB74F9ABC2B84FDC7476B72358A0190AF9AC48AF924B2420B5898005BF0E4FED'
+               Select = 'unanswered or other_characters' },
+            @{ Version = '4.2.9.0'; Tag = 'files-4.2.9.0'
+               Sha = '87BD06F897094FCE4D14EC0D87F258C711477C6F1C5271B055C794B3AAC7FF41'
+               Select = 'answered_on_the_fixed or other_characters' }
+          )
+
+          foreach ($b in $builds) {
+            $asset = "Files.Package_$($b.Version)_x64_arm64.msixbundle"
+            $pkg = Join-Path $dir $asset
+            if (-not (Test-Path $pkg)) {
+              gh release download $b.Tag `
+                --repo mangokingTW/wintegrate-test-fixtures `
+                --pattern $asset --dir $dir
+              if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $asset ($LASTEXITCODE)" }
+            }
+
+            $hash = (Get-FileHash $pkg -Algorithm SHA256).Hash
+            if ($hash -ne $b.Sha) { throw "SHA-256 mismatch for ${asset}: got $hash, expected $($b.Sha)" }
+            $sig = Get-AuthenticodeSignature $pkg
+            if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status), not Valid" }
+            Write-Host "sha256 and signature ok: $asset"
+
+            Get-AppxPackage -Name 'Files' | ForEach-Object {
+              Write-Host "removing $($_.Version)"
+              Remove-AppxPackage -Package $_.PackageFullName
+            }
+            Add-AppxPackage -Path $pkg -ForceApplicationShutdown -ErrorAction Stop
+            $installed = (Get-AppxPackage -Name 'Files').Version
+            if ($installed -ne $b.Version) { throw "installed $installed, wanted $($b.Version)" }
+            Write-Host "installed: $installed"
+
+            pytest tests/test_regression_files_18815.py -v -s -k "$($b.Select)"
+            if ($LASTEXITCODE -ne 0) { throw "pytest failed on Files $($b.Version)" }
+          }
+
       - name: Reproduce
+        if: matrix.case != 'files'
         env:
           # A fetch step that silently produced nothing must not leave a green run.
           WINTEGRATE_REQUIRE_UPSTREAM_BUILDS: "1"

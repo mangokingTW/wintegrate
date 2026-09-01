@@ -43,6 +43,16 @@ below.
   workflow now takes a `case` input, and a selection that matches no job fails
   rather than passing as an empty matrix.
 
+- **A third upstream-bug reproduction: Files #18815.** Alt+Enter put
+  `DefWindowProc` into its menu-tracking path, which sends `WM_MENUCHAR` looking
+  for a mnemonic; nothing matched, the default answer is `MNC_IGNORE`, and that
+  plays the Asterisk sound. 4.2.7.0 answers `0`, 4.2.9.0 answers `MNC_CLOSE`.
+  **The entire symptom is a sound** — the two builds are pixel-identical, so no
+  screenshot and no screen recording can show it, while one message's return
+  value settles it with no UI interaction to time. `WM_MENUCHAR` is `0x0120`,
+  below `WM_USER`, so USER32 dispatches it into the other process's window
+  subclass; a custom message would have gone across as two integers.
+
 - **A blocking dialog now says what it is asking.** When window discovery times
   out, any `#32770` / message-box class among the visible windows has its child
   controls' text printed under it, so the failure reads

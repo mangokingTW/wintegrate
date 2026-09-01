@@ -14,10 +14,13 @@ import time
 from ctypes import wintypes
 
 CF_UNICODETEXT = 13
+CF_HDROP = 15
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+_user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+_user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
 _user32.OpenClipboard.argtypes = [wintypes.HWND]
 _user32.OpenClipboard.restype = wintypes.BOOL
 _user32.GetClipboardData.argtypes = [wintypes.UINT]
@@ -53,6 +56,17 @@ def clipboard_text(timeout: float = 3.0) -> str | None:
             _kernel32.GlobalUnlock(handle)
     finally:
         _user32.CloseClipboard()
+
+
+def clipboard_has_format(fmt: int) -> bool:
+    """Whether a clipboard format is on offer, without taking the data.
+
+    Which *format* is present says more than what the text says. A shell copy of
+    a file offers CF_HDROP; a text box offers CF_UNICODETEXT. Asking "is there
+    text" cannot tell the two apart when the answer is no for one and yes for
+    the other only after an async copy settles.
+    """
+    return bool(_user32.IsClipboardFormatAvailable(fmt))
 
 
 def clear_clipboard(timeout: float = 3.0) -> bool:

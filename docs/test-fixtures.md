@@ -78,12 +78,15 @@ fixed it. These run on request, not on every push.
 | Notepad++ [#16326][npp] | `notepadpp-8.7.9` | `notepadpp-8.8` | Ctrl+Shift+D inserts an invisible `0x04` |
 | DB Browser [#3735][db4s] | `sqlitebrowser-3.13.0` | `sqlitebrowser-3.13.1-portable` | copying one cell appends a trailing newline |
 | WinMerge [#3015][wm] | `winmerge-2.16.52` | `winmerge-2.16.52.2` | "Insert tabs" resets on leaving Options |
-| Files [#18820][files] | `files-4.2.7.0` | `files-4.2.9.0` | rename-flyout accelerators do not fire |
+| Files [#18815][files] | `files-4.2.7.0` | `files-4.2.9.0` | Alt+Enter plays the Asterisk sound |
 
 [npp]: https://github.com/notepad-plus-plus/notepad-plus-plus/issues/16326
 [db4s]: https://github.com/sqlitebrowser/sqlitebrowser/issues/3735
 [wm]: https://github.com/WinMerge/winmerge/issues/3015
-[files]: https://github.com/files-community/Files/issues/18820
+[files]: https://github.com/files-community/Files/issues/18815
+
+Files is the exception to that: it is an MSIX package, so the two builds cannot
+be installed at once and the workflow installs each in turn.
 
 Portable packages are used for the demos wherever they exist, for two reasons:
 two versions of an installed application cannot be present at once, and for
