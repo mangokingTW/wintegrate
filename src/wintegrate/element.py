@@ -247,13 +247,40 @@ class UiaElement:
             pass
         return None
 
-    def click(self):
-        """Clicks the center of this element using SendInput mouse simulation."""
+    def click(self, require_rectangle: bool = True):
+        """Clicks the centre of this element with a synthesised mouse click.
+
+        Raises when the element has no bounding rectangle, which is the whole
+        point of this signature. A physical click needs a coordinate; an element
+        that is scrolled out of view, not yet laid out, or hosted in a way that
+        publishes no rectangle has none, and there is nothing sensible to click.
+
+        This used to return quietly in that case, and the cost was consistently
+        paid somewhere else: a WinUI flyout button whose rectangle is (0,0,0,0)
+        looked like "focus never reached the rename box"; tree nodes scrolled
+        out of a dialog's viewport looked like "none of the 27 pages had the
+        control"; a list item on a smaller desktop looked like "the selection
+        was stolen". One cause, three unrecognisable symptoms.
+
+        Pass `require_rectangle=False` for the old behaviour where a missing
+        rectangle is genuinely acceptable — and prefer `invoke()` where the
+        element supports it, since an Invoke needs no coordinates at all.
+        """
         left, top, right, bottom = self.bounding_rectangle
         if right > left and bottom > top:
             cx = (left + right) // 2
             cy = (top + bottom) // 2
             send_mouse_click(cx, cy)
+            return True
+
+        if require_rectangle:
+            raise ActionVerificationError(
+                f"{self} has an empty bounding rectangle ({left}, {top}, {right}, "
+                f"{bottom}), so there is no point to click. It may be scrolled out of "
+                "view, not laid out yet, or hosted somewhere that publishes no "
+                "rectangle — try invoke(), or scroll_into_view() first."
+            )
+        return False
 
     def set_focus(self, verify: bool = True, timeout: float = 2.0, click: bool = True) -> bool:
         """
@@ -269,9 +296,12 @@ class UiaElement:
         except Exception as exc:
             logger.debug(f"SetFocus raised ({type(exc).__name__}): {exc}")
 
-        # Physical click fallback to claim true OS foreground focus
+        # Physical click fallback to claim true OS foreground focus. This is the
+        # one place a missing rectangle is genuinely fine: SetFocus above may
+        # already have worked, and an element with no rectangle is exactly the
+        # kind this fallback cannot help anyway.
         if click:
-            self.click()
+            self.click(require_rectangle=False)
 
         if not verify:
             return True

@@ -15,6 +15,8 @@ from wintegrate.apps import (
     NOTEPAD,
     AppHandle,
     AppSpec,
+    find_packaged_app,
+    launch_packaged_app,
     sweep_processes_verified,
 )
 from wintegrate.controls import (
@@ -140,6 +142,8 @@ __all__ = [
     "FocusStealDetectedError",
     "DiagnosticPipelineError",
     "ContinuousRecorder",
+    "find_packaged_app",
+    "launch_packaged_app",
     "capture_screen_image",
     "capture_window_image",
     "WindowCensus",

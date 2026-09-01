@@ -360,6 +360,23 @@ user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
 user32.IsWindow.argtypes = [wintypes.HWND]
 user32.IsWindow.restype = wintypes.BOOL
+user32.IsZoomed.argtypes = [wintypes.HWND]
+user32.IsZoomed.restype = wintypes.BOOL
+user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
+user32.GetDlgCtrlID.restype = ctypes.c_int
+user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+user32.FindWindowW.restype = wintypes.HWND
+# `SendMessageW` gets a restype but deliberately no argtypes. The default
+# restype is a 32-bit int, which truncates any message that answers with a
+# pointer or a packed pair — `WM_MENUCHAR` returns its command in the high word.
+#
+# argtypes are left off because lParam is genuinely polymorphic: `WM_GETTEXT`
+# wants a buffer there and `SCI_*` wants an integer, and declaring either one
+# rejects the other. Callers pass explicit `wintypes.*` instances instead, which
+# is where the width is decided anyway.
+user32.SendMessageW.restype = wintypes.LPARAM
+user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+user32.PostMessageW.restype = wintypes.BOOL
 
 user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 user32.SendInput.restype = wintypes.UINT
@@ -974,6 +991,34 @@ def get_window_class(hwnd: int) -> str:
     buf = ctypes.create_unicode_buffer(256)
     user32.GetClassNameW(wintypes.HWND(hwnd), buf, 256)
     return buf.value
+
+
+def find_child_by_control_id(hwnd: int, control_id: int, visible_only: bool = True) -> int | None:
+    """A child window by its numeric control id.
+
+    Not `GetDlgItem`, and the difference matters on a property sheet: it keeps
+    every page it has visited as a child of the same dialog, so an id resolves
+    on pages that are no longer showing. `visible_only` is what makes "the
+    control the user is looking at" answerable.
+
+    Numeric control ids are also the one identifier on a Win32 dialog that is
+    not translated, which makes them the only reliable handle on a localised
+    build — the button captions are not.
+    """
+    if not hwnd or not user32.IsWindow(hwnd):
+        return None
+
+    found: list[int] = []
+
+    def enum_proc(child, _lparam):
+        if user32.GetDlgCtrlID(child) == control_id:
+            if not visible_only or user32.IsWindowVisible(child):
+                found.append(child)
+                return False
+        return True
+
+    user32.EnumChildWindows(hwnd, WNDENUMPROC(enum_proc), 0)
+    return found[0] if found else None
 
 
 def find_child_windows(hwnd: int, class_substrings: tuple[str, ...]) -> list[int]:

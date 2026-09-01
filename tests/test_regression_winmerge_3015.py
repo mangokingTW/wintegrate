@@ -54,7 +54,7 @@ import pytest
 from wintegrate import Window
 from wintegrate.apps import sweep_processes_verified
 from wintegrate.diagnostics import WindowCensus
-from wintegrate.interop import send_keys, user32
+from wintegrate.interop import send_keys
 
 # Not part of the release gate; see tests/test_regression_notepadpp_16326.py.
 pytestmark = [
@@ -93,16 +93,22 @@ CONTROL_TYPE_TREE_ITEM = 50024
 
 _ENUM_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
-# Declared here rather than taken from interop, which does not prototype these
-# three. An undeclared ctypes function defaults every argument to C int, so a
-# 64-bit HWND is silently truncated and the call goes to a window that does not
-# exist — and returns 0, which looks like an honest "no".
-user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
-user32.GetDlgCtrlID.restype = ctypes.c_int
-user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
-user32.FindWindowW.restype = wintypes.HWND
-user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-user32.SendMessageW.restype = wintypes.LPARAM
+# A **private** WinDLL, not the one wintegrate exposes. `ctypes.WinDLL` caches
+# per handle, so setting argtypes on a shared object changes it for every other
+# caller in the process: an earlier version of this file declared
+# `SendMessageW.argtypes` on the shared user32, and simply importing this module
+# broke `get_value()` everywhere else — its WM_GETTEXT fallback passes a buffer
+# where the declaration then insisted on an integer. Ten unrelated Scintilla
+# tests errored, in a file this one never touches.
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+_user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
+_user32.GetDlgCtrlID.restype = ctypes.c_int
+_user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+_user32.FindWindowW.restype = wintypes.HWND
+_user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+_user32.SendMessageW.restype = wintypes.LPARAM
+_user32.IsWindowVisible.argtypes = [wintypes.HWND]
+_user32.EnumChildWindows.argtypes = [wintypes.HWND, _ENUM_PROC, wintypes.LPARAM]
 
 
 def _executable(version: str) -> Path:
@@ -147,19 +153,19 @@ def _control(dialog: int, control_id: int) -> int | None:
     found: list[int] = []
 
     def callback(hwnd, _lparam):
-        if user32.GetDlgCtrlID(hwnd) == control_id and user32.IsWindowVisible(hwnd):
+        if _user32.GetDlgCtrlID(hwnd) == control_id and _user32.IsWindowVisible(hwnd):
             found.append(hwnd)
             return False
         return True
 
-    user32.EnumChildWindows(dialog, _ENUM_PROC(callback), 0)
+    _user32.EnumChildWindows(dialog, _ENUM_PROC(callback), 0)
     return found[0] if found else None
 
 
 def _is_checked(dialog: int, control_id: int) -> bool:
     control = _control(dialog, control_id)
     assert control, f"control {control_id} is not on the visible page"
-    return bool(user32.SendMessageW(control, BM_GETCHECK, 0, 0))
+    return bool(_user32.SendMessageW(control, BM_GETCHECK, 0, 0))
 
 
 def _open_options(window: Window) -> int:
@@ -212,8 +218,8 @@ def _settled_popup() -> int:
     deadline = time.monotonic() + 6.0
     while time.monotonic() < deadline:
         time.sleep(0.3)
-        popup = user32.FindWindowW("#32768", None)
-        if popup and user32.IsWindowVisible(popup):
+        popup = _user32.FindWindowW("#32768", None)
+        if popup and _user32.IsWindowVisible(popup):
             return popup
     raise AssertionError("Alt+E opened no menu popup within 6s")
 
@@ -308,7 +314,7 @@ def _choose_and_confirm(window: Window, control_id: int) -> tuple[str | None, bo
 
     radio = _control(dialog, control_id)
     assert radio, f"control {control_id} is not on the editor page"
-    user32.SendMessageW(radio, BM_CLICK, 0, 0)
+    _user32.SendMessageW(radio, BM_CLICK, 0, 0)
     time.sleep(0.4)
     assert _is_checked(dialog, control_id), (
         f"clicking control {control_id} did not check it, so nothing was chosen "
@@ -317,7 +323,7 @@ def _choose_and_confirm(window: Window, control_id: int) -> tuple[str | None, bo
 
     ok = _control(dialog, IDOK)
     assert ok, "the Options dialog has no visible OK button"
-    user32.SendMessageW(ok, BM_CLICK, 0, 0)
+    _user32.SendMessageW(ok, BM_CLICK, 0, 0)
     time.sleep(1.5)
 
     stored = _tab_type()
