@@ -7,6 +7,23 @@ below.
 
 ## [Unreleased]
 
+### Changed
+
+- **Every target application is installed from a verified mirror.** Notepad++,
+  WinMerge and DB Browser for SQLite now come from the same fixture release that
+  Files already used, instead of from three separate publisher hosts on every
+  push. Each asset is pinned by SHA-256, and by the publisher's full
+  Authenticode subject where one exists — the arm64 DB Browser msi carries no
+  signature upstream, so there the hash is the only check and the workflow says
+  so rather than pretending otherwise. The three divergent
+  download-and-install steps collapsed into one fetch step plus one install step
+  per package format.
+
+  Both builds of every upstream-bug pair are mirrored too — Notepad++ 8.7.9/8.8,
+  DB Browser 3.13.0/3.13.1, WinMerge 2.16.52/2.16.52.2, Files 4.2.7.0/4.2.9.0.
+  Those pin *old* releases, which are exactly the assets that quietly stop being
+  served. `docs/test-fixtures.md` records what is mirrored and why.
+
 ### Added
 
 - **A blocking dialog now says what it is asking.** When window discovery times

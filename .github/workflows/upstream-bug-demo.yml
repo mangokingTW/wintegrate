@@ -106,21 +106,44 @@ jobs:
       # Portable rather than installed, twice over: the fix *is* in the portable
       # package's config.xml, and doLocalConf.xml keeps each build's settings in
       # its own directory so the two cannot contaminate each other.
-      - name: Fetch Notepad++ 8.7.9 (bug) and 8.8 (fixed)
+      #
+      # Fetched from the fixture mirror, like the release gate's four apps. These
+      # are old builds — 8.7.9 is the one *with* the bug — and an old release is
+      # exactly the kind of asset that quietly stops being served. A zip carries
+      # no Authenticode signature, so the sha256 is the whole check; both hashes
+      # were produced twice from independent downloads and agreed.
+      - name: Fetch Notepad++ 8.7.9 (bug) and 8.8 (fixed) from the fixture mirror
         timeout-minutes: 10
         shell: pwsh
         env:
+          GH_TOKEN: ${{ github.token }}
           NPP_ARCH: ${{ matrix.arch }}
         run: |
           $ErrorActionPreference = 'Stop'
           $root = 'C:\npp'
           New-Item -ItemType Directory -Force -Path $root | Out-Null
-          $base = 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download'
+
+          $sha = @{
+            '8.7.9' = @{ x64 = 'C0543076ABCAD4B3119154CC3EE2CA88E63FC1381EE07E1E29D7321DF2B7513D'
+                         arm64 = '54E52BDE00219C9DAF1B0895FA3C125B0FB06CD6C7CE5EB374440057816AB18F' }
+            '8.8'   = @{ x64 = 'D2011791F4955115E2DEFF4F5D086481A7BA04C957FBCA0B2F65F4E608C79935'
+                         arm64 = 'E8E10819793EA4DB9D0BFEBD2963D56432D59D5A3BE9F5149E69B06E6CBE0E06' }
+          }
+
           foreach ($v in @('8.7.9', '8.8')) {
-            $url = "$base/v$v/npp.$v.portable.$env:NPP_ARCH.zip"
-            $zip = Join-Path $root "npp-$v.zip"
+            $asset = "npp.$v.portable.$env:NPP_ARCH.zip"
             $dir = Join-Path $root $v
-            Invoke-WebRequest -Uri $url -UseBasicParsing -OutFile $zip -TimeoutSec 600
+            gh release download "notepadpp-$v" `
+              --repo mangokingTW/wintegrate-test-fixtures `
+              --pattern $asset --dir $root
+            if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $asset ($LASTEXITCODE)" }
+
+            $zip = Join-Path $root $asset
+            $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+            $want = $sha[$v][$env:NPP_ARCH]
+            if ($hash -ne $want) { throw "SHA-256 mismatch for ${asset}: got $hash, expected $want" }
+            Write-Host "sha256 ok: $asset"
+
             Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
             $exe = Join-Path $dir 'notepad++.exe'
             if (-not (Test-Path $exe)) { throw "no notepad++.exe in $dir" }

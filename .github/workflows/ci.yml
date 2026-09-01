@@ -203,7 +203,10 @@ jobs:
             arch: x64
             tests: tests/test_scintilla.py
             require: Notepad++
-            installerUrl: 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8/npp.8.9.8.Installer.x64.exe'
+            fixtureTag: notepadpp-8.9.8
+            fixtureAsset: npp.8.9.8.Installer.x64.exe
+            fixtureSha256: '7b2a949bf460fb37a3888c9048698f43222a185a48323023df1c51e78a3ca1c2'
+            fixtureSigner: 'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, S=Île-de-France, C=FR'
             installerArgs: '/S'
             installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
           - app: notepad++
@@ -211,7 +214,10 @@ jobs:
             arch: arm64
             tests: tests/test_scintilla.py
             require: Notepad++
-            installerUrl: 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8/npp.8.9.8.Installer.arm64.exe'
+            fixtureTag: notepadpp-8.9.8
+            fixtureAsset: npp.8.9.8.Installer.arm64.exe
+            fixtureSha256: '3ac2c91245e980c4fd0991e5c1971439e234c0713e994d1dae532c70b7528587'
+            fixtureSigner: 'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, S=Île-de-France, C=FR'
             installerArgs: '/S'
             installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
           - app: winmerge
@@ -219,7 +225,10 @@ jobs:
             arch: x64
             tests: tests/test_target_winmerge.py
             require: WinMerge
-            installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-x64-Setup.exe'
+            fixtureTag: winmerge-2.16.58.2
+            fixtureAsset: WinMerge-2.16.58.2-x64-Setup.exe
+            fixtureSha256: '26f794838bc4e545d7b9f36dc8beeb5a65a12bd4627fa3b4fe87068abef925b0'
+            fixtureSigner: 'CN=Takashi Sawanaka, O=Takashi Sawanaka, L=Chiba, S=Chiba, C=JP'
             installerArgs: '/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART'
             installerExpects: 'C:\\Program Files\\WinMerge\\WinMergeU.exe'
           - app: winmerge
@@ -227,31 +236,43 @@ jobs:
             arch: arm64
             tests: tests/test_target_winmerge.py
             require: WinMerge
-            installerUrl: 'https://github.com/WinMerge/winmerge/releases/download/v2.16.58.2/WinMerge-2.16.58.2-ARM64-Setup.exe'
+            fixtureTag: winmerge-2.16.58.2
+            fixtureAsset: WinMerge-2.16.58.2-ARM64-Setup.exe
+            fixtureSha256: '3dcd40d79fee3f01da7e12765d5dc3f4cbec8e038749b791697b573ba1d3a8ce'
+            fixtureSigner: 'CN=Takashi Sawanaka, O=Takashi Sawanaka, L=Chiba, S=Chiba, C=JP'
             installerArgs: '/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART'
             installerExpects: 'C:\\Program Files\\WinMerge\\WinMergeU.exe'
           # DB Browser for SQLite v3.13.1 ships a different Qt per
-          # architecture: the win64 zip carries Qt5Core.dll and the arm64
-          # zip carries Qt6Core.dll. Same application version, different
+          # architecture: the win64 msi carries Qt5Core.dll and the arm64
+          # msi carries Qt6Core.dll. Same application version, different
           # accessibility surface — Qt 6 exposes SelectionItem on tab items
           # and Qt 5 does not — so running only one would leave half the
           # users untested.
+          #
+          # The arm64 msi carries no Authenticode signature at all upstream, so
+          # its fixtureSigner is empty and the hash is the only check there is.
+          # Pinning a signer it does not have would fail every run; pretending
+          # the other three are equally verified would be worse.
           - app: sqlitebrowser
             os: windows-latest
             arch: x64
-            db4sArch: win64
             tests: tests/test_target_sqlitebrowser.py
             require: DB Browser for SQLite
-            installerUrl: ''
+            fixtureTag: sqlitebrowser-3.13.1
+            fixtureAsset: DB.Browser.for.SQLite-v3.13.1-win64.msi
+            fixtureSha256: 'd023d54b3a5db10c7e896089bb3dbe6e7f4bc4eaa9bbecb34ca414be5970f688'
+            fixtureSigner: 'CN=SignPath Foundation, O=SignPath Foundation, L=Lewes, S=Delaware, C=US'
             installerArgs: ''
             installerExpects: ''
           - app: sqlitebrowser
             os: windows-11-arm
             arch: arm64
-            db4sArch: arm64
             tests: tests/test_target_sqlitebrowser.py
             require: DB Browser for SQLite
-            installerUrl: ''
+            fixtureTag: sqlitebrowser-3.13.1
+            fixtureAsset: DB.Browser.for.SQLite-v3.13.1-arm64.msi
+            fixtureSha256: '89bf0adafad492f44d850d76c188204f0639f185b50482a3cbd59afe509b1d84'
+            fixtureSigner: ''
             installerArgs: ''
             installerExpects: ''
           - app: files
@@ -259,7 +280,10 @@ jobs:
             arch: x64
             tests: tests/test_target_files.py
             require: Files
-            installerUrl: ''
+            fixtureTag: files-4.2.9.0
+            fixtureAsset: Files.Package_4.2.9.0_x64_arm64.msixbundle
+            fixtureSha256: '87bd06f897094fce4d14ec0d87f258c711477c6f1c5271b055c794b3aac7ff41'
+            fixtureSigner: 'CN=Yair Aichenbaum, O=Yair Aichenbaum, L=Baltimore, S=Maryland, C=US'
             installerArgs: ''
             installerExpects: ''
           - app: files
@@ -267,7 +291,10 @@ jobs:
             arch: arm64
             tests: tests/test_target_files.py
             require: Files
-            installerUrl: ''
+            fixtureTag: files-4.2.9.0
+            fixtureAsset: Files.Package_4.2.9.0_x64_arm64.msixbundle
+            fixtureSha256: '87bd06f897094fce4d14ec0d87f258c711477c6f1c5271b055c794b3aac7ff41'
+            fixtureSigner: 'CN=Yair Aichenbaum, O=Yair Aichenbaum, L=Baltimore, S=Maryland, C=US'
             installerArgs: ''
             installerExpects: ''
     name: test-target-app (${{ matrix.app }} / ${{ matrix.arch }})
@@ -362,32 +389,95 @@ jobs:
           print(f'foreground now: {get_window_class(hwnd)!r} {get_window_title(hwnd)!r}')
           "
 
-      # The official installer, addressed by a URL that pins the version and the
-      # architecture together.
+      # Every target application is fetched from the fixture mirror rather than
+      # from its own publisher, and this one step does it for all four.
       #
+      # Mirroring started with Files, which had no choice: its GitHub releases
+      # carry zero assets, so the package exists only on the CDN named in the
+      # project's own cd-sideload-stable.yml, and that CDN is behind Cloudflare
+      # bot protection — a runner's datacentre IP gets a "Just a moment..."
+      # challenge page instead of the 100 MB bundle. The rest followed for a
+      # duller reason: a release gate that reaches out to four separate
+      # third-party hosts on every push fails whenever any one of them is having
+      # a bad day, and none of those failures says anything about this library.
+      #
+      # Mirrored bytes are verified, not trusted:
+      #
+      #   sha256  pins the exact bytes. Each hash was produced twice, from two
+      #           independent downloads of the upstream asset, and they agreed.
+      #   signer  pins the publisher's Authenticode subject, so the bytes stay
+      #           attributable even though they now come from this account.
+      #
+      # fixtureSigner is empty for assets upstream does not sign at all — the DB
+      # Browser arm64 msi, and any zip. There the hash is the only check there
+      # is, and pinning a signature that does not exist would fail every run.
+      - name: Fetch ${{ matrix.app }} from the fixture mirror
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIXTURE_TAG: ${{ matrix.fixtureTag }}
+          FIXTURE_ASSET: ${{ matrix.fixtureAsset }}
+          FIXTURE_SHA256: ${{ matrix.fixtureSha256 }}
+          FIXTURE_SIGNER: ${{ matrix.fixtureSigner }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'fixture'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+          gh release download $env:FIXTURE_TAG `
+            --repo mangokingTW/wintegrate-test-fixtures `
+            --pattern $env:FIXTURE_ASSET --dir $dir
+          if ($LASTEXITCODE -ne 0) { throw "gh release download failed ($LASTEXITCODE)" }
+
+          $path = Join-Path $dir $env:FIXTURE_ASSET
+          if (-not (Test-Path $path)) { throw "$env:FIXTURE_ASSET is not in $dir" }
+          Write-Host ("downloaded {0:N1} MB: {1}" -f ((Get-Item $path).Length / 1MB), $env:FIXTURE_ASSET)
+
+          $hash = (Get-FileHash $path -Algorithm SHA256).Hash
+          if ($hash -ne $env:FIXTURE_SHA256.ToUpperInvariant()) {
+            throw "SHA-256 mismatch for $($env:FIXTURE_ASSET): got $hash, expected $($env:FIXTURE_SHA256)"
+          }
+          Write-Host "sha256 ok: $hash"
+
+          if ($env:FIXTURE_SIGNER) {
+            $sig = Get-AuthenticodeSignature $path
+            Write-Host "signature: $($sig.Status) / $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status), not Valid" }
+            # Compared whole rather than by prefix: a prefix match on
+            # 'CN=Some Publisher' also accepts 'CN=Some Publisher Ltd'.
+            #
+            # Subjects are not ASCII — Notepad++'s carries 'S=Île-de-France'.
+            # The first version of this pinned 'Ile-de-France', because the
+            # console that captured the subject had mangled the accent, and the
+            # mismatch only showed up here. Copy these from a runner's own log.
+            if ($sig.SignerCertificate.Subject -ne $env:FIXTURE_SIGNER) {
+              throw "unexpected signer: $($sig.SignerCertificate.Subject)"
+            }
+          } else {
+            Write-Host "no signer pinned: upstream ships this asset unsigned, so the hash is the only check"
+          }
+
+          "FIXTURE=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       # The result is verified here rather than left to the tests. An install that
       # fails quietly surfaces six seconds later as "Notepad++ not available: not
       # found at any of:" from a test, which points at the wrong thing — that is
       # what happened when Chocolatey's feed went unreachable and this step reset
       # $LASTEXITCODE to hide it.
       - name: Install ${{ matrix.app }} (${{ matrix.arch }})
-        if: matrix.installerUrl != ''
+        if: matrix.installerArgs != ''
         # An installer waiting on a dialog nobody will click would otherwise hold
         # the job open for hours. The arm64 WinMerge setup did exactly that with
         # /SILENT, which shows a progress window; /VERYSILENT does not.
         timeout-minutes: 10
         shell: pwsh
         env:
-          INSTALLER_URL: ${{ matrix.installerUrl }}
           INSTALLER_ARGS: ${{ matrix.installerArgs }}
           INSTALLER_EXPECTS: ${{ matrix.installerExpects }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $setup = Join-Path $env:RUNNER_TEMP 'target-app-setup.exe'
-          Invoke-WebRequest -Uri $env:INSTALLER_URL -UseBasicParsing -OutFile $setup -TimeoutSec 600
-          Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $setup).Length / 1MB), $env:INSTALLER_URL)
-
-          $p = Start-Process -FilePath $setup -Wait -PassThru `
+          $p = Start-Process -FilePath $env:FIXTURE -Wait -PassThru `
             -ArgumentList ($env:INSTALLER_ARGS -split ' ')
           if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
 
@@ -396,25 +486,17 @@ jobs:
           }
           Write-Host ("installed: {0}" -f (Get-Item $env:INSTALLER_EXPECTS).VersionInfo.FileVersion)
 
-      # Installed from the official msi rather than Chocolatey: the Chocolatey
-      # package wraps the win64 build on both architectures, and the whole point
-      # of running this app twice is to cover its two Qt versions. One URL pins
-      # the application version and the Qt version together.
-      - name: Install DB Browser for SQLite (${{ matrix.db4sArch }})
+      # The msi is used rather than the Chocolatey package, which wraps the win64
+      # build on both architectures — and covering the two Qt versions is the
+      # whole reason this app runs twice.
+      - name: Install DB Browser for SQLite (${{ matrix.arch }})
         if: matrix.app == 'sqlitebrowser'
         timeout-minutes: 15
         shell: pwsh
-        env:
-          DB4S_VERSION: '3.13.1'
-          DB4S_ARCH: ${{ matrix.db4sArch }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $url = "https://github.com/sqlitebrowser/sqlitebrowser/releases/download/v$env:DB4S_VERSION/DB.Browser.for.SQLite-v$env:DB4S_VERSION-$env:DB4S_ARCH.msi"
-          $msi = Join-Path $env:RUNNER_TEMP 'db4s-arm64.msi'
-          Invoke-WebRequest -Uri $url -UseBasicParsing -OutFile $msi -TimeoutSec 600
-          Write-Host ("downloaded {0:N1} MB from {1}" -f ((Get-Item $msi).Length / 1MB), $url)
           $p = Start-Process -FilePath msiexec.exe -Wait -PassThru `
-            -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart')
+            -ArgumentList @('/i', "`"$env:FIXTURE`"", '/qn', '/norestart')
           if ($p.ExitCode -ne 0) { throw "msiexec exited $($p.ExitCode)" }
           $dirs = @(
             'C:\Program Files\DB Browser for SQLite',
@@ -428,26 +510,10 @@ jobs:
                 else { 'unknown Qt' }
           Write-Host ("installed: {0} ({1}) at {2}" -f (Get-Item $exe).VersionInfo.FileVersion, $qt, $dir)
 
-      # Files is fetched from a mirror rather than from its own distribution.
-      # Every GitHub release of files-community/Files carries zero assets, so the
-      # packages exist only on the CDN named in the project's own
-      # cd-sideload-stable.yml — and that CDN is behind Cloudflare bot protection,
-      # which answers a runner's datacentre IP with a "Just a moment..." challenge
-      # page instead of the 100 MB bundle. (The small .appinstaller manifest does
-      # come through; the bundle does not.) Solving a bot challenge is not this
-      # workflow's job, so the package was fetched once by hand and mirrored.
-      #
-      # The mirror is an unmodified, publisher-signed bundle. The hash is checked
-      # so the mirror is verified rather than trusted, and the signature is checked
-      # so the bytes stay attributable to Files' own publisher.
       - name: Install Files
         if: matrix.app == 'files'
         timeout-minutes: 15
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FILES_SHA256: '87bd06f897094fce4d14ec0d87f258c711477c6f1c5271b055c794b3aac7ff41'
-          FILES_SIGNER_CN: 'CN=Yair Aichenbaum'
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -458,36 +524,12 @@ jobs:
           $global:LASTEXITCODE = 0
           & "$env:ProgramFiles\dotnet\dotnet.exe" --list-runtimes
 
-          $dir = Join-Path $env:RUNNER_TEMP 'files-pkg'
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          gh release download files-4.2.9.0 `
-            --repo mangokingTW/wintegrate-test-fixtures `
-            --pattern '*.msixbundle' --dir $dir
-          if ($LASTEXITCODE -ne 0) { throw "gh release download failed ($LASTEXITCODE)" }
-
-          $bundle = (Get-ChildItem $dir -Filter '*.msixbundle' | Select-Object -First 1).FullName
-          if (-not $bundle) { throw "no msixbundle in $dir" }
-          Write-Host ("downloaded {0:N1} MB" -f ((Get-Item $bundle).Length / 1MB))
-
-          $hash = (Get-FileHash $bundle -Algorithm SHA256).Hash
-          if ($hash -ne $env:FILES_SHA256.ToUpperInvariant()) {
-            throw "SHA-256 mismatch: got $hash, expected $($env:FILES_SHA256)"
-          }
-          Write-Host "sha256 ok: $hash"
-
-          $sig = Get-AuthenticodeSignature $bundle
-          Write-Host "signature: $($sig.Status) / $($sig.SignerCertificate.Subject)"
-          if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status), not Valid" }
-          if ($sig.SignerCertificate.Subject -notlike "$($env:FILES_SIGNER_CN)*") {
-            throw "unexpected signer: $($sig.SignerCertificate.Subject)"
-          }
-
           # No -DependencyPath. The .appinstaller lists VCLibs, but Files' own
           # manifest depends only on Microsoft.WindowsAppRuntime.2 — and handing
           # Add-AppxPackage a package the manifest does not reference fails the
           # whole install with 0x80073CF3.
           try {
-            Add-AppxPackage -Path $bundle -ForceApplicationShutdown -ErrorAction Stop
+            Add-AppxPackage -Path $env:FIXTURE -ForceApplicationShutdown -ErrorAction Stop
           } catch {
             # 0x80070005 here is usually not a permission problem: MSIX deployment
             # needs the Process Lifetime Manager, which a non-interactive session
