@@ -98,6 +98,10 @@ def _is_embedded_browser_document(element: UiaElement) -> bool:
 # accelerators fire. `DesktopChildSiteBridge` is the current name; the older
 # `DesktopWindowContentBridge` is included for earlier Windows App SDK releases
 # but was not measured here.
+WM_SYSCOMMAND = 0x0112
+SC_MAXIMIZE = 0xF030
+SC_RESTORE = 0xF120
+
 CONTENT_ISLAND_CLASS_SUBSTRINGS = (
     "DesktopChildSiteBridge",
     "DesktopWindowContentBridge",
@@ -599,6 +603,40 @@ class Window:
                 return True
             time.sleep(0.05)
         return False
+
+    def maximize(self, verify: bool = True, timeout: float = 5.0) -> bool:
+        """Maximises this window, and confirms it happened.
+
+        Sends the window `WM_SYSCOMMAND`/`SC_MAXIMIZE` — the message its own
+        title-bar button sends — rather than calling `ShowWindow`. Both work on
+        an ordinary Win32 window, but the message goes through the window's own
+        handling, which is where a framework that manages its own layout is
+        listening.
+
+        `verify` polls `IsZoomed` afterwards rather than trusting the call. A
+        window can decline: some applications restore a remembered size, and a
+        window whose default rectangle is already larger than the screen looks
+        maximised without being maximised. Guessing from a screenshot is how
+        that gets missed.
+
+        Returns whether the window ended up maximised, so a caller who does not
+        care can carry on and one who does can say so.
+        """
+        user32.PostMessageW(self.hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0)
+        if not verify:
+            return True
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if user32.IsZoomed(self.hwnd):
+                return True
+            time.sleep(0.2)
+        logger.debug(f"Window {self.hwnd:#x} did not report as maximized within {timeout}s")
+        return False
+
+    def restore(self) -> None:
+        """Undoes `maximize`, through the same message path."""
+        user32.PostMessageW(self.hwnd, WM_SYSCOMMAND, SC_RESTORE, 0)
 
     def move_and_resize(self, x: int, y: int, width: int, height: int, repaint: bool = True):
         """Reposition window on screen."""

@@ -5,6 +5,49 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [Unreleased]
+
+### Changed
+
+- **`UiaElement.click()` raises instead of doing nothing** when the element has
+  no bounding rectangle. A physical click needs a coordinate; an element that is
+  scrolled out of view, not yet laid out, or hosted somewhere that publishes no
+  rectangle has none. Returning quietly cost four separate debugging rounds in
+  one day, and the symptom was never recognisable: a WinUI flyout button with a
+  `(0,0,0,0)` rectangle read as "focus never reached the rename box", tree nodes
+  outside a dialog's viewport read as "none of the 27 pages had the control",
+  and a list item on a smaller desktop read as "the selection was stolen".
+  `click(require_rectangle=False)` restores the old behaviour where a missing
+  rectangle is genuinely acceptable — `set_focus`'s fallback uses it.
+
+### Added
+
+- **`Window.maximize()` and `Window.restore()`.** Sends
+  `WM_SYSCOMMAND`/`SC_MAXIMIZE`, the message the title-bar button sends, rather
+  than calling `ShowWindow` from outside; that path goes through the window's
+  own handling, where a framework managing its own layout is listening.
+  `maximize` polls `IsZoomed` and returns whether it worked, because a window
+  can decline — one whose default rectangle already exceeds the screen looks
+  maximised without being maximised, and judging that from a screenshot is how
+  it gets missed.
+
+- **`find_packaged_app()` and `launch_packaged_app()`** for MSIX applications. A
+  packaged app has no path to test for and cannot be launched by one; it is
+  addressed by AUMID and started through the shell moniker. This was previously
+  only in this project's own test support, so anyone driving a packaged app had
+  to rediscover it.
+
+- **`interop.find_child_by_control_id()`.** Not `GetDlgItem`: a property sheet
+  keeps every page it has visited as a child of the same dialog, so an id
+  resolves on pages that are not showing. Numeric control ids are also the one
+  identifier on a Win32 dialog that is not translated.
+
+- **A `restype` for `SendMessageW`.** The default is a 32-bit int, which
+  truncates any message answering with a packed pair — `WM_MENUCHAR` returns its
+  command in the high word. `argtypes` are deliberately *not* declared: lParam is
+  genuinely polymorphic, `WM_GETTEXT` wants a buffer there and `SCI_*` wants an
+  integer, and declaring either rejects the other.
+
 ## [0.5.0] — 2026-09-01
 
 Everything here came from driving four real applications rather than from reading

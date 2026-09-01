@@ -109,6 +109,61 @@ class AppHandle:
         return False
 
 
+def find_packaged_app(package_name: str) -> str | None:
+    """The AUMID of an installed MSIX package, or None.
+
+    A packaged application has no path to test for. It is not in Program Files,
+    `where.exe` will not find it, and the executable inside the package cannot
+    be launched directly — the package has to be asked about, and it is
+    addressed as `PackageFamilyName!ApplicationId`.
+
+    Returns None rather than raising, so a caller can decide whether a missing
+    package is a skip or a failure. That decision is not this function's.
+    """
+    script = (
+        f"$p = Get-AppxPackage -Name '{package_name}' | Select-Object -First 1; "
+        "if (-not $p) { exit 1 }; "
+        "$m = Get-AppxPackageManifest $p; "
+        "$a = $m.Package.Applications.Application | Select-Object -First 1; "
+        "Write-Output ($p.PackageFamilyName + '!' + $a.Id)"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.debug(f"Get-AppxPackage for {package_name!r} failed: {exc}")
+        return None
+
+    output = result.stdout.strip()
+    aumid = output.splitlines()[-1].strip() if output else ""
+    if result.returncode != 0 or "!" not in aumid:
+        logger.debug(
+            f"Get-AppxPackage found no installed {package_name!r} (exit {result.returncode})"
+        )
+        return None
+    return aumid
+
+
+def launch_packaged_app(aumid: str) -> list[str]:
+    r"""The command that starts a packaged application.
+
+    Handing the shell moniker to explorer keeps the launcher trivial.
+    `Start-Process shell:appsFolder\...` would work too but puts PowerShell
+    between the caller and the application, and the extra process is one more
+    thing whose exit code means nothing about whether a window appeared.
+
+    The launcher's pid will not be the application's — explorer hands off and
+    exits — which `Window.launch_and_discover` already copes with, because it
+    diffs the desktop rather than trusting the pid it was given.
+    """
+    return ["explorer.exe", f"shell:appsFolder\\{aumid}"]
+
+
 def kill_processes(names: tuple[str, ...] | list[str]) -> None:
     """Best-effort force-kill by image name (fresh-launch sweep for single-instance apps)."""
     for name in names:
