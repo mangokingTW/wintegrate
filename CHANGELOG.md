@@ -5,6 +5,20 @@ All notable changes are recorded here. This project follows
 API may still change between minor versions, and any such change is called out
 below.
 
+## [Unreleased]
+
+### Added
+
+- **A blocking dialog now says what it is asking.** When window discovery times
+  out, any `#32770` / message-box class among the visible windows has its child
+  controls' text printed under it, so the failure reads
+  `Static: 要在網域或工作群組中...` / `Button: 確定` rather than just
+  `title='System Properties'`. This came from a real ARM64 CI failure where a
+  System Properties dialog held the foreground: the census could name the
+  window, and nobody could look at the screen of a runner that no longer exists.
+  Read via `WM_GETTEXT`, which USER32 marshals across the process boundary, so
+  it needs no COM — it runs when something has already gone wrong.
+
 ## [0.5.0b1] — 2026-09-01
 
 Everything here came from driving four real applications rather than from reading

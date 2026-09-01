@@ -358,6 +358,8 @@ user32.GetClassNameW.restype = ctypes.c_int
 
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
+user32.IsWindow.argtypes = [wintypes.HWND]
+user32.IsWindow.restype = wintypes.BOOL
 
 user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 user32.SendInput.restype = wintypes.UINT
@@ -993,6 +995,60 @@ def find_child_windows(hwnd: int, class_substrings: tuple[str, ...]) -> list[int
         return True
 
     user32.EnumChildWindows(wintypes.HWND(hwnd), WNDENUMPROC(enum_proc), 0)
+    return found
+
+
+def describe_dialog_contents(hwnd: int, limit: int = 14) -> list[str]:
+    """The text of a dialog's child controls, as "ClassName: text" lines.
+
+    A window census answers "what appeared"; this answers "what does it say".
+    For an unexpected dialog sitting on a CI machine — an update prompt, a
+    security warning, a licence agreement — the title is rarely enough to act on
+    and nobody can look at the screen.
+
+    Read with `WM_GETTEXT` rather than through UIA. It is a *system* message, so
+    USER32 marshals the buffer across the process boundary; a custom message
+    carrying a pointer would not survive the trip. It also needs no COM, which
+    matters here because this runs while something has already gone wrong.
+
+    Controls with no text are skipped: a dialog is mostly invisible layout, and
+    the lines worth reading are the static text and the buttons.
+    """
+    # `EnumChildWindows(NULL, ...)` enumerates every top-level window on the
+    # desktop, so a handle that has already been destroyed would come back as a
+    # census of the whole machine rather than as nothing.
+    if not hwnd or not user32.IsWindow(hwnd):
+        return []
+
+    found: list[str] = []
+
+    def enum_proc(child, _lparam):
+        if len(found) >= limit:
+            return False
+        try:
+            cls_name = get_window_class(child)
+            length = user32.GetWindowTextLengthW(wintypes.HWND(child))
+            if length <= 0:
+                # A control can refuse GetWindowTextLength and still answer
+                # WM_GETTEXT — an owner-drawn SysLink is the usual case.
+                buf = ctypes.create_unicode_buffer(512)
+                user32.SendMessageW(wintypes.HWND(child), WM_GETTEXT, 512, buf)
+                text = buf.value
+            else:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(wintypes.HWND(child), buf, length + 1)
+                text = buf.value
+            text = " ".join(text.split())
+            if text:
+                found.append(f"{cls_name}: {text[:120]}")
+        except Exception:
+            pass
+        return True
+
+    try:
+        user32.EnumChildWindows(wintypes.HWND(hwnd), WNDENUMPROC(enum_proc), 0)
+    except Exception as exc:
+        logger.debug(f"describe_dialog_contents failed for {hwnd:#x}: {exc}")
     return found
 
 

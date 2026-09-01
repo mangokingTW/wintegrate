@@ -197,3 +197,33 @@ def test_closing_the_dialog_is_observable(dialog):
 
     with pytest.raises(WindowDiscoveryTimeoutError):
         Window.find(class_name="#32770", title_exact=DIALOG_TITLE, timeout=1.0)
+
+
+def test_dialog_contents_are_readable_for_a_failure_message(dialog):
+    """An unexpected dialog has to be able to say what it is asking.
+
+    A window census answers "what appeared". On a runner that no longer exists,
+    the next question is "what did it say", and a title like 'System Properties'
+    narrows nothing down — that exact dialog broke three tests on an ARM64 runner
+    and the census could only name it.
+
+    Read through `WM_GETTEXT`, which USER32 marshals across the process boundary
+    because it is a system message, so this works on a dialog belonging to
+    somebody else's process without COM.
+    """
+    from wintegrate.interop import describe_dialog_contents
+
+    lines = describe_dialog_contents(dialog.hwnd)
+    assert lines, "a dialog with labelled controls produced no readable text"
+    # Every line is "ClassName: text", and controls with no text are dropped —
+    # a dialog is mostly invisible layout and those lines would be noise.
+    assert all(": " in line for line in lines), lines
+    assert any(line.startswith("Button: ") for line in lines), lines
+
+
+def test_dialog_contents_tolerates_a_dead_window():
+    """It runs while something has already gone wrong, so it cannot add a failure."""
+    from wintegrate.interop import describe_dialog_contents
+
+    assert describe_dialog_contents(0) == []
+    assert describe_dialog_contents(0xDEAD_BEEF) == []
