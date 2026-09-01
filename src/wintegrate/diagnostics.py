@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
 
+from wintegrate import pointer_overlay
 from wintegrate.exceptions import DiagnosticPipelineError
 from wintegrate.interop import (
     BITMAPINFOHEADER,
@@ -64,7 +65,7 @@ def _dib_to_image(hdc_mem, hbmp, w: int, h: int):
     return Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
 
 
-def capture_screen_image(all_monitors: bool = False):
+def capture_screen_image(all_monitors: bool = False, draw_cursor: bool = False):
     """
     Captures the desktop into a PIL Image.
 
@@ -72,6 +73,11 @@ def capture_screen_image(all_monitors: bool = False):
     virtual desktop instead — on a multi-monitor runner the window under test is
     quite often not on the primary one, and a primary-only screenshot of a failure
     that happened elsewhere is worse than none, because it looks like evidence.
+
+    `draw_cursor=True` adds the pointer, which a BitBlt of the desktop never
+    contains. It defaults to False because callers compare these images pixel by
+    pixel; a pointer wandering into frame would turn a passing assertion into a
+    flake. `ContinuousRecorder` turns it on for video, where the opposite is true.
     """
     if all_monitors:
         x = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
@@ -91,7 +97,12 @@ def capture_screen_image(all_monitors: bool = False):
     # sits left of or above the primary one.
     gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY)
     try:
-        return _dib_to_image(hdc_mem, hbmp, w, h)
+        img = _dib_to_image(hdc_mem, hbmp, w, h)
+        if draw_cursor:
+            # (x, y) is the capture origin, negative when a monitor sits left of or
+            # above the primary one; cursor coordinates are screen-absolute.
+            pointer_overlay.draw_cursor(img, origin=(x, y))
+        return img
     finally:
         gdi32.DeleteDC(hdc_mem)
         user32.ReleaseDC(0, hdc_screen)
@@ -165,12 +176,25 @@ class ContinuousRecorder:
     than a run failing over a missing artifact.
     """
 
-    def __init__(self, output_path: str | Path, fps: int = 30):
+    def __init__(
+        self,
+        output_path: str | Path,
+        fps: int = 30,
+        draw_cursor: bool = True,
+        click_markers: bool = True,
+    ):
         self.output_path = Path(output_path)
         self.fps = fps
         self.interval = 1.0 / fps
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
+        # On by default: a recording is watched, not diffed, and one with no pointer
+        # cannot answer the first question anybody asks of it -- where did it click.
+        # The markers are drawn after the screen grab, so unlike an on-screen
+        # visualiser no window can cover them.
+        self.draw_cursor = draw_cursor
+        self.click_markers = click_markers
+        self._clicks: pointer_overlay.ClickTracker | None = None
         self._frame_count = 0
         # PyAV encoding state
         self._av = None
@@ -224,6 +248,10 @@ class ContinuousRecorder:
         h = user32.GetSystemMetrics(1) & ~1
 
         if self._start_pyav(w, h):
+            if self.click_markers:
+                tracker = pointer_overlay.ClickTracker()
+                # A hook this cannot install costs the markers, not the recording.
+                self._clicks = tracker if tracker.start() else None
             self.stop_event.clear()
             self._frame_count = 0
             self._t0 = time.monotonic()
@@ -259,6 +287,10 @@ class ContinuousRecorder:
             t0 = time.monotonic()
             try:
                 img = capture_screen_image()
+                if self.click_markers and self._clicks is not None:
+                    pointer_overlay.draw_click_markers(img, self._clicks.recent())
+                if self.draw_cursor:
+                    pointer_overlay.draw_cursor(img)
                 if self._container is not None:
                     self._encode_pyav_frame(img)
                     self._frame_count += 1
@@ -273,6 +305,10 @@ class ContinuousRecorder:
         self.stop_event.set()
         if self.thread:
             self.thread.join(timeout=timeout)
+        if self._clicks is not None:
+            # After the capture thread, or a frame can read a hook being torn down.
+            self._clicks.stop()
+            self._clicks = None
 
         if self._container is not None:
             # Flush the encoder before closing, or the tail of the recording — the

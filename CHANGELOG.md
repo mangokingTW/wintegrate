@@ -6,6 +6,49 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.4] — 2026-09-01
+
+### Added
+
+- **Recordings now show the pointer and its clicks.** `ContinuousRecorder` draws the
+  cursor into each frame and marks every click with an expanding, fading ring and a
+  crosshair. Both are on by default (`draw_cursor`, `click_markers`).
+
+  A BitBlt of the desktop contains no cursor — the pointer is composited by the
+  system, not stored in the desktop bitmap — so until now a recording showed windows
+  changing with nothing to say where the pointer was or that a click had happened.
+
+  Drawing after the grab has a property no on-screen visualiser can match: nothing
+  can cover it. An overlay window has to win a z-order fight it cannot always win.
+  Measured with one variable — the same window and the same click point, only
+  `WS_EX_TOPMOST` changing — a third-party visualiser's ring went from 2032 pixels to
+  0, and a keystroke did not bring it back. `tests/test_pointer_overlay.py::
+  test_a_topmost_window_cannot_cover_the_markers` asserts the new behaviour against
+  that exact case.
+
+  Clicks come from a `WH_MOUSE_LL` hook rather than from wintegrate's own injection
+  sites, so a click from any source appears — including one a test did not mean to
+  make. The crosshair marks the coordinate the click was sent to, which is what makes
+  a wrong-coordinate bug visible rather than invisible.
+
+- `capture_screen_image(draw_cursor=True)` for the same treatment on a single
+  screenshot. It defaults to `False`: callers compare these images pixel by pixel, and
+  a pointer wandering into frame would turn a passing assertion into a flake.
+
+- `get_cursor_state()`, `ClickTracker`, `ClickEvent`, `draw_click_markers()`,
+  `draw_pointer_overlay()` and `cursor_overlay_image()` are public, for a caller
+  building its own frames.
+
+### Fixed
+
+- **GDI handles are now passed at pointer width.** `DeleteObject`, `SelectObject`,
+  `CreateCompatibleDC`, `CreateCompatibleBitmap`, `GetDIBits`, `BitBlt`, `GetDC` and
+  `ReleaseDC` had no declared signatures, so ctypes converted their handles as
+  `c_int`. Any handle above 2^31 raised `OverflowError: int too long to convert` —
+  which `GetIconInfo`'s bitmaps did here on the first run. The existing capture path
+  survived because GDI hands out small values in practice; that was luck, not a
+  contract.
+
 ## [0.5.3] — 2026-09-01
 
 ### Changed

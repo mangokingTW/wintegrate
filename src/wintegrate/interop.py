@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from ctypes import wintypes
+from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,16 @@ WM_KEYUP = 0x0101
 WM_IME_CONTROL = 0x0283
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
+WM_RBUTTONDOWN = 0x0204
+WM_MBUTTONDOWN = 0x0207
+WM_QUIT = 0x0012
+
+# Low-level mouse hook
+WH_MOUSE_LL = 14
+
+# GetCursorInfo / DrawIconEx
+CURSOR_SHOWING = 0x00000001
+DI_NORMAL = 0x0003
 
 # IME Constants
 IMC_GETCONVERSIONMODE = 0x0001
@@ -160,6 +171,8 @@ SM_XVIRTUALSCREEN = 76
 SM_YVIRTUALSCREEN = 77
 SM_CXVIRTUALSCREEN = 78
 SM_CYVIRTUALSCREEN = 79
+SM_CXCURSOR = 13
+SM_CYCURSOR = 14
 
 # PrintWindow flags
 PW_RENDERFULLCONTENT = 0x00000002
@@ -347,6 +360,35 @@ class POINT(ctypes.Structure):
     _fields_ = [
         ("x", wintypes.LONG),
         ("y", wintypes.LONG),
+    ]
+
+
+class CURSORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hCursor", wintypes.HANDLE),
+        ("ptScreenPos", POINT),
+    ]
+
+
+class ICONINFO(ctypes.Structure):
+    _fields_ = [
+        ("fIcon", wintypes.BOOL),
+        ("xHotspot", wintypes.DWORD),
+        ("yHotspot", wintypes.DWORD),
+        ("hbmMask", wintypes.HBITMAP),
+        ("hbmColor", wintypes.HBITMAP),
+    ]
+
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", POINT),
+        ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
     ]
 
 
@@ -551,6 +593,129 @@ user32.GetForegroundWindow.argtypes = []
 user32.GetForegroundWindow.restype = wintypes.HWND
 
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+
+# GDI handles are pointer-width. Left unpinned, ctypes converts them as c_int and
+# a handle above 2^31 raises "int too long to convert" -- which is exactly what
+# GetIconInfo's bitmaps did here. The existing capture path got away with it
+# because GDI hands out small values in practice; that is luck, not a contract.
+gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+gdi32.DeleteObject.restype = wintypes.BOOL
+gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+gdi32.CreateCompatibleDC.restype = wintypes.HDC
+gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+gdi32.SelectObject.restype = wintypes.HGDIOBJ
+gdi32.DeleteDC.argtypes = [wintypes.HDC]
+gdi32.DeleteDC.restype = wintypes.BOOL
+gdi32.GetDIBits.argtypes = [
+    wintypes.HDC,
+    wintypes.HBITMAP,
+    ctypes.c_uint,
+    ctypes.c_uint,
+    ctypes.c_void_p,
+    ctypes.POINTER(BITMAPINFOHEADER),
+    ctypes.c_uint,
+]
+gdi32.GetDIBits.restype = ctypes.c_int
+gdi32.BitBlt.argtypes = [
+    wintypes.HDC,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.HDC,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.DWORD,
+]
+gdi32.BitBlt.restype = wintypes.BOOL
+user32.GetDC.argtypes = [wintypes.HWND]
+user32.GetDC.restype = wintypes.HDC
+user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+user32.ReleaseDC.restype = ctypes.c_int
+
+user32.GetCursorInfo.argtypes = [ctypes.POINTER(CURSORINFO)]
+user32.GetCursorInfo.restype = wintypes.BOOL
+user32.GetIconInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(ICONINFO)]
+user32.GetIconInfo.restype = wintypes.BOOL
+user32.DrawIconEx.argtypes = [
+    wintypes.HDC,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.HANDLE,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_uint,
+    wintypes.HANDLE,
+    ctypes.c_uint,
+]
+user32.DrawIconEx.restype = wintypes.BOOL
+user32.FillRect.argtypes = [wintypes.HDC, ctypes.POINTER(RECT), wintypes.HANDLE]
+user32.FillRect.restype = ctypes.c_int
+gdi32.CreateSolidBrush.argtypes = [wintypes.DWORD]
+gdi32.CreateSolidBrush.restype = wintypes.HANDLE
+# LPARAM, not int: a truncated hook parameter raises inside the hook callback,
+# where ctypes prints the traceback and returns None. The event is still seen but
+# never reaches the next hook in the chain, and nothing fails loudly.
+user32.CallNextHookEx.argtypes = [
+    wintypes.HHOOK,
+    ctypes.c_int,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.CallNextHookEx.restype = ctypes.c_long
+# argtypes are deliberately left alone: the hook procedure's WINFUNCTYPE is
+# defined by the caller, and pinning one here would reject every other shape.
+user32.SetWindowsHookExW.restype = wintypes.HHOOK
+user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+user32.PostThreadMessageW.argtypes = [
+    wintypes.DWORD,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.PostThreadMessageW.restype = wintypes.BOOL
+
+
+class CursorState(NamedTuple):
+    """Where the pointer is and which cursor is being shown for it."""
+
+    handle: int
+    position: tuple[int, int]
+    hotspot: tuple[int, int]
+
+
+def get_cursor_state() -> CursorState | None:
+    """The visible cursor, or None when nothing is being shown.
+
+    A screen grab through BitBlt does not include the pointer -- the cursor is
+    composited by the system, not stored in the desktop bitmap -- so anything that
+    wants a pointer in its output has to ask for it separately and draw it.
+    """
+    info = CURSORINFO()
+    info.cbSize = ctypes.sizeof(CURSORINFO)
+    if not user32.GetCursorInfo(ctypes.byref(info)):
+        return None
+    if not (info.flags & CURSOR_SHOWING) or not info.hCursor:
+        return None
+
+    hotspot = (0, 0)
+    icon = ICONINFO()
+    if user32.GetIconInfo(info.hCursor, ctypes.byref(icon)):
+        hotspot = (int(icon.xHotspot), int(icon.yHotspot))
+        # GetIconInfo hands over two bitmaps that the caller owns; leaking one per
+        # frame would exhaust the GDI object quota partway through a recording.
+        for bitmap in (icon.hbmMask, icon.hbmColor):
+            if bitmap:
+                gdi32.DeleteObject(bitmap)
+
+    return CursorState(
+        handle=int(info.hCursor),
+        position=(int(info.ptScreenPos.x), int(info.ptScreenPos.y)),
+        hotspot=hotspot,
+    )
 
 
 def _send_input_checked(arr, label: str) -> bool:
