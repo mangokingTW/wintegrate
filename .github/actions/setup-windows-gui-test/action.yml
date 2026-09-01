@@ -1,0 +1,246 @@
+name: Set up a Windows GUI test runner
+description: >
+  Prepares a hosted Windows runner for driving a real desktop application: quiets
+  the things that steal the foreground, installs wintegrate, and optionally starts
+  an on-screen visualiser so the recording shows which keys and clicks were sent.
+
+# Why this exists as an action rather than as steps copied into each workflow:
+# the arm64 preparation was copied by hand into four reproduction workflows, and
+# the copy was broken. `wsl --update` answers "The Windows Subsystem for Linux is
+# not installed" and exits 0 on that image, so the step looked like it worked
+# while the popup it was meant to stop kept appearing every 30 seconds. Four
+# workflows carried that silently. One definition cannot drift like that.
+
+inputs:
+  python-version:
+    description: Python to install. Set to an empty string to skip setup-python.
+    required: false
+    default: "3.13"
+  wintegrate-version:
+    description: >
+      Version specifier for wintegrate, e.g. ">=0.5.3". The video extra is always
+      included, since a runner nobody is watching is the reason to record.
+    required: false
+    default: ">=0.5.3"
+  input-hud:
+    description: >
+      Install and start Keyviz, so the recording shows the keys and clicks that
+      were sent. "false" skips it entirely.
+    required: false
+    default: "true"
+  keyviz-version:
+    description: Keyviz release to install.
+    required: false
+    default: "2.1.1"
+
+runs:
+  using: composite
+  steps:
+    # Things on the arm64 image take the foreground away from whatever is being
+    # driven, and they do it *after* the run has started: the provisioning daemon
+    # spawns a terminal popup every 30 seconds until WSL is there, and Edge's
+    # first-run page appears the first time anything launches a URL.
+    #
+    # A test that loses the foreground does not fail with "the foreground was
+    # taken" — it fails with an empty field, a keystroke that went nowhere, or a
+    # window that never came up.
+    - name: Quiet the arm64 image
+      if: runner.arch == 'ARM64'
+      shell: pwsh
+      run: |
+        $p = Start-Process -FilePath wsl.exe -ArgumentList '--update', '--confirm' `
+          -NoNewWindow -PassThru
+        if (-not $p.WaitForExit(60000)) { $p.Kill(); Write-Host 'wsl --update timed out' }
+
+        # `wsl --status` writes UTF-16; through a pipe the interleaved NULs make
+        # the string match nothing, so the encoding is set for the call.
+        function Get-WslStatus {
+          $prev = [Console]::OutputEncoding
+          try {
+            [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+            return ((& wsl.exe --status 2>&1 | Out-String) -replace "\0", '')
+          } finally { [Console]::OutputEncoding = $prev }
+        }
+        $status = Get-WslStatus
+        Write-Host "WSL status: $status"
+
+        # The part that is easy to leave out, and was: `wsl --update` alone is a
+        # no-op here and exits 0. There is nothing to update until WSL exists.
+        if ($status -match 'not installed') {
+          try {
+            $rel = Invoke-RestMethod 'https://api.github.com/repos/microsoft/WSL/releases/latest'
+            $asset = $rel.assets | Where-Object { $_.name -match 'arm64\.msi$' } | Select-Object -First 1
+            if ($asset) {
+              Write-Host "Downloading $($asset.name)..."
+              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile wsl-arm64.msi
+              Start-Process msiexec -ArgumentList '/i', 'wsl-arm64.msi', '/qn', '/norestart' -Wait
+              Write-Host "WSL status after install: $(Get-WslStatus)"
+            }
+          } catch {
+            Write-Host "WSL MSI fallback skipped: $_"
+          }
+        }
+
+        # Edge's first-run page, in both hives.
+        foreach ($hive in 'HKLM', 'HKCU') {
+          $key = "${hive}:\SOFTWARE\Policies\Microsoft\Edge"
+          New-Item -Path $key -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path $key -Name 'HideFirstRunExperience' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path $key -Name 'PreventFirstRunPage' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        # The OOBE privacy experience is a different dialog from Edge's.
+        $oobe = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE'
+        New-Item -Path $oobe -Force -ErrorAction SilentlyContinue | Out-Null
+        Set-ItemProperty -Path $oobe -Name 'DisablePrivacyExperience' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+
+        Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' `
+          -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # wsl.exe exits non-zero when WSL is absent, and this step is best-effort.
+        $global:LASTEXITCODE = 0
+
+    - name: Set up Python
+      if: inputs.python-version != ''
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install wintegrate
+      shell: pwsh
+      run: pip install "wintegrate[video]${{ inputs.wintegrate-version }}" pytest
+
+    # A first-run popup owning the foreground is not something the test can
+    # recover from politely, and on these images it is usually a CoreWindow
+    # ("Microsoft account", "Search") rather than anything the test launched.
+    - name: Close anything holding the foreground
+      shell: pwsh
+      run: |
+        python -c "
+        import time
+        from wintegrate.interop import (
+            get_foreground_window, get_window_class, get_window_title, user32,
+        )
+        WM_CLOSE = 0x0010
+        for attempt in range(2):
+            hwnd = get_foreground_window()
+            if not hwnd:
+                continue
+            cls, title = get_window_class(hwnd), get_window_title(hwnd)
+            print(f'pass {attempt}: foreground is class={cls!r} title={title!r}')
+            if cls == 'Windows.UI.Core.CoreWindow':
+                user32.SendMessageW(hwnd, WM_CLOSE, 0, 0)
+                print('  sent WM_CLOSE')
+                time.sleep(3)
+        hwnd = get_foreground_window()
+        print(f'foreground now: {get_window_class(hwnd)!r} {get_window_title(hwnd)!r}')
+        "
+
+    # Without this, a recording shows an application changing on its own: fields
+    # filling in, dialogs opening, with no indication of what was sent. The
+    # assertions are the evidence, but a maintainer watching the video still has
+    # to take the inputs on trust.
+    - name: Install the input visualiser
+      if: inputs.input-hud == 'true'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $ver = '${{ inputs.keyviz-version }}'
+        $url = "https://github.com/mulaRahul/keyviz/releases/download/v$ver/keyviz_${ver}_windows.msi"
+        $msi = Join-Path $env:RUNNER_TEMP 'keyviz.msi'
+        Invoke-WebRequest -Uri $url -OutFile $msi
+        $sig = Get-AuthenticodeSignature $msi
+        Write-Host "keyviz msi signature: $($sig.Status)"
+        if ($sig.Status -ne 'Valid') { throw "keyviz msi signature is $($sig.Status)" }
+        $p = Start-Process msiexec -ArgumentList '/i', $msi, '/qn', '/norestart' -PassThru -Wait
+        if ($p.ExitCode -ne 0) { throw "msiexec exited $($p.ExitCode)" }
+        $exe = 'C:\Program Files\keyviz\keyviz.exe'
+        if (-not (Test-Path $exe)) { throw "keyviz.exe is not at $exe after install" }
+        Write-Host "installed: $exe"
+
+    # Keyviz's own settings live in one JSON file, so no GUI is needed. The
+    # values here are chosen for a 10 fps recording rather than for a desktop —
+    # see the comments.
+    - name: Configure and start the input visualiser
+      if: inputs.input-hud == 'true'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $dir = Join-Path $env:APPDATA 'org.keyviz'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+        # filter "none" shows every keystroke, which is only safe because the
+        # tests type through send_physical_keys: that sends real virtual keys.
+        #
+        # Unicode-injected text would be mislabelled. wintegrate's send_char_input
+        # uses KEYEVENTF_UNICODE, which Windows delivers as vkCode=VK_PACKET with
+        # the character in scanCode, and Keyviz reads scanCode as if it were a
+        # virtual key -- so 'a' (97) renders as Numpad1 (VK 0x61) and 'q' (113) as
+        # F2 (VK 0x71). If a test goes back to Unicode typing, set this to
+        # 'custom' with an explicit list rather than showing wrong labels.
+        $keyEvent = @{
+          dragThreshold = 50
+          filter = 'none'
+          allowedKeys = @(
+            'ControlLeft','ControlRight','ShiftLeft','ShiftRight','Alt','AltGr',
+            'MetaLeft','MetaRight','Escape','Return','Tab','Backspace','Delete',
+            'UpArrow','DownArrow','LeftArrow','RightArrow','Home','End',
+            'PageUp','PageDown','Space'
+          )
+          showEventHistory = $true    # the sequence, not just the last key
+          maxHistory = 5
+          lingerDurationMs = 3000     # ~30 frames at 10 fps; nothing falls between samples
+          toggleShortcut = @('ShiftLeft','F10')
+        }
+        $keyStyle = @{
+          # animation "none": a 0.25s fade leaves the first frames of every
+          # keystroke half-transparent, which at 10 fps is most of them.
+          # bottom-center with a small margin: every position overlaps something
+          # once the app under test is maximised, and the bottom strip is the
+          # least informative one on a runner -- the taskbar lives there and
+          # nothing under test does. The 100px default put it over the dialog's
+          # own buttons.
+          appearance = @{ monitor = $null; flexDirection = 'row'; alignment = 'bottom-center'
+                          marginX = 20; marginY = 10; animation = 'none'
+                          animationDuration = 0; style = 'minimal' }
+          layout = @{ showIcon = $false; showSymbol = $false; showPressCount = $true
+                      iconAlignment = 'flex-end' }
+          color = @{ color = '#ffffff'; secondaryColor = '#1a1a1a'; useGradient = $false }
+          modifier = @{ highlight = $true; color = '#ffd166'; secondaryColor = '#000000'
+                        textColor = '#000000'; borderColor = '#000000' }
+          # 24, not 30: a row of five labels has to fit across the screen.
+          text = @{ size = 24; color = '#000000'; caps = 'capitalize'
+                    variant = 'text'; alignment = 'center' }
+          border = @{ enabled = $true; width = 3; color = '#000000'; radius = 0.25 }
+          # Opaque: the default #ffffff99 lets the application show through the label.
+          background = @{ enabled = $true; color = '#ffffffff' }
+          # showClicks draws a ring where the button went down. It only lands in
+          # the right place because send_mouse_click injects a move event as well
+          # (wintegrate >= 0.5.3); with SetCursorPos alone the ring stays wherever
+          # Keyviz last saw the cursor.
+          mouse = @{ showClicks = $true; size = 120; color = '#ff2d55'
+                     keepHighlight = $false; showIndicator = $true; keepIndicator = $false
+                     indicatorSize = 44; indicatorOffsetX = 44; indicatorOffsetY = 44 }
+        }
+
+        # zustand's persist wraps state as {"state":…,"version":n} and stores it
+        # as a JSON string through its storage adapter.
+        $store = @{
+          key_event_store = (@{ state = $keyEvent; version = 0 } | ConvertTo-Json -Depth 8 -Compress)
+          key_style_store = (@{ state = $keyStyle; version = 0 } | ConvertTo-Json -Depth 8 -Compress)
+        }
+        $path = Join-Path $dir 'store.json'
+        $store | ConvertTo-Json -Depth 8 | Set-Content -Path $path -Encoding utf8
+        Write-Host "wrote $path ($((Get-Item $path).Length) bytes)"
+
+        Start-Process -FilePath 'C:\Program Files\keyviz\keyviz.exe'
+        Start-Sleep -Seconds 6
+        $n = (Get-Process keyviz -ErrorAction SilentlyContinue | Measure-Object).Count
+        if ($n -lt 1) { throw "keyviz did not start" }
+        Write-Host "keyviz running ($n process)"
+
+        # Launching it a second time brings its window to the foreground, so this
+        # is the last step before the test: nothing after it should start keyviz.
+        python -c "
+        from wintegrate.interop import get_foreground_window, get_window_class, get_window_title
+        h = get_foreground_window()
+        print(f'foreground before the test: class={get_window_class(h)!r} title={get_window_title(h)!r}')
+        "
