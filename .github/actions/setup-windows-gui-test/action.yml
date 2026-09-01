@@ -193,13 +193,14 @@ runs:
         $keyStyle = @{
           # animation "none": a 0.25s fade leaves the first frames of every
           # keystroke half-transparent, which at 10 fps is most of them.
-          # bottom-center with a small margin: every position overlaps something
-          # once the app under test is maximised, and the bottom strip is the
-          # least informative one on a runner -- the taskbar lives there and
-          # nothing under test does. The 100px default put it over the dialog's
-          # own buttons.
+          # bottom-center, but clear of the taskbar. The bottom strip is the least
+          # informative part of a runner's screen, which is why the labels go
+          # there -- but the taskbar is topmost too, and it wins: at marginY 10
+          # the labels sat behind it and the first recordings showed no HUD at
+          # all while keyviz was running perfectly well. 90px clears a 48px
+          # taskbar with room for the label's own height.
           appearance = @{ monitor = $null; flexDirection = 'row'; alignment = 'bottom-center'
-                          marginX = 20; marginY = 10; animation = 'none'
+                          marginX = 20; marginY = 90; animation = 'none'
                           animationDuration = 0; style = 'minimal' }
           layout = @{ showIcon = $false; showSymbol = $false; showPressCount = $true
                       iconAlignment = 'flex-end' }
