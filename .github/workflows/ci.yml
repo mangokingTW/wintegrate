@@ -206,7 +206,7 @@ jobs:
             fixtureTag: notepadpp-8.9.8
             fixtureAsset: npp.8.9.8.Installer.x64.exe
             fixtureSha256: '7b2a949bf460fb37a3888c9048698f43222a185a48323023df1c51e78a3ca1c2'
-            fixtureSigner: 'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, S=Ile-de-France, C=FR'
+            fixtureSigner: 'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, S=Île-de-France, C=FR'
             installerArgs: '/S'
             installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
           - app: notepad++
@@ -217,7 +217,7 @@ jobs:
             fixtureTag: notepadpp-8.9.8
             fixtureAsset: npp.8.9.8.Installer.arm64.exe
             fixtureSha256: '3ac2c91245e980c4fd0991e5c1971439e234c0713e994d1dae532c70b7528587'
-            fixtureSigner: 'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, S=Ile-de-France, C=FR'
+            fixtureSigner: 'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, S=Île-de-France, C=FR'
             installerArgs: '/S'
             installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
           - app: winmerge
@@ -446,6 +446,11 @@ jobs:
             if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status), not Valid" }
             # Compared whole rather than by prefix: a prefix match on
             # 'CN=Some Publisher' also accepts 'CN=Some Publisher Ltd'.
+            #
+            # Subjects are not ASCII — Notepad++'s carries 'S=Île-de-France'.
+            # The first version of this pinned 'Ile-de-France', because the
+            # console that captured the subject had mangled the accent, and the
+            # mismatch only showed up here. Copy these from a runner's own log.
             if ($sig.SignerCertificate.Subject -ne $env:FIXTURE_SIGNER) {
               throw "unexpected signer: $($sig.SignerCertificate.Subject)"
             }
