@@ -226,13 +226,14 @@ runs:
           # a move event as well (wintegrate >= 0.5.3); with SetCursorPos alone it
           # stays wherever Keyviz last saw the cursor.
           #
-          # One limitation this cannot fix: the overlay carries WS_EX_NOACTIVATE so
-          # it never becomes the active window, and between two topmost windows the
-          # activated one draws above. So an app that is itself topmost -- Command
-          # Palette, for one -- covers anything drawn inside its rectangle. The
-          # keycaps sit outside it and stay visible; the cursor ring does not.
-          # Verified with one variable: the same dialog, the same click, with and
-          # without HWND_TOPMOST.
+          # Open question, deliberately not documented as a limitation: whether a
+          # topmost app such as Command Palette covers the cursor ring. An earlier
+          # HWND_TOPMOST A/B suggested it does, but that ran with keepHighlight
+          # off, so the ring only existed for the ~4 frames after a click -- the
+          # same sampling window that has already produced one wrong conclusion
+          # here. Visible keycaps prove nothing either way: they are drawn outside
+          # the app's rectangle. Settle it by reading the palette recordings now
+          # that the highlight is continuous.
           # Offsets are 0, not Keyviz's default 50. The offset exists so the badge
           # does not sit under the cursor graphic, which is the right trade on a
           # desktop; on a recording it puts the marker 50px away from the thing it
