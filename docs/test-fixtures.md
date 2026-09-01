@@ -77,17 +77,25 @@ fixed it. These run on request, not on every push.
 |---|---|---|---|
 | Notepad++ [#16326][npp] | `notepadpp-8.7.9` | `notepadpp-8.8` | Ctrl+Shift+D inserts an invisible `0x04` |
 | DB Browser [#3735][db4s] | `sqlitebrowser-3.13.0` | `sqlitebrowser-3.13.1-portable` | copying one cell appends a trailing newline |
-| WinMerge [#3055][wm] | `winmerge-2.16.52.2` | `winmerge-2.16.53` | "Insert tabs" resets on leaving Options |
+| WinMerge [#3015][wm] | `winmerge-2.16.52` | `winmerge-2.16.52.2` | "Insert tabs" resets on leaving Options |
 | Files [#18820][files] | `files-4.2.7.0` | `files-4.2.9.0` | rename-flyout accelerators do not fire |
 
 [npp]: https://github.com/notepad-plus-plus/notepad-plus-plus/issues/16326
 [db4s]: https://github.com/sqlitebrowser/sqlitebrowser/issues/3735
-[wm]: https://github.com/WinMerge/winmerge/issues/3055
+[wm]: https://github.com/WinMerge/winmerge/issues/3015
 [files]: https://github.com/files-community/Files/issues/18820
 
 Portable packages are used for the demos wherever they exist, for two reasons:
 two versions of an installed application cannot be present at once, and for
 Notepad++ **the fix itself is in the portable package's `config.xml`**.
+
+!!! note "Pick the pair from the fix, not from the report"
+
+    WinMerge's was mirrored as 2.16.52.2/2.16.53 first, because #3055 was filed
+    two days after 2.16.52.2 shipped. Both builds then behaved correctly — the
+    maintainer had closed #3055 as a duplicate of **#3015**, already *fixed in*
+    2.16.52.2. The real pair is 2.16.52/2.16.52.2. A report's date tells you when
+    somebody noticed; only the fix tells you where the boundary is.
 
 Where the two versions must be the same build flavour for the comparison to mean
 anything, they are. DB Browser 3.13.0 has no arm64 package at all, so both sides
