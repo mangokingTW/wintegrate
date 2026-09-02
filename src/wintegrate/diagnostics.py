@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
 
-from wintegrate import pointer_overlay
+from wintegrate import keyboard_overlay, pointer_overlay
 from wintegrate.exceptions import DiagnosticPipelineError
 from wintegrate.interop import (
     BITMAPINFOHEADER,
@@ -182,6 +182,7 @@ class ContinuousRecorder:
         fps: int = 30,
         draw_cursor: bool = True,
         click_markers: bool = True,
+        key_hud: bool = True,
     ):
         self.output_path = Path(output_path)
         self.fps = fps
@@ -194,7 +195,9 @@ class ContinuousRecorder:
         # visualiser no window can cover them.
         self.draw_cursor = draw_cursor
         self.click_markers = click_markers
+        self.key_hud = key_hud
         self._clicks: pointer_overlay.ClickTracker | None = None
+        self._keys: keyboard_overlay.KeyTracker | None = None
         self._frame_count = 0
         # PyAV encoding state
         self._av = None
@@ -252,6 +255,9 @@ class ContinuousRecorder:
                 tracker = pointer_overlay.ClickTracker()
                 # A hook this cannot install costs the markers, not the recording.
                 self._clicks = tracker if tracker.start() else None
+            if self.key_hud:
+                key_tracker = keyboard_overlay.KeyTracker()
+                self._keys = key_tracker if key_tracker.start() else None
             self.stop_event.clear()
             self._frame_count = 0
             self._t0 = time.monotonic()
@@ -289,6 +295,8 @@ class ContinuousRecorder:
                 img = capture_screen_image()
                 if self.click_markers and self._clicks is not None:
                     pointer_overlay.draw_click_markers(img, self._clicks.recent())
+                if self.key_hud and self._keys is not None:
+                    keyboard_overlay.draw_keyboard_hud(img, self._keys.recent())
                 if self.draw_cursor:
                     pointer_overlay.draw_cursor(img)
                 if self._container is not None:
@@ -309,6 +317,9 @@ class ContinuousRecorder:
             # After the capture thread, or a frame can read a hook being torn down.
             self._clicks.stop()
             self._clicks = None
+        if self._keys is not None:
+            self._keys.stop()
+            self._keys = None
 
         if self._container is not None:
             # Flush the encoder before closing, or the tail of the recording — the
