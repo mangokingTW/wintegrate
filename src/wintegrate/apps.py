@@ -90,6 +90,13 @@ class AppHandle:
         ladder = self.spec.text_input_ladder if self.spec else None
         return self.window.find_text_input(timeout=timeout, ladder=ladder)
 
+    @property
+    def mouse(self):
+        """Playwright-style Mouse controller for this application."""
+        from wintegrate.mouse import Mouse
+
+        return Mouse()
+
     def locator(self, selector: str | dict):
         """Returns a Playwright-style Locator rooted at this application's main window."""
         return self.window.locator(selector)

@@ -1440,6 +1440,126 @@ def send_mouse_right_click(x: int, y: int, move_event: bool = True):
     user32.SendInput(2, arr, ctypes.sizeof(INPUT))
 
 
+def send_mouse_middle_click(x: int, y: int, move_event: bool = True):
+    """Positions the cursor and performs a middle mouse button click."""
+    if move_event:
+        _send_mouse_move(x, y)
+    else:
+        user32.SetCursorPos(x, y)
+
+    inp_down = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_MIDDLEDOWN, time=0, dwExtraInfo=0
+            )
+        ),
+    )
+    inp_up = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_MIDDLEUP, time=0, dwExtraInfo=0
+            )
+        ),
+    )
+    arr = (INPUT * 2)(inp_down, inp_up)
+    user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+
+
+def send_mouse_down(button: str = "left", x: int | None = None, y: int | None = None):
+    """Presses and holds the specified mouse button ('left', 'right', 'middle')."""
+    if x is not None and y is not None:
+        _send_mouse_move(x, y)
+
+    btn = button.lower().strip()
+    if btn == "left":
+        flag = MOUSEEVENTF_LEFTDOWN
+    elif btn == "right":
+        flag = MOUSEEVENTF_RIGHTDOWN
+    elif btn == "middle":
+        flag = MOUSEEVENTF_MIDDLEDOWN
+    else:
+        raise ValueError(f"Unknown mouse button {button!r}. Choose 'left', 'right', or 'middle'.")
+
+    inp = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(mi=MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=flag, time=0, dwExtraInfo=0)),
+    )
+    user32.SendInput(1, (INPUT * 1)(inp), ctypes.sizeof(INPUT))
+
+
+def send_mouse_up(button: str = "left", x: int | None = None, y: int | None = None):
+    """Releases the specified mouse button ('left', 'right', 'middle')."""
+    if x is not None and y is not None:
+        _send_mouse_move(x, y)
+
+    btn = button.lower().strip()
+    if btn == "left":
+        flag = MOUSEEVENTF_LEFTUP
+    elif btn == "right":
+        flag = MOUSEEVENTF_RIGHTUP
+    elif btn == "middle":
+        flag = MOUSEEVENTF_MIDDLEUP
+    else:
+        raise ValueError(f"Unknown mouse button {button!r}. Choose 'left', 'right', or 'middle'.")
+
+    inp = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(mi=MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=flag, time=0, dwExtraInfo=0)),
+    )
+    user32.SendInput(1, (INPUT * 1)(inp), ctypes.sizeof(INPUT))
+
+
+def send_mouse_move(x: int, y: int, steps: int = 1, delay: float = 0.0):
+    """Moves the cursor to (x, y) with optional intermediate interpolation steps."""
+    if steps <= 1:
+        _send_mouse_move(x, y)
+        if delay > 0:
+            time.sleep(delay)
+        return
+
+    # Read current position for interpolation
+    pt = wintypes.POINT()
+    if not user32.GetCursorPos(ctypes.byref(pt)):
+        start_x, start_y = x, y
+    else:
+        start_x, start_y = pt.x, pt.y
+
+    for i in range(1, steps + 1):
+        cur_x = int(round(start_x + (x - start_x) * (i / steps)))
+        cur_y = int(round(start_y + (y - start_y) * (i / steps)))
+        _send_mouse_move(cur_x, cur_y)
+        if delay > 0:
+            time.sleep(delay)
+
+
+def send_mouse_hwheel(
+    delta: int, x: int | None = None, y: int | None = None, move_event: bool = True
+):
+    """Sends a horizontal mouse wheel event (positive = scroll right, negative = scroll left)."""
+    if x is not None and y is not None:
+        if move_event:
+            _send_mouse_move(x, y)
+        else:
+            user32.SetCursorPos(x, y)
+
+    inp_wheel = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0,
+                dy=0,
+                mouseData=int(delta),
+                dwFlags=MOUSEEVENTF_HWHEEL,
+                time=0,
+                dwExtraInfo=0,
+            )
+        ),
+    )
+    user32.SendInput(1, (INPUT * 1)(inp_wheel), ctypes.sizeof(INPUT))
+
+
 def send_mouse_double_click(x: int, y: int, move_event: bool = True, interval: float = 0.05):
     """Positions the cursor and performs a double left mouse click."""
     send_mouse_click(x, y, move_event=move_event)

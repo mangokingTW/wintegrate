@@ -386,6 +386,45 @@ class Locator:
         """Performs a double mouse click on the locator target."""
         return self.click(timeout=timeout, double=True, force=force)
 
+    def middle_click(self, *, timeout: float = 10.0, force: bool = False) -> bool:
+        """Performs a middle mouse click on the locator target."""
+        elems = self._wait_for_elements(timeout=timeout, min_count=1)
+        target = elems[0]
+        if not force:
+            target.ensure_available()
+        return target.middle_click()
+
+    def hover(
+        self,
+        *,
+        timeout: float = 10.0,
+        steps: int = 1,
+        delay: float = 0.0,
+        force: bool = False,
+    ) -> bool:
+        """Auto-waits for element and moves the mouse pointer to its centre."""
+        elems = self._wait_for_elements(timeout=timeout, min_count=1)
+        target = elems[0]
+        if not force:
+            target.ensure_available()
+        return target.hover(steps=steps, delay=delay)
+
+    def drag_to(
+        self,
+        target: Locator | UiaElement,
+        *,
+        steps: int = 10,
+        duration: float = 0.1,
+        timeout: float = 10.0,
+    ) -> bool:
+        """Auto-waits for both source and target and smoothly drags from source to target."""
+        source_elem = self._wait_for_elements(timeout=timeout, min_count=1)[0]
+        if isinstance(target, Locator):
+            target_elem = target._wait_for_elements(timeout=timeout, min_count=1)[0]
+        else:
+            target_elem = target
+        return source_elem.drag_to(target_elem, steps=steps, duration=duration)
+
     def type_verified(
         self,
         text: str,

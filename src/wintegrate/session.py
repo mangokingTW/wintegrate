@@ -234,6 +234,16 @@ class Session:
         self.logs: list[dict[str, Any]] = []
         self._orig_virtual_desktop = None
         self._test_virtual_desktop = None
+        self._mouse = None
+
+    @property
+    def mouse(self):
+        """Playwright-style Mouse controller associated with this session."""
+        if self._mouse is None:
+            from wintegrate.mouse import Mouse
+
+            self._mouse = Mouse(session=self)
+        return self._mouse
 
     def log_event(self, event_type: str, message: str, **kwargs):
         """Records a structured event in session log."""
