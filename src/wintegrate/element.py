@@ -235,6 +235,23 @@ class UiaElement:
         except Exception:
             return (0, 0, 0, 0)
 
+    def is_enabled(self) -> bool:
+        """Returns True if this element is enabled."""
+        try:
+            return bool(self._element.CurrentIsEnabled)
+        except Exception:
+            return True
+
+    def is_visible(self) -> bool:
+        """Returns True if this element is visible and not offscreen."""
+        try:
+            if not self._element.CurrentIsOffscreen:
+                return True
+        except Exception:
+            pass
+        left, top, right, bottom = self.bounding_rectangle
+        return right > left and bottom > top
+
     @classmethod
     def from_handle(cls, hwnd: int) -> UiaElement:
         """Resolves an element directly from a native window handle."""
