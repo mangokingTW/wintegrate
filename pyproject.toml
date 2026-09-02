@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wintegrate"
-version = "0.5.5"
+version = "0.5.6"
 description = "Integrate Windows desktop apps into modern CI: UI automation for unattended headless runners."
 readme = "README.md"
 requires-python = ">=3.11"

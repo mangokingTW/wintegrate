@@ -6,6 +6,36 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.6] — 2026-09-02
+
+### Added
+
+- **Playwright-Style Locators**: Introduced `Locator` (`src/wintegrate/locators.py`) with auto-waiting, lazy evaluation, and chained queries:
+  - `get_by_role("button" | "edit" | "textbox" | "checkbox" | "tab" | "menuitem" | "combobox" | "slider" | "treeitem")`
+  - `get_by_text(text, exact=False)`
+  - `get_by_automation_id(auto_id)`
+  - `get_by_class(class_name)`
+  - `.filter(has_text=..., automation_id=..., class_name=...)`
+  - Slicing and counting: `.first`, `.last`, `.nth(i)`, `.count()`, `.all()`
+  - Auto-waiting actions: `.click()`, `.right_click()`, `.double_click()`, `.middle_click()`, `.hover()`, `.type_verified()`, `.fill()`, `.text_content()`
+  - Multi-type role mapping: `get_by_role("edit" | "textbox")` transparently resolves both Win32 `Edit` (50004) and WinUI / XAML `Document` (50030) controls.
+- **Playwright-Style Mouse Controller**: Introduced `Mouse` (`src/wintegrate/mouse.py`), accessible via `session.mouse` and `app.mouse`:
+  - `mouse.move(x, y, steps=1, delay=0.0)` with smooth multi-step trajectory interpolation.
+  - `mouse.down(button=...)`, `mouse.up(button=...)`, `mouse.click(x, y, button=..., count=...)`, `mouse.dblclick(x, y)`.
+  - `mouse.wheel(delta_y, delta_x)` for vertical and horizontal scroll events.
+  - `mouse.drag(start_x, start_y, end_x, end_y, steps=10)`.
+  - `mouse.position` for reading physical cursor screen coordinates.
+- **Element & Locator Pointer Gestures**:
+  - `element.hover()` / `locator.hover()`: Moves pointer to control center to trigger tooltips and hover menus.
+  - `element.middle_click()` / `locator.middle_click()`: Auxiliary middle mouse button click.
+  - `locator.drag_to(target_locator)`: Auto-waits for source and target elements and smoothly drags between them.
+- **Rich Desktop Controls**:
+  - `CheckBox` & `RadioButton`: `is_checked()`, `set_checked_verified(True / False)`
+  - `TabControl` & `TabItem`: `tabs`, `active_tab`, `select_tab_verified(name_or_index)`
+  - `Menu` & `MenuItem`: `select_cascade("File > Open...")`, `items`, `expand()`
+  - `Slider` & `ProgressBar`: `value`, `minimum`, `maximum`, `set_value_verified()`
+  - `ComboBox`: `select_item(name)`
+
 ## [0.5.5] — 2026-09-02
 
 ### Added
