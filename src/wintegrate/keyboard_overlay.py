@@ -241,8 +241,13 @@ class KeyTracker:
                             # If a non-modifier key is pressed, or a modifier is pressed alone
                             if not is_mod:
                                 is_chord = len(active_mods) > 0
-                                # If Shift is the only modifier and it's a single character,
-                                # we can just show the key or chord
+                                # If the previous event was a bare modifier that is part of this chord
+                                # and occurred recently (< 0.5s), consolidate it into the chord.
+                                if is_chord and self.events:
+                                    last = self.events[-1]
+                                    if not last.is_chord and last.label in active_mods and (time.monotonic() - last.at) < 0.5:
+                                        self.events.pop()
+
                                 self.events.append(
                                     KeyStrokeEvent(
                                         at=time.monotonic(),
