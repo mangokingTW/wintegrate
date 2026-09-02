@@ -1,5 +1,5 @@
 site_name: wintegrate
-site_description: Integrate Windows desktop apps into modern CI: UI automation for unattended x64 and ARM64 runners.
+site_description: "Integrate Windows desktop apps into modern CI: UI automation for unattended x64 and ARM64 runners."
 site_url: https://mangokingtw.github.io/wintegrate/
 repo_url: https://github.com/mangokingTW/wintegrate
 repo_name: mangokingTW/wintegrate
