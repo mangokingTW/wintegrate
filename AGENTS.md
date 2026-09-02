@@ -1,11 +1,6 @@
----
-name: wintegrate
-description: Drive and automate Windows desktop applications (Win32, WinForms, WPF, Qt, WinUI 3) deterministically from Python scripts in CI and local dev environments with streaming video, mouse overlays, and verified assertions.
----
+# `wintegrate` Guidelines for AI Agents & Developers
 
-# `wintegrate` Developer & Agent Cheatsheet
-
-`wintegrate` (**Win**dows + **integrate**) is a CI-first Python automation library designed to reliably drive Windows desktop applications without flakiness, window focus stealing, or localized string dependencies.
+`wintegrate` (**Win**dows + **integrate**) is a CI-first Python automation library designed to reliably drive Windows desktop applications (Win32, WinForms, WPF, Qt, WinUI 3) without flakiness, window focus stealing, or localized string dependencies.
 
 ---
 
@@ -31,7 +26,7 @@ with Session(SessionConfig()) as session:
 
 ---
 
-## 🛡️ Core Rules for AI Agents
+## 🛡️ Core Rules for AI Coding Assistants
 
 1. **Never rely on localized UI names**:
    * ❌ `app.find_button(name="確定")` or `name="OK"`
