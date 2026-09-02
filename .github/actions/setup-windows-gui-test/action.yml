@@ -1,8 +1,7 @@
 name: Set up a Windows GUI test runner
 description: >
   Prepares a hosted Windows runner for driving a real desktop application: quiets
-  the things that steal the foreground, installs wintegrate, and optionally starts
-  an on-screen visualiser so the recording shows which keys and clicks were sent.
+  the things that steal the foreground and installs wintegrate.
 
 # Why this exists as an action rather than as steps copied into each workflow:
 # the arm64 preparation was copied by hand into four reproduction workflows, and
@@ -20,19 +19,13 @@ inputs:
     description: >
       Version specifier for wintegrate, e.g. ">=0.5.5". The video extra is always
       included, since a runner nobody is watching is the reason to record.
+
+      Keep the floor at >=0.5.5 or above: that is where the recorder started
+      drawing the cursor, click markers and keycaps into the frames itself. On
+      anything older the recording shows an application changing with nothing to
+      say what was sent, and no step here supplies that any more.
     required: false
     default: ">=0.5.5"
-  input-hud:
-    description: >
-      Install and start external Keyviz. (Note: wintegrate >= 0.5.5 now draws
-      cursor, click rings, and keyboard HUD directly into the video stream natively).
-      "false" skips Keyviz installation entirely.
-    required: false
-    default: "false"
-  keyviz-version:
-    description: Keyviz release to install.
-    required: false
-    default: "2.1.1"
 
 runs:
   using: composite
@@ -135,120 +128,3 @@ runs:
         print(f'foreground now: {get_window_class(hwnd)!r} {get_window_title(hwnd)!r}')
         "
 
-    # Without this, a recording shows an application changing on its own: fields
-    # filling in, dialogs opening, with no indication of what was sent. The
-    # assertions are the evidence, but a maintainer watching the video still has
-    # to take the inputs on trust.
-    - name: Install the input visualiser
-      if: inputs.input-hud == 'true'
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = 'Stop'
-        $ver = '${{ inputs.keyviz-version }}'
-        $url = "https://github.com/mulaRahul/keyviz/releases/download/v$ver/keyviz_${ver}_windows.msi"
-        $msi = Join-Path $env:RUNNER_TEMP 'keyviz.msi'
-        Invoke-WebRequest -Uri $url -OutFile $msi
-        $sig = Get-AuthenticodeSignature $msi
-        Write-Host "keyviz msi signature: $($sig.Status)"
-        if ($sig.Status -ne 'Valid') { throw "keyviz msi signature is $($sig.Status)" }
-        $p = Start-Process msiexec -ArgumentList '/i', $msi, '/qn', '/norestart' -PassThru -Wait
-        if ($p.ExitCode -ne 0) { throw "msiexec exited $($p.ExitCode)" }
-        $exe = 'C:\Program Files\keyviz\keyviz.exe'
-        if (-not (Test-Path $exe)) { throw "keyviz.exe is not at $exe after install" }
-        Write-Host "installed: $exe"
-
-    # Keyviz's own settings live in one JSON file, so no GUI is needed. The
-    # values here are chosen for a 10 fps recording rather than for a desktop —
-    # see the comments.
-    - name: Configure and start the input visualiser
-      if: inputs.input-hud == 'true'
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = 'Stop'
-        $dir = Join-Path $env:APPDATA 'org.keyviz'
-        New-Item -ItemType Directory -Force -Path $dir | Out-Null
-
-        # filter "none" shows every keystroke, which is only safe because the
-        # tests type through send_physical_keys: that sends real virtual keys.
-        #
-        # Unicode-injected text would be mislabelled. wintegrate's send_char_input
-        # uses KEYEVENTF_UNICODE, which Windows delivers as vkCode=VK_PACKET with
-        # the character in scanCode, and Keyviz reads scanCode as if it were a
-        # virtual key -- so 'a' (97) renders as Numpad1 (VK 0x61) and 'q' (113) as
-        # F2 (VK 0x71). If a test goes back to Unicode typing, set this to
-        # 'custom' with an explicit list rather than showing wrong labels.
-        $keyEvent = @{
-          dragThreshold = 50
-          filter = 'none'
-          allowedKeys = @(
-            'ControlLeft','ControlRight','ShiftLeft','ShiftRight','Alt','AltGr',
-            'MetaLeft','MetaRight','Escape','Return','Tab','Backspace','Delete',
-            'UpArrow','DownArrow','LeftArrow','RightArrow','Home','End',
-            'PageUp','PageDown','Space'
-          )
-          showEventHistory = $true    # the sequence, not just the last key
-          maxHistory = 5
-          lingerDurationMs = 3000     # ~30 frames at 10 fps; nothing falls between samples
-          toggleShortcut = @('ShiftLeft','F10')
-        }
-        $keyStyle = @{
-          # animation "none": a 0.25s fade leaves the first frames of every
-          # keystroke half-transparent, which at 10 fps is most of them.
-          # bottom-center with a small margin: every position overlaps something
-          # once the app under test is maximised, and the bottom strip is the
-          # least informative one on a runner -- the taskbar lives there and
-          # nothing under test does. The 100px default put it over the dialog's
-          # own buttons.
-          appearance = @{ monitor = $null; flexDirection = 'row'; alignment = 'bottom-center'
-                          marginX = 20; marginY = 10; animation = 'none'
-                          animationDuration = 0; style = 'minimal' }
-          layout = @{ showIcon = $false; showSymbol = $false; showPressCount = $true
-                      iconAlignment = 'flex-end' }
-          color = @{ color = '#ffffff'; secondaryColor = '#1a1a1a'; useGradient = $false }
-          modifier = @{ highlight = $true; color = '#ffd166'; secondaryColor = '#000000'
-                        textColor = '#000000'; borderColor = '#000000' }
-          # 24, not 30: a row of five labels has to fit across the screen.
-          text = @{ size = 24; color = '#000000'; caps = 'capitalize'
-                    variant = 'text'; alignment = 'center' }
-          border = @{ enabled = $true; width = 3; color = '#000000'; radius = 0.25 }
-          # Opaque: the default #ffffff99 lets the application show through the label.
-          background = @{ enabled = $true; color = '#ffffffff' }
-          # The pointer is NOT drawn here. wintegrate's recorder draws the cursor
-          # and a click ring into each frame itself (>= 0.5.4), after the screen
-          # grab, so nothing can cover it -- and leaving Keyviz's own mouse
-          # visualisation on would double every marker on a normal window while
-          # still showing none over a topmost one, which is worse than either.
-          #
-          # The occlusion is measured, not assumed: same window, same click point,
-          # only WS_EX_TOPMOST changing, 2032 ring pixels -> 0, and a keystroke did
-          # not bring it back. Keycaps survive there only because they are drawn
-          # outside the app's rectangle.
-          #
-          # So Keyviz owns the keyboard and the recorder owns the pointer.
-          mouse = @{ showClicks = $false; keepHighlight = $false
-                     showIndicator = $false; keepIndicator = $false }
-        }
-
-        # zustand's persist wraps state as {"state":…,"version":n} and stores it
-        # as a JSON string through its storage adapter.
-        $store = @{
-          key_event_store = (@{ state = $keyEvent; version = 0 } | ConvertTo-Json -Depth 8 -Compress)
-          key_style_store = (@{ state = $keyStyle; version = 0 } | ConvertTo-Json -Depth 8 -Compress)
-        }
-        $path = Join-Path $dir 'store.json'
-        $store | ConvertTo-Json -Depth 8 | Set-Content -Path $path -Encoding utf8
-        Write-Host "wrote $path ($((Get-Item $path).Length) bytes)"
-
-        Start-Process -FilePath 'C:\Program Files\keyviz\keyviz.exe'
-        Start-Sleep -Seconds 6
-        $n = (Get-Process keyviz -ErrorAction SilentlyContinue | Measure-Object).Count
-        if ($n -lt 1) { throw "keyviz did not start" }
-        Write-Host "keyviz running ($n process)"
-
-        # Launching it a second time brings its window to the foreground, so this
-        # is the last step before the test: nothing after it should start keyviz.
-        python -c "
-        from wintegrate.interop import get_foreground_window, get_window_class, get_window_title
-        h = get_foreground_window()
-        print(f'foreground before the test: class={get_window_class(h)!r} title={get_window_title(h)!r}')
-        "
