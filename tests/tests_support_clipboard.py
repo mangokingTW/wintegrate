@@ -10,21 +10,26 @@ holds it, which on a busy desktop is often the application you just told to copy
 from __future__ import annotations
 
 import ctypes
+import sys
 import time
 from ctypes import wintypes
 
 CF_UNICODETEXT = 13
 
-_user32 = ctypes.WinDLL("user32", use_last_error=True)
-_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+if sys.platform == "win32":
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-_user32.OpenClipboard.argtypes = [wintypes.HWND]
-_user32.OpenClipboard.restype = wintypes.BOOL
-_user32.GetClipboardData.argtypes = [wintypes.UINT]
-_user32.GetClipboardData.restype = ctypes.c_void_p
-_kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-_kernel32.GlobalLock.restype = ctypes.c_void_p
-_kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    _user32.OpenClipboard.argtypes = [wintypes.HWND]
+    _user32.OpenClipboard.restype = wintypes.BOOL
+    _user32.GetClipboardData.argtypes = [wintypes.UINT]
+    _user32.GetClipboardData.restype = ctypes.c_void_p
+    _kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    _kernel32.GlobalLock.restype = ctypes.c_void_p
+    _kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+else:
+    _user32 = None
+    _kernel32 = None
 
 
 def _open(timeout: float = 3.0) -> bool:

@@ -91,24 +91,22 @@ BM_CLICK = 0x00F5
 CONTROL_TYPE_MENU_ITEM = 50011
 CONTROL_TYPE_TREE_ITEM = 50024
 
-_ENUM_PROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+_WINFUNCTYPE = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+_ENUM_PROC = _WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
-# A **private** WinDLL, not the one wintegrate exposes. `ctypes.WinDLL` caches
-# per handle, so setting argtypes on a shared object changes it for every other
-# caller in the process: an earlier version of this file declared
-# `SendMessageW.argtypes` on the shared user32, and simply importing this module
-# broke `get_value()` everywhere else — its WM_GETTEXT fallback passes a buffer
-# where the declaration then insisted on an integer. Ten unrelated Scintilla
-# tests errored, in a file this one never touches.
-_user32 = ctypes.WinDLL("user32", use_last_error=True)
-_user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
-_user32.GetDlgCtrlID.restype = ctypes.c_int
-_user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
-_user32.FindWindowW.restype = wintypes.HWND
-_user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-_user32.SendMessageW.restype = wintypes.LPARAM
-_user32.IsWindowVisible.argtypes = [wintypes.HWND]
-_user32.EnumChildWindows.argtypes = [wintypes.HWND, _ENUM_PROC, wintypes.LPARAM]
+if sys.platform == "win32":
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+    _user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
+    _user32.GetDlgCtrlID.restype = ctypes.c_int
+    _user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    _user32.FindWindowW.restype = wintypes.HWND
+    _user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    _user32.SendMessageW.restype = wintypes.LPARAM
+    _user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    _user32.IsWindowVisible.restype = wintypes.BOOL
+    _user32.EnumChildWindows.argtypes = [wintypes.HWND, _ENUM_PROC, wintypes.LPARAM]
+else:
+    _user32 = None
 
 
 def _executable(version: str) -> Path:

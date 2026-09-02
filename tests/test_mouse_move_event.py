@@ -52,7 +52,9 @@ class MSLLHOOKSTRUCT(ctypes.Structure):
     ]
 
 
-_HOOKPROC = ctypes.WINFUNCTYPE(
+_WINFUNCTYPE = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+
+_HOOKPROC = _WINFUNCTYPE(
     ctypes.c_long, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(MSLLHOOKSTRUCT)
 )
 

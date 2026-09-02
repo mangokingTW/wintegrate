@@ -73,9 +73,12 @@ MNC_CLOSE = 1
 # WM_MENUCHAR needs the subclass to be installed, not just the window to exist.
 SETTLE_AFTER_LAUNCH = float(os.environ.get("WT_FILES_SETTLE", "8"))
 
-_user32 = ctypes.WinDLL("user32", use_last_error=True)
-_user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-_user32.SendMessageW.restype = wintypes.LPARAM
+if sys.platform == "win32":
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+    _user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    _user32.SendMessageW.restype = wintypes.LPARAM
+else:
+    _user32 = None
 
 
 def _installed_version() -> str:
