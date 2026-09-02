@@ -1,0 +1,73 @@
+# Dedicated CI Automation for PowerToys Text Extractor (PowerOCR WinUI 3)
+#
+# Validates that wintegrate drives PowerToys Text Extractor deterministically
+# on GitHub-Hosted Windows runners (windows-latest) without WinAppDriver or detached desktop issues:
+# - Fullscreen topmost overlay activation (WindowEx) and Escape dismissal
+# - Toolbar toggle modes (SingleLine, Table) and accessibility names
+# - Region selection via smooth interpolated mouse pointer drag (PointerMoved on XAML DIPs)
+# - Failure video recordings and window census diff diagnostics
+
+name: PowerToys PowerOCR CI
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "tests/test_*powertoys*"
+      - ".github/workflows/powertoys-ocr.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/test_*powertoys*"
+      - ".github/workflows/powertoys-ocr.yml"
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Runner architecture"
+        type: choice
+        options: [x64, arm64, both]
+        default: x64
+
+permissions:
+  contents: read
+
+jobs:
+  test-powertoys-ocr:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Install PowerToys (x64) via Winget
+        shell: powershell
+        run: |
+          winget install --id Microsoft.PowerToys --source winget --accept-package-agreements --accept-source-agreements --silent || true
+
+      - name: Run PowerToys PowerOCR Automation Tests
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: "1"
+          WINTEGRATE_RECORD: "1"
+        run: |
+          pytest tests/test_powertoys_ocr_unit.py tests/test_target_powertoys_ocr.py -v --tb=short
+
+      - name: Upload Test Video and Diagnostic Artifacts on Failure
+        if: failure()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: powertoys-ocr-test-artifacts
+          path: |
+            .wintegrate/
+            test_artifacts/
+          if-no-files-found: ignore
