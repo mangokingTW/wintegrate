@@ -433,13 +433,25 @@ class Locator:
         cb = CheckBox(elems[0])
         return cb.is_checked()
 
-    def is_visible(self) -> bool:
+    def is_visible(self, timeout: float = 0.0) -> bool:
         """Returns True if matching element currently exists on screen."""
+        if timeout > 0:
+            try:
+                elems = self._wait_for_elements(timeout=timeout, min_count=1)
+                return len(elems) > 0
+            except Exception:
+                return False
         elems = self._resolve_elements()
         return len(elems) > 0
 
-    def is_enabled(self) -> bool:
+    def is_enabled(self, timeout: float = 0.0) -> bool:
         """Returns True if element is currently enabled."""
+        if timeout > 0:
+            try:
+                elems = self._wait_for_elements(timeout=timeout, min_count=1)
+                return elems[0].is_enabled()
+            except Exception:
+                return False
         elems = self._resolve_elements()
         if not elems:
             return False

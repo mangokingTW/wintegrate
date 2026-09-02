@@ -18,10 +18,10 @@ def test_live_notepad_locators():
     """Verifies get_by_role, get_by_class, right_click, and text_content against live Notepad."""
     with Session(SessionConfig()) as session:
         with session.app(NOTEPAD) as app:
-            # Locate editor via high-level get_by_role
+            # Locate editor via high-level get_by_role (auto-waits for editor element to mount)
             editor_loc = app.get_by_role("edit").first
-            assert editor_loc.is_visible()
-            assert editor_loc.is_enabled()
+            assert editor_loc.is_visible(timeout=5.0)
+            assert editor_loc.is_enabled(timeout=5.0)
 
             # Verified typing via Locator
             editor_loc.type_verified(
