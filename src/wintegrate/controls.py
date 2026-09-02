@@ -18,11 +18,17 @@ from __future__ import annotations
 import time
 
 from wintegrate.element import (
+    UIA_ExpandCollapsePatternId,
     UIA_GridItemPatternId,
     UIA_GridPatternId,
     UIA_HeaderItemControlTypeId,
+    UIA_MenuItemControlTypeId,
+    UIA_RangeValuePatternId,
+    UIA_SelectionItemPatternId,
+    UIA_TabItemControlTypeId,
     UIA_TableItemPatternId,
     UIA_TablePatternId,
+    UIA_TogglePatternId,
     UIA_TreeItemControlTypeId,
     UiaElement,
 )
@@ -392,3 +398,459 @@ class TreeView:
 
         current.select_verified(timeout=timeout)
         return current
+
+
+class CheckBox:
+    """A checkbox or toggle control (TogglePattern or SelectionItemPattern)."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"CheckBox({self.element.name!r}, checked={self.is_checked()})"
+
+    @property
+    def name(self) -> str:
+        return self.element.name
+
+    def _toggle_pat(self):
+        return self.element._pattern(UIA_TogglePatternId, "IUIAutomationTogglePattern")
+
+    def _selection_item_pat(self):
+        return self.element._pattern(
+            UIA_SelectionItemPatternId, "IUIAutomationSelectionItemPattern"
+        )
+
+    def is_checked(self) -> bool:
+        """Returns True if checked/toggled, False otherwise."""
+        toggle = self._toggle_pat()
+        if toggle is not None:
+            try:
+                # 0 = Off, 1 = On, 2 = Indeterminate
+                return int(toggle.CurrentToggleState) == 1
+            except Exception:
+                pass
+
+        sel = self._selection_item_pat()
+        if sel is not None:
+            try:
+                return bool(sel.CurrentIsSelected)
+            except Exception:
+                pass
+
+        # Fallback to physical bounding box / click state if needed
+        return False
+
+    def toggle(self) -> bool:
+        """Toggles the check box state."""
+        toggle = self._toggle_pat()
+        if toggle is not None:
+            try:
+                toggle.Toggle()
+                return True
+            except Exception:
+                pass
+        return self.element.click()
+
+    def set_checked_verified(self, checked: bool, timeout: float = 2.0) -> bool:
+        """Sets the checkbox state to `checked` and verifies the post-condition."""
+        if self.is_checked() == checked:
+            return True
+
+        self.element.ensure_available()
+        self.toggle()
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.is_checked() == checked:
+                return True
+            time.sleep(0.05)
+
+        # Retry once via physical click if toggle pattern was ignored
+        self.element.click()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.is_checked() == checked:
+                return True
+            time.sleep(0.05)
+
+        raise ActionVerificationError(
+            f"Failed to set checkbox {self.name!r} checked={checked} (remained {self.is_checked()})"
+        )
+
+
+class RadioButton:
+    """A radio button (SelectionItemPattern)."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"RadioButton({self.element.name!r}, selected={self.is_selected()})"
+
+    @property
+    def name(self) -> str:
+        return self.element.name
+
+    def is_selected(self) -> bool:
+        pat = self.element._pattern(UIA_SelectionItemPatternId, "IUIAutomationSelectionItemPattern")
+        if pat is not None:
+            try:
+                return bool(pat.CurrentIsSelected)
+            except Exception:
+                pass
+        return False
+
+    def select_verified(self, timeout: float = 2.0) -> bool:
+        """Selects this radio button and verifies it became selected."""
+        self.element.ensure_available()
+        if self.is_selected():
+            return True
+        return self.element.select_verified(timeout=timeout)
+
+
+class TabItem:
+    """One tab page header within a TabControl."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"TabItem({self.name!r}, selected={self.is_selected})"
+
+    @property
+    def name(self) -> str:
+        return self.element.name
+
+    @property
+    def is_selected(self) -> bool:
+        pat = self.element._pattern(UIA_SelectionItemPatternId, "IUIAutomationSelectionItemPattern")
+        if pat is not None:
+            try:
+                return bool(pat.CurrentIsSelected)
+            except Exception:
+                pass
+        return False
+
+    def select_verified(self, timeout: float = 2.0) -> bool:
+        """Selects this tab item and verifies it became active."""
+        self.element.ensure_available()
+        return self.element.select_verified(timeout=timeout)
+
+
+class TabControl:
+    """A tab container holding one or more TabItem headers."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"TabControl({self.element.name!r}, tabs={self.tab_names})"
+
+    @property
+    def tabs(self) -> list[TabItem]:
+        items = self.element.find_all(control_type_id=UIA_TabItemControlTypeId)
+        return [TabItem(item) for item in items]
+
+    @property
+    def tab_names(self) -> list[str]:
+        return [t.name for t in self.tabs]
+
+    @property
+    def active_tab(self) -> TabItem | None:
+        for t in self.tabs:
+            if t.is_selected:
+                return t
+        return None
+
+    def select_tab_verified(self, name_or_index: str | int, timeout: float = 2.0) -> TabItem:
+        """Selects a tab by header name or zero-based index and verifies selection."""
+        tabs = self.tabs
+        target: TabItem | None = None
+        if isinstance(name_or_index, int):
+            if 0 <= name_or_index < len(tabs):
+                target = tabs[name_or_index]
+        else:
+            for t in tabs:
+                if t.name == name_or_index:
+                    target = t
+                    break
+
+        if target is None:
+            raise ElementNotFoundError(
+                f"Tab {name_or_index!r} not found in TabControl; available tabs: {[t.name for t in tabs]}"
+            )
+
+        target.select_verified(timeout=timeout)
+        return target
+
+
+class Slider:
+    """A slider or progress track exposing RangeValuePattern."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"Slider({self.element.name!r}, value={self.value})"
+
+    def _range_pat(self):
+        return self.element._pattern(UIA_RangeValuePatternId, "IUIAutomationRangeValuePattern")
+
+    @property
+    def value(self) -> float:
+        pat = self._range_pat()
+        if pat is not None:
+            try:
+                return float(pat.CurrentValue)
+            except Exception:
+                pass
+        return 0.0
+
+    @property
+    def minimum(self) -> float:
+        pat = self._range_pat()
+        if pat is not None:
+            try:
+                return float(pat.CurrentMinimum)
+            except Exception:
+                pass
+        return 0.0
+
+    @property
+    def maximum(self) -> float:
+        pat = self._range_pat()
+        if pat is not None:
+            try:
+                return float(pat.CurrentMaximum)
+            except Exception:
+                pass
+        return 100.0
+
+    @property
+    def small_change(self) -> float:
+        pat = self._range_pat()
+        if pat is not None:
+            try:
+                return float(pat.CurrentSmallChange)
+            except Exception:
+                pass
+        return 1.0
+
+    @property
+    def large_change(self) -> float:
+        pat = self._range_pat()
+        if pat is not None:
+            try:
+                return float(pat.CurrentLargeChange)
+            except Exception:
+                pass
+        return 10.0
+
+    def set_value_verified(self, val: float, timeout: float = 2.0) -> bool:
+        """Sets the slider value and verifies it stuck."""
+        pat = self._range_pat()
+        if pat is None:
+            raise ActionVerificationError(
+                f"Element {self.element} does not support RangeValuePattern"
+            )
+
+        self.element.ensure_available()
+        pat.SetValue(float(val))
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if abs(self.value - val) < 0.001:
+                return True
+            time.sleep(0.05)
+
+        raise ActionVerificationError(
+            f"Failed to set slider value to {val} (remained {self.value})"
+        )
+
+
+class ProgressBar:
+    """A progress bar exposing RangeValuePattern."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"ProgressBar(value={self.value}/{self.maximum})"
+
+    def _range_pat(self):
+        return self.element._pattern(UIA_RangeValuePatternId, "IUIAutomationRangeValuePattern")
+
+    @property
+    def value(self) -> float:
+        pat = self._range_pat()
+        if pat is not None:
+            try:
+                return float(pat.CurrentValue)
+            except Exception:
+                pass
+        return 0.0
+
+    @property
+    def minimum(self) -> float:
+        pat = self._range_pat()
+        if pat is not None:
+            try:
+                return float(pat.CurrentMinimum)
+            except Exception:
+                pass
+        return 0.0
+
+    @property
+    def maximum(self) -> float:
+        pat = self._range_pat()
+        if pat is not None:
+            try:
+                return float(pat.CurrentMaximum)
+            except Exception:
+                pass
+        return 100.0
+
+
+class MenuItem:
+    """A single menu item or sub-menu header."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"MenuItem({self.name!r})"
+
+    @property
+    def name(self) -> str:
+        return self.element.name
+
+    def invoke(self) -> bool:
+        """Invokes this menu item (clicks or executes command)."""
+        self.element.ensure_available()
+        return self.element.invoke()
+
+    def expand(self) -> bool:
+        """Expands this sub-menu."""
+        pat = self.element._pattern(
+            UIA_ExpandCollapsePatternId, "IUIAutomationExpandCollapsePattern"
+        )
+        if pat is not None:
+            try:
+                pat.Expand()
+                return True
+            except Exception:
+                pass
+        return self.element.click()
+
+    def sub_items(self, timeout: float = 2.0) -> list[MenuItem]:
+        """Returns child MenuItem elements under this sub-menu."""
+        deadline = time.monotonic() + timeout
+        while True:
+            items = self.element.find_all(control_type_id=UIA_MenuItemControlTypeId)
+            if items or time.monotonic() >= deadline:
+                return [MenuItem(i) for i in items]
+            time.sleep(0.05)
+
+
+class Menu:
+    """A menu or context menu bar."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"Menu({self.element.name!r})"
+
+    @property
+    def items(self) -> list[MenuItem]:
+        elems = self.element.find_all(control_type_id=UIA_MenuItemControlTypeId)
+        return [MenuItem(e) for e in elems]
+
+    def select_cascade(
+        self,
+        path: str | list[str],
+        separator: str = ">",
+        timeout: float = 5.0,
+    ) -> bool:
+        """
+        Navigates and invokes a cascading menu path (e.g. 'File > Recent Files > Project 1').
+        """
+        segments = [
+            s.strip() for s in (path.split(separator) if isinstance(path, str) else list(path))
+        ]
+        if not segments:
+            raise ValueError("select_cascade requires at least one menu item name")
+
+        current_element = self.element
+        for depth, segment in enumerate(segments):
+            deadline = time.monotonic() + timeout
+            found_item: MenuItem | None = None
+            while time.monotonic() < deadline:
+                items = [
+                    MenuItem(e)
+                    for e in current_element.find_all(control_type_id=UIA_MenuItemControlTypeId)
+                ]
+                for item in items:
+                    if item.name == segment:
+                        found_item = item
+                        break
+                if found_item is not None:
+                    break
+                time.sleep(0.05)
+
+            if found_item is None:
+                raise ElementNotFoundError(
+                    f"Menu item {segment!r} not found at depth {depth} in path {separator.join(segments)!r}"
+                )
+
+            is_last = depth == len(segments) - 1
+            if is_last:
+                return found_item.invoke()
+            else:
+                found_item.expand()
+                current_element = found_item.element
+
+        return False
+
+
+class ComboBox:
+    """A combobox dropdown control."""
+
+    def __init__(self, element: UiaElement):
+        self.element = element
+
+    def __repr__(self) -> str:
+        return f"ComboBox({self.element.name!r}, value={self.get_value()!r})"
+
+    def get_value(self) -> str:
+        return self.element.read_value().text or self.element.name
+
+    def set_value(self, text: str) -> bool:
+        return self.element.set_value(text)
+
+    def select_item(self, item_name: str, timeout: float = 2.0) -> bool:
+        """Selects an item from the combobox dropdown list."""
+        self.element.ensure_available()
+
+        # Try expanding if ExpandCollapsePattern is present
+        exp = self.element._pattern(
+            UIA_ExpandCollapsePatternId, "IUIAutomationExpandCollapsePattern"
+        )
+        if exp is not None:
+            try:
+                exp.Expand()
+            except Exception:
+                pass
+
+        # Search for child list items
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            items = self.element.find_all(name=item_name)
+            if items:
+                items[0].select_verified(timeout=timeout)
+                return True
+            time.sleep(0.05)
+
+        # Fallback: set value directly
+        return self.set_value(item_name)

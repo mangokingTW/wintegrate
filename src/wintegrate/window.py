@@ -470,6 +470,183 @@ class Window:
             f"No text-input element found in window '{self.title}' within {timeout}s"
         )
 
+    def locator(self, selector: str | dict):
+        """Returns a Playwright-style Locator rooted at this window."""
+        from wintegrate.locators import Locator
+
+        if isinstance(selector, str):
+            query_dict = {"name": selector}
+        else:
+            query_dict = selector
+
+        def query(root) -> list[UiaElement]:
+            elem = self.re_resolve_element()
+            return elem.find_all(**query_dict)
+
+        return Locator(
+            self.re_resolve_element, query, description=f"Window({self.title!r}) >> {selector}"
+        )
+
+    def get_by_role(self, role: str, name: str | None = None, exact: bool = False):
+        """Finds descendant elements in this window by role (e.g. 'button', 'checkbox', 'tab', 'menuitem')."""
+        return self.locator({}).get_by_role(role, name=name, exact=exact)
+
+    def get_by_text(self, text: str, exact: bool = False):
+        """Finds descendant elements in this window matching text."""
+        return self.locator({}).get_by_text(text, exact=exact)
+
+    def get_by_automation_id(self, auto_id: str):
+        """Finds descendant elements in this window by UIA automation_id."""
+        return self.locator({}).get_by_automation_id(auto_id)
+
+    def get_by_class(self, class_name: str):
+        """Finds descendant elements in this window by window class name."""
+        return self.locator({}).get_by_class(class_name)
+
+    def find_button(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ) -> UiaElement:
+        """Locates a button in this window by automation_id or name."""
+        query = {"control_type_id": 50000}
+        if automation_id is not None:
+            query["automation_id"] = automation_id
+        if name is not None:
+            query["name"] = name
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                root = self.re_resolve_element()
+                btn = root.find_descendant(timeout=0.2, **query)
+                if btn:
+                    return btn
+            except Exception:
+                pass
+            time.sleep(0.1)
+        raise ElementNotFoundError(
+            f"Button with {query} not found in window '{self.title}' within {timeout}s"
+        )
+
+    def find_checkbox(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ):
+        """Locates a CheckBox in this window."""
+        from wintegrate.controls import CheckBox
+
+        query = {"control_type_id": 50002}
+        if automation_id is not None:
+            query["automation_id"] = automation_id
+        if name is not None:
+            query["name"] = name
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                root = self.re_resolve_element()
+                cb = root.find_descendant(timeout=0.2, **query)
+                if cb:
+                    return CheckBox(cb)
+            except Exception:
+                pass
+            time.sleep(0.1)
+        raise ElementNotFoundError(
+            f"CheckBox with {query} not found in window '{self.title}' within {timeout}s"
+        )
+
+    def find_tab_control(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ):
+        """Locates a TabControl in this window."""
+        from wintegrate.controls import TabControl
+
+        query = {"control_type_id": 50018}
+        if automation_id is not None:
+            query["automation_id"] = automation_id
+        if name is not None:
+            query["name"] = name
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                root = self.re_resolve_element()
+                tc = root.find_descendant(timeout=0.2, **query)
+                if tc:
+                    return TabControl(tc)
+            except Exception:
+                pass
+            time.sleep(0.1)
+        raise ElementNotFoundError(
+            f"TabControl with {query} not found in window '{self.title}' within {timeout}s"
+        )
+
+    def find_menu(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ):
+        """Locates a Menu / MenuBar in this window."""
+        from wintegrate.controls import Menu
+
+        query = {"control_type_id": 50010}  # MenuBar
+        if automation_id is not None:
+            query["automation_id"] = automation_id
+        if name is not None:
+            query["name"] = name
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                root = self.re_resolve_element()
+                m = root.find_descendant(timeout=0.2, **query)
+                if m:
+                    return Menu(m)
+            except Exception:
+                pass
+            time.sleep(0.1)
+        # Fallback to Menu control type 50009
+        query["control_type_id"] = 50009
+        root = self.re_resolve_element()
+        m = root.find_descendant(timeout=timeout, **query)
+        if m:
+            return Menu(m)
+        raise ElementNotFoundError(
+            f"Menu with {query} not found in window '{self.title}' within {timeout}s"
+        )
+
+    def find_combobox(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ):
+        """Locates a ComboBox in this window."""
+        from wintegrate.controls import ComboBox
+
+        query = {"control_type_id": 50003}
+        if automation_id is not None:
+            query["automation_id"] = automation_id
+        if name is not None:
+            query["name"] = name
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                root = self.re_resolve_element()
+                cb = root.find_descendant(timeout=0.2, **query)
+                if cb:
+                    return ComboBox(cb)
+            except Exception:
+                pass
+            time.sleep(0.1)
+        raise ElementNotFoundError(
+            f"ComboBox with {query} not found in window '{self.title}' within {timeout}s"
+        )
+
     def focus_content_island(self, timeout: float = 3.0) -> bool:
         """Puts keyboard focus inside a WinUI 3 / Windows App SDK content island.
 
