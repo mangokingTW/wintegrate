@@ -29,6 +29,10 @@ from wintegrate.interop import (
     send_char_input,
     send_keys,
     send_mouse_click,
+    send_mouse_double_click,
+    send_mouse_drag,
+    send_mouse_right_click,
+    send_mouse_wheel,
     send_physical_keys,
     user32,
 )
@@ -38,7 +42,10 @@ logger = logging.getLogger(__name__)
 
 # UIA control pattern ids. Declared here rather than imported from comtypes.gen so a
 # comtypes build missing one name cannot take down the whole UIA initialization.
+UIA_InvokePatternId = 10000
 UIA_SelectionPatternId = 10001
+UIA_ValuePatternId = 10002
+UIA_RangeValuePatternId = 10003
 UIA_ScrollPatternId = 10004
 UIA_ExpandCollapsePatternId = 10005
 UIA_GridPatternId = 10006
@@ -50,6 +57,10 @@ UIA_TogglePatternId = 10015
 UIA_ScrollItemPatternId = 10017
 UIA_ItemContainerPatternId = 10019
 UIA_VirtualizedItemPatternId = 10020
+
+UIA_TabControlTypeId = 50018
+UIA_TabItemControlTypeId = 50019
+UIA_MenuItemControlTypeId = 50011
 
 TreeScope_Children = 2
 
@@ -224,6 +235,23 @@ class UiaElement:
         except Exception:
             return (0, 0, 0, 0)
 
+    def is_enabled(self) -> bool:
+        """Returns True if this element is enabled."""
+        try:
+            return bool(self._element.CurrentIsEnabled)
+        except Exception:
+            return True
+
+    def is_visible(self) -> bool:
+        """Returns True if this element is visible and not offscreen."""
+        try:
+            if not self._element.CurrentIsOffscreen:
+                return True
+        except Exception:
+            pass
+        left, top, right, bottom = self.bounding_rectangle
+        return right > left and bottom > top
+
     @classmethod
     def from_handle(cls, hwnd: int) -> UiaElement:
         """Resolves an element directly from a native window handle."""
@@ -297,6 +325,122 @@ class UiaElement:
                 "rectangle — try invoke(), or scroll_into_view() first."
             )
         return False
+
+    def right_click(self, require_rectangle: bool = True) -> bool:
+        """Clicks the centre of this element with a synthesised right mouse click."""
+        left, top, right, bottom = self.bounding_rectangle
+        if right > left and bottom > top:
+            cx = (left + right) // 2
+            cy = (top + bottom) // 2
+            send_mouse_right_click(cx, cy)
+            return True
+
+        if require_rectangle:
+            raise ActionVerificationError(
+                f"{self} has an empty bounding rectangle ({left}, {top}, {right}, "
+                f"{bottom}), so there is no point to right click."
+            )
+        return False
+
+    def double_click(self, require_rectangle: bool = True, interval: float = 0.05) -> bool:
+        """Double clicks the centre of this element with synthesised left mouse clicks."""
+        left, top, right, bottom = self.bounding_rectangle
+        if right > left and bottom > top:
+            cx = (left + right) // 2
+            cy = (top + bottom) // 2
+            send_mouse_double_click(cx, cy, interval=interval)
+            return True
+
+        if require_rectangle:
+            raise ActionVerificationError(
+                f"{self} has an empty bounding rectangle ({left}, {top}, {right}, "
+                f"{bottom}), so there is no point to double click."
+            )
+        return False
+
+    def mouse_wheel(self, delta: int, require_rectangle: bool = False) -> bool:
+        """Sends a vertical mouse wheel event over the centre of this element."""
+        left, top, right, bottom = self.bounding_rectangle
+        if right > left and bottom > top:
+            cx = (left + right) // 2
+            cy = (top + bottom) // 2
+            send_mouse_wheel(delta, cx, cy)
+            return True
+
+        if require_rectangle:
+            raise ActionVerificationError(
+                f"{self} has an empty bounding rectangle ({left}, {top}, {right}, "
+                f"{bottom}), so there is no point for mouse wheel."
+            )
+        send_mouse_wheel(delta)
+        return True
+
+    def drag_to(
+        self,
+        target: UiaElement,
+        steps: int = 10,
+        delay: float = 0.01,
+        require_rectangle: bool = True,
+    ) -> bool:
+        """Smoothly drags from the centre of this element to the centre of target element."""
+        s_left, s_top, s_right, s_bottom = self.bounding_rectangle
+        t_left, t_top, t_right, t_bottom = target.bounding_rectangle
+
+        if s_right > s_left and s_bottom > s_top and t_right > t_left and t_bottom > t_top:
+            sx = (s_left + s_right) // 2
+            sy = (s_top + s_bottom) // 2
+            tx = (t_left + t_right) // 2
+            ty = (t_top + t_bottom) // 2
+            send_mouse_drag(sx, sy, tx, ty, steps=steps, delay=delay)
+            return True
+
+        if require_rectangle:
+            raise ActionVerificationError(
+                f"Cannot drag from {self} to {target}: one or both elements have empty bounding rectangles."
+            )
+        return False
+
+    def locator(self, selector: str | dict):
+        """Returns a Playwright-style Locator rooted at this element."""
+        from wintegrate.locators import Locator
+
+        if isinstance(selector, str):
+            query_dict = {"name": selector}
+        else:
+            query_dict = selector
+
+        def query(root: UiaElement) -> list[UiaElement]:
+            return root.find_all(**query_dict)
+
+        return Locator(lambda: self, query, description=f"{self} >> {selector}")
+
+    def get_by_role(self, role: str, name: str | None = None, exact: bool = False):
+        """Finds descendant elements by role from this element."""
+        from wintegrate.locators import Locator
+
+        loc = Locator(lambda: self, lambda r: [self], description=str(self))
+        return loc.get_by_role(role, name=name, exact=exact)
+
+    def get_by_text(self, text: str, exact: bool = False):
+        """Finds descendant elements matching text from this element."""
+        from wintegrate.locators import Locator
+
+        loc = Locator(lambda: self, lambda r: [self], description=str(self))
+        return loc.get_by_text(text, exact=exact)
+
+    def get_by_automation_id(self, auto_id: str):
+        """Finds descendant elements by automation_id from this element."""
+        from wintegrate.locators import Locator
+
+        loc = Locator(lambda: self, lambda r: [self], description=str(self))
+        return loc.get_by_automation_id(auto_id)
+
+    def get_by_class(self, class_name: str):
+        """Finds descendant elements by class name from this element."""
+        from wintegrate.locators import Locator
+
+        loc = Locator(lambda: self, lambda r: [self], description=str(self))
+        return loc.get_by_class(class_name)
 
     def set_focus(self, verify: bool = True, timeout: float = 2.0, click: bool = True) -> bool:
         """

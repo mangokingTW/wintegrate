@@ -205,10 +205,17 @@ KEYEVENTF_SCANCODE = 0x0008
 MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_HWHEEL = 0x01000
 MOUSEEVENTF_ABSOLUTE = 0x8000
 # Maps absolute coordinates onto the whole virtual desktop instead of the primary
 # monitor, which is what ABSOLUTE alone does.
 MOUSEEVENTF_VIRTUALDESK = 0x4000
+WHEEL_DELTA = 120
 
 # Virtual Key Codes
 VK_RETURN = 0x0D
@@ -1379,6 +1386,139 @@ def send_mouse_click(x: int, y: int, move_event: bool = True):
     )
     arr = (INPUT * 2)(inp_down, inp_up)
     user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+
+
+def _send_mouse_move(x: int, y: int):
+    vx = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+    vy = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+    vw = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN) or 1
+    vh = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN) or 1
+    nx = int(round((x - vx) * 65535 / vw))
+    ny = int(round((y - vy) * 65535 / vh))
+    inp_move = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=max(0, min(65535, nx)),
+                dy=max(0, min(65535, ny)),
+                mouseData=0,
+                dwFlags=MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                time=0,
+                dwExtraInfo=0,
+            )
+        ),
+    )
+    move_arr = (INPUT * 1)(inp_move)
+    user32.SendInput(1, move_arr, ctypes.sizeof(INPUT))
+    user32.SetCursorPos(x, y)
+
+
+def send_mouse_right_click(x: int, y: int, move_event: bool = True):
+    """Positions the cursor and performs a standard right mouse click."""
+    if move_event:
+        _send_mouse_move(x, y)
+    else:
+        user32.SetCursorPos(x, y)
+
+    inp_down = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_RIGHTDOWN, time=0, dwExtraInfo=0
+            )
+        ),
+    )
+    inp_up = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_RIGHTUP, time=0, dwExtraInfo=0
+            )
+        ),
+    )
+    arr = (INPUT * 2)(inp_down, inp_up)
+    user32.SendInput(2, arr, ctypes.sizeof(INPUT))
+
+
+def send_mouse_double_click(x: int, y: int, move_event: bool = True, interval: float = 0.05):
+    """Positions the cursor and performs a double left mouse click."""
+    send_mouse_click(x, y, move_event=move_event)
+    time.sleep(interval)
+    send_mouse_click(x, y, move_event=False)
+
+
+def send_mouse_wheel(
+    delta: int, x: int | None = None, y: int | None = None, move_event: bool = True
+):
+    """
+    Sends a vertical mouse wheel event (positive = scroll up, negative = scroll down).
+
+    Each standard notch is WHEEL_DELTA (120).
+    """
+    if x is not None and y is not None:
+        if move_event:
+            _send_mouse_move(x, y)
+        else:
+            user32.SetCursorPos(x, y)
+
+    inp_wheel = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0,
+                dy=0,
+                mouseData=int(delta),
+                dwFlags=MOUSEEVENTF_WHEEL,
+                time=0,
+                dwExtraInfo=0,
+            )
+        ),
+    )
+    arr = (INPUT * 1)(inp_wheel)
+    user32.SendInput(1, arr, ctypes.sizeof(INPUT))
+
+
+def send_mouse_drag(
+    start_x: int,
+    start_y: int,
+    end_x: int,
+    end_y: int,
+    steps: int = 10,
+    delay: float = 0.01,
+):
+    """Smoothly drags the mouse from start coordinates to end coordinates with the left button held."""
+    _send_mouse_move(start_x, start_y)
+    time.sleep(delay)
+
+    # Press left button down
+    inp_down = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTDOWN, time=0, dwExtraInfo=0
+            )
+        ),
+    )
+    user32.SendInput(1, (INPUT * 1)(inp_down), ctypes.sizeof(INPUT))
+    time.sleep(delay)
+
+    # Interpolate movement
+    for i in range(1, steps + 1):
+        cur_x = int(round(start_x + (end_x - start_x) * (i / steps)))
+        cur_y = int(round(start_y + (end_y - start_y) * (i / steps)))
+        _send_mouse_move(cur_x, cur_y)
+        time.sleep(delay)
+
+    # Release left button
+    inp_up = INPUT(
+        type=INPUT_MOUSE,
+        u=_INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=0, dy=0, mouseData=0, dwFlags=MOUSEEVENTF_LEFTUP, time=0, dwExtraInfo=0
+            )
+        ),
+    )
+    user32.SendInput(1, (INPUT * 1)(inp_up), ctypes.sizeof(INPUT))
 
 
 def get_input_desktop_handle() -> wintypes.HANDLE | None:

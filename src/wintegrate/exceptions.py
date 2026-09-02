@@ -31,6 +31,13 @@ class ActionVerificationError(WintegrateError):
     """Raised when an action is executed but its post-condition cannot be verified."""
 
 
+class ActionTimeoutError(ActionVerificationError):
+    """Raised when waiting for an element state or condition times out."""
+
+
+TimeoutError = ActionTimeoutError
+
+
 class TextMismatchError(ActionVerificationError):
     """Raised when text typing or value setting results in a mismatch."""
 

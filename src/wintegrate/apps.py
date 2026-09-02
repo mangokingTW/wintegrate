@@ -90,6 +90,66 @@ class AppHandle:
         ladder = self.spec.text_input_ladder if self.spec else None
         return self.window.find_text_input(timeout=timeout, ladder=ladder)
 
+    def locator(self, selector: str | dict):
+        """Returns a Playwright-style Locator rooted at this application's main window."""
+        return self.window.locator(selector)
+
+    def get_by_role(self, role: str, name: str | None = None, exact: bool = False):
+        """Finds elements by role in this application's main window."""
+        return self.window.get_by_role(role, name=name, exact=exact)
+
+    def get_by_text(self, text: str, exact: bool = False):
+        """Finds elements by text in this application's main window."""
+        return self.window.get_by_text(text, exact=exact)
+
+    def get_by_automation_id(self, auto_id: str):
+        """Finds elements by automation_id in this application's main window."""
+        return self.window.get_by_automation_id(auto_id)
+
+    def get_by_class(self, class_name: str):
+        """Finds elements by class name in this application's main window."""
+        return self.window.get_by_class(class_name)
+
+    def find_button(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ) -> UiaElement:
+        return self.window.find_button(automation_id=automation_id, name=name, timeout=timeout)
+
+    def find_checkbox(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ):
+        return self.window.find_checkbox(automation_id=automation_id, name=name, timeout=timeout)
+
+    def find_tab_control(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ):
+        return self.window.find_tab_control(automation_id=automation_id, name=name, timeout=timeout)
+
+    def find_menu(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ):
+        return self.window.find_menu(automation_id=automation_id, name=name, timeout=timeout)
+
+    def find_combobox(
+        self,
+        automation_id: str | None = None,
+        name: str | None = None,
+        timeout: float = 5.0,
+    ):
+        return self.window.find_combobox(automation_id=automation_id, name=name, timeout=timeout)
+
     def close(self) -> None:
         try:
             self.window.close(force=True)
