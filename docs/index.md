@@ -1,7 +1,8 @@
 # wintegrate
 
-Drive Windows GUIs **from CI**, where no human is watching and the only evidence
-of what happened is whatever the run left behind.
+**Integrate Windows desktop apps into modern CI.**
+
+`wintegrate` (**Win**dows + **integrate**) is a Python library built to seamlessly integrate Windows GUI testing into unattended, headless CI pipelines — where no human is watching and the only evidence of what happened is whatever the run left behind.
 
 ```bash
 pip install wintegrate
