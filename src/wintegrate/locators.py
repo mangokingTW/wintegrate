@@ -15,68 +15,70 @@ from wintegrate.exceptions import (
 )
 
 # Standard UIA Control Type IDs mapped to user-friendly role aliases
-ROLE_TO_CONTROL_TYPE_ID: dict[str, int] = {
-    "button": 50000,
-    "calendar": 50001,
-    "checkbox": 50002,
-    "check_box": 50002,
-    "combobox": 50003,
-    "combo_box": 50003,
-    "edit": 50004,
-    "textbox": 50004,
-    "text_box": 50004,
-    "input": 50004,
-    "hyperlink": 50005,
-    "link": 50005,
-    "image": 50006,
-    "listitem": 50007,
-    "list_item": 50007,
-    "list": 50008,
-    "listbox": 50008,
-    "menu": 50009,
-    "menubar": 50010,
-    "menu_bar": 50010,
-    "menuitem": 50011,
-    "menu_item": 50011,
-    "progressbar": 50012,
-    "progress_bar": 50012,
-    "radio": 50013,
-    "radiobutton": 50013,
-    "radio_button": 50013,
-    "scrollbar": 50014,
-    "scroll_bar": 50014,
-    "slider": 50015,
-    "spinner": 50016,
-    "statusbar": 50017,
-    "status_bar": 50017,
-    "tab": 50018,
-    "tabcontrol": 50018,
-    "tab_control": 50018,
-    "tabitem": 50019,
-    "tab_item": 50019,
-    "text": 50020,
-    "label": 50020,
-    "toolbar": 50021,
-    "tool_bar": 50021,
-    "tooltip": 50022,
-    "tool_tip": 50022,
-    "tree": 50023,
-    "treeview": 50023,
-    "treeitem": 50024,
-    "tree_item": 50024,
-    "group": 50026,
-    "pane": 50033,
-    "header": 50034,
-    "headeritem": 50035,
-    "header_item": 50035,
-    "table": 50036,
-    "datagrid": 50028,
-    "data_grid": 50028,
-    "document": 50030,
-    "splitbutton": 50031,
-    "split_button": 50031,
-    "window": 50032,
+ROLE_TO_CONTROL_TYPE_IDS: dict[str, list[int]] = {
+    "button": [50000, 50031],
+    "calendar": [50001],
+    "checkbox": [50002],
+    "check_box": [50002],
+    "combobox": [50003],
+    "combo_box": [50003],
+    "edit": [50004, 50030],
+    "textbox": [50004, 50030],
+    "text_box": [50004, 50030],
+    "input": [50004, 50030],
+    "document": [50030],
+    "hyperlink": [50005],
+    "link": [50005],
+    "image": [50006],
+    "listitem": [50007],
+    "list_item": [50007],
+    "list": [50008],
+    "listbox": [50008],
+    "menu": [50009, 50010],
+    "menubar": [50010],
+    "menu_bar": [50010],
+    "menuitem": [50011],
+    "menu_item": [50011],
+    "progressbar": [50012],
+    "progress_bar": [50012],
+    "radio": [50013],
+    "radiobutton": [50013],
+    "radio_button": [50013],
+    "scrollbar": [50014],
+    "scroll_bar": [50014],
+    "slider": [50015],
+    "spinner": [50016],
+    "statusbar": [50017],
+    "status_bar": [50017],
+    "tab": [50018, 50019],
+    "tabcontrol": [50018],
+    "tab_control": [50018],
+    "tabitem": [50019],
+    "tab_item": [50019],
+    "text": [50020],
+    "label": [50020],
+    "toolbar": [50021],
+    "tool_bar": [50021],
+    "tooltip": [50022],
+    "tool_tip": [50022],
+    "tree": [50023],
+    "treeview": [50023],
+    "treeitem": [50024],
+    "tree_item": [50024],
+    "group": [50026],
+    "pane": [50033],
+    "header": [50034],
+    "headeritem": [50035],
+    "header_item": [50035],
+    "table": [50036],
+    "datagrid": [50028],
+    "data_grid": [50028],
+    "splitbutton": [50031],
+    "split_button": [50031],
+    "window": [50032],
 }
+
+ROLE_TO_CONTROL_TYPE_ID: dict[str, int] = {k: v[0] for k, v in ROLE_TO_CONTROL_TYPE_IDS.items()}
 
 
 class Locator:
@@ -239,27 +241,38 @@ class Locator:
     def get_by_role(self, role: str, name: str | None = None, exact: bool = False) -> Locator:
         """Finds descendant elements by role (e.g. 'button', 'checkbox', 'tab', 'menuitem')."""
         role_lower = role.lower().strip()
-        ctrl_type_id = ROLE_TO_CONTROL_TYPE_ID.get(role_lower)
-        if ctrl_type_id is None:
+        ctrl_type_ids = ROLE_TO_CONTROL_TYPE_IDS.get(role_lower)
+        if ctrl_type_ids is None:
             raise ValueError(
-                f"Unknown role {role!r}. Supported roles include: {sorted(set(ROLE_TO_CONTROL_TYPE_ID.keys()))}"
+                f"Unknown role {role!r}. Supported roles include: {sorted(set(ROLE_TO_CONTROL_TYPE_IDS.keys()))}"
             )
 
         def query(root: Window | UiaElement) -> list[UiaElement]:
             parents = self._query_fn(root)
             results = []
+            seen_handles = set()
             for p in parents:
-                matches = p.find_all(control_type_id=ctrl_type_id)
-                for m in matches:
-                    if name is not None:
-                        elem_name = m.name or ""
-                        if exact:
-                            if elem_name != name:
+                for c_id in ctrl_type_ids:
+                    matches = p.find_all(control_type_id=c_id)
+                    for m in matches:
+                        try:
+                            h = m.handle
+                            if h and h in seen_handles:
                                 continue
-                        else:
-                            if name not in elem_name:
-                                continue
-                    results.append(m)
+                            if h:
+                                seen_handles.add(h)
+                        except Exception:
+                            pass
+
+                        if name is not None:
+                            elem_name = m.name or ""
+                            if exact:
+                                if elem_name != name:
+                                    continue
+                            else:
+                                if name not in elem_name:
+                                    continue
+                        results.append(m)
             return results
 
         desc = f"{self._description}.get_by_role({role!r}"

@@ -481,10 +481,14 @@ class Window:
 
         def query(root) -> list[UiaElement]:
             elem = self.re_resolve_element()
+            if not query_dict:
+                return [elem]
             return elem.find_all(**query_dict)
 
         return Locator(
-            self.re_resolve_element, query, description=f"Window({self.title!r}) >> {selector}"
+            self.re_resolve_element,
+            query,
+            description=f"Window({self.title!r}) >> {selector}",
         )
 
     def get_by_role(self, role: str, name: str | None = None, exact: bool = False):
