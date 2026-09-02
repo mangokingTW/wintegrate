@@ -245,7 +245,11 @@ class KeyTracker:
                                 # and occurred recently (< 0.5s), consolidate it into the chord.
                                 if is_chord and self.events:
                                     last = self.events[-1]
-                                    if not last.is_chord and last.label in active_mods and (time.monotonic() - last.at) < 0.5:
+                                    if (
+                                        not last.is_chord
+                                        and last.label in active_mods
+                                        and (time.monotonic() - last.at) < 0.5
+                                    ):
                                         self.events.pop()
 
                                 self.events.append(

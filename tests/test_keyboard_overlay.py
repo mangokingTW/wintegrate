@@ -128,17 +128,13 @@ def test_draw_keyboard_hud_renders_capsule():
     ]
 
     # Before drawing: bottom area is purely white
-    bottom_pixels_before = [
-        img.getpixel((x, 560)) for x in range(300, 500)
-    ]
+    bottom_pixels_before = [img.getpixel((x, 560)) for x in range(300, 500)]
     assert all(p == (255, 255, 255) for p in bottom_pixels_before)
 
     draw_keyboard_hud(img, events, now=now)
 
     # After drawing: dark pixels of the HUD capsule should be present
-    bottom_pixels_after = [
-        img.getpixel((x, 560)) for x in range(300, 500)
-    ]
+    bottom_pixels_after = [img.getpixel((x, 560)) for x in range(300, 500)]
     dark_pixels = [p for p in bottom_pixels_after if p != (255, 255, 255)]
     assert len(dark_pixels) > 50, "HUD keycaps were not rendered on the image"
 
