@@ -49,14 +49,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
-      - name: Install PowerToys (x64) via Winget
+      - name: Download and Install PowerToys (x64)
         shell: powershell
         run: |
-          try {
-            winget install --id Microsoft.PowerToys --source winget --accept-package-agreements --accept-source-agreements --silent
-          } catch {
-            Write-Warning "Winget install failed or package already installed: $_"
-          }
+          Write-Host "Downloading PowerToys installer..."
+          $url = "https://github.com/microsoft/PowerToys/releases/download/v0.101.2362.0/PowerToysUserSetup-0.101.2362.0-x64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "PowerToysSetup.exe"
+          Write-Host "Installing PowerToys silently..."
+          $proc = Start-Process -FilePath ".\PowerToysSetup.exe" -ArgumentList "/install /quiet /norestart" -PassThru -Wait
+          Write-Host "Installer finished with exit code: $($proc.ExitCode)"
 
       - name: Run PowerToys PowerOCR Automation Tests
         shell: bash
