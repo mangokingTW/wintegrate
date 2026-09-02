@@ -93,6 +93,8 @@ WM_SETTINGCHANGE = 0x001A
 WM_CHAR = 0x0102
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
+WM_SYSKEYDOWN = 0x0104
+WM_SYSKEYUP = 0x0105
 WM_IME_CONTROL = 0x0283
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
@@ -100,8 +102,16 @@ WM_RBUTTONDOWN = 0x0204
 WM_MBUTTONDOWN = 0x0207
 WM_QUIT = 0x0012
 
-# Low-level mouse hook
+# Low-level hooks
+WH_KEYBOARD_LL = 13
 WH_MOUSE_LL = 14
+
+# Low-level keyboard flags & special VK
+VK_PACKET = 0xE7
+LLKHF_EXTENDED = 0x00000001
+LLKHF_INJECTED = 0x00000010
+LLKHF_ALTDOWN = 0x00000020
+LLKHF_UP = 0x00000080
 
 # GetCursorInfo / DrawIconEx
 CURSOR_SHOWING = 0x00000001
@@ -386,6 +396,16 @@ class MSLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [
         ("pt", POINT),
         ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
         ("flags", wintypes.DWORD),
         ("time", wintypes.DWORD),
         ("dwExtraInfo", ctypes.c_void_p),

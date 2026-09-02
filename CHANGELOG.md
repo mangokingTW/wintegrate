@@ -6,6 +6,29 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.5] — 2026-09-02
+
+### Added
+
+- **Recordings now show the keyboard HUD natively.** `ContinuousRecorder` now renders
+  keystrokes and shortcut chords directly into captured frames (`key_hud=True`, on by
+  default), eliminating the need for an external input visualizer (such as Keyviz).
+
+  Drawing keystrokes into the frame after capture provides three critical advantages:
+  1. **Zero desktop intrusion**: No OS GUI window is created, eliminating window focus
+     stealing, z-order fighting (`WS_EX_TOPMOST`), and click-through bugs.
+  2. **Correct `VK_PACKET` (0xE7) Unicode decoding**: Text injected via
+     `SendInput(KEYEVENTF_UNICODE)` sends `VK_PACKET` with the UTF-16 character in
+     `scanCode`. Unlike third-party tools that mistake `scanCode` for virtual key codes
+     (rendering `'q'` as `F2` and `'a'` as `Num 1`), wintegrate decodes the character
+     natively and accurately.
+  3. **Low-overhead event streaming**: Intercepts events via `WH_KEYBOARD_LL`, tracking
+     modifier states (`Ctrl`, `Alt`, `Shift`, `Win`), chords (e.g. `Ctrl + C`,
+     `Win + Alt + Space`), and function keys with configurable linger time (default 2.5s).
+
+- `KeyStrokeEvent`, `KeyTracker`, and `draw_keyboard_hud()` are public in
+  `wintegrate.keyboard_overlay` for custom frame pipelines.
+
 ## [0.5.4] — 2026-09-01
 
 ### Added

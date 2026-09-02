@@ -70,7 +70,8 @@ _CROSSHAIR_WIDTH = 3
 #: scaled down to fit in a browser.
 DEFAULT_CURSOR_SCALE = 2
 
-_HOOKPROC = ctypes.WINFUNCTYPE(
+_WINFUNCTYPE = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+_HOOKPROC = _WINFUNCTYPE(
     ctypes.c_long, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(MSLLHOOKSTRUCT)
 )
 

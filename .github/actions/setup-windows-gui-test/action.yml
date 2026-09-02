@@ -18,16 +18,17 @@ inputs:
     default: "3.13"
   wintegrate-version:
     description: >
-      Version specifier for wintegrate, e.g. ">=0.5.3". The video extra is always
+      Version specifier for wintegrate, e.g. ">=0.5.5". The video extra is always
       included, since a runner nobody is watching is the reason to record.
     required: false
-    default: ">=0.5.4"
+    default: ">=0.5.5"
   input-hud:
     description: >
-      Install and start Keyviz, so the recording shows the keys and clicks that
-      were sent. "false" skips it entirely.
+      Install and start external Keyviz. (Note: wintegrate >= 0.5.5 now draws
+      cursor, click rings, and keyboard HUD directly into the video stream natively).
+      "false" skips Keyviz installation entirely.
     required: false
-    default: "true"
+    default: "false"
   keyviz-version:
     description: Keyviz release to install.
     required: false

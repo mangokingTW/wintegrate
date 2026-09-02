@@ -81,6 +81,11 @@ from wintegrate.interop import (
     set_ime_conversion,
     set_ime_open,
 )
+from wintegrate.keyboard_overlay import (
+    KeyStrokeEvent,
+    KeyTracker,
+    draw_keyboard_hud,
+)
 from wintegrate.pointer_overlay import (
     ClickEvent,
     ClickTracker,
@@ -116,6 +121,7 @@ __all__ = [
     "count_lines",
     "cursor_overlay_image",
     "draw_click_markers",
+    "draw_keyboard_hud",
     "draw_pointer_overlay",
     "DataGrid",
     "DataGridCell",
@@ -144,6 +150,8 @@ __all__ = [
     "is_windows_desktop",
     "is_windows_server",
     "KEY_NAMES",
+    "KeyStrokeEvent",
+    "KeyTracker",
     "launch_packaged_app",
     "normalize_line_endings",
     "NOTEPAD",
