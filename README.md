@@ -17,7 +17,7 @@ A Python library for driving Windows GUIs **from CI**, where no human is watchin
 
 Every CI run records itself. Below is the **complete test suite** on both architectures — not a highlight reel, not a staged demo: the entire run, unedited, at 8× speed. Nothing was cropped or cleaned up, so you are also seeing the runner's own console spam and whatever Windows decided to pop up that morning. That is the point.
 
-| `windows-latest` (x64) — 108s | `windows-11-arm` (ARM64) — 125s |
+| `windows-latest` (x64) — 141s | `windows-11-arm` (ARM64) — 151s |
 |---|---|
 | ![Full test suite on x64](assets/full-suite-x64.gif) | ![Full test suite on ARM64](assets/full-suite-arm64.gif) |
 
