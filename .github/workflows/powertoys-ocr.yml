@@ -52,7 +52,11 @@ jobs:
       - name: Install PowerToys (x64) via Winget
         shell: powershell
         run: |
-          winget install --id Microsoft.PowerToys --source winget --accept-package-agreements --accept-source-agreements --silent || true
+          try {
+            winget install --id Microsoft.PowerToys --source winget --accept-package-agreements --accept-source-agreements --silent
+          } catch {
+            Write-Warning "Winget install failed or package already installed: $_"
+          }
 
       - name: Run PowerToys PowerOCR Automation Tests
         shell: bash
