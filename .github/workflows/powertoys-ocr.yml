@@ -11,15 +11,8 @@ name: PowerToys PowerOCR CI
 
 on:
   push:
-    paths:
-      - "src/**"
-      - "tests/test_*powertoys*"
-      - ".github/workflows/powertoys-ocr.yml"
+    branches: [ main ]
   pull_request:
-    paths:
-      - "src/**"
-      - "tests/test_*powertoys*"
-      - ".github/workflows/powertoys-ocr.yml"
   workflow_dispatch:
     inputs:
       arch:
@@ -69,7 +62,7 @@ jobs:
 
       - name: Upload Test Video and Diagnostic Artifacts on Failure
         if: failure()
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
         with:
           name: powertoys-ocr-test-artifacts
           path: |
