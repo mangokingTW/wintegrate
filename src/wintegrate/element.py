@@ -31,6 +31,8 @@ from wintegrate.interop import (
     send_mouse_click,
     send_mouse_double_click,
     send_mouse_drag,
+    send_mouse_middle_click,
+    send_mouse_move,
     send_mouse_right_click,
     send_mouse_wheel,
     send_physical_keys,
@@ -323,6 +325,38 @@ class UiaElement:
                 f"{bottom}), so there is no point to click. It may be scrolled out of "
                 "view, not laid out yet, or hosted somewhere that publishes no "
                 "rectangle — try invoke(), or scroll_into_view() first."
+            )
+        return False
+
+    def hover(self, require_rectangle: bool = True, steps: int = 1, delay: float = 0.0) -> bool:
+        """Moves the mouse pointer to the centre of this element."""
+        left, top, right, bottom = self.bounding_rectangle
+        if right > left and bottom > top:
+            cx = (left + right) // 2
+            cy = (top + bottom) // 2
+            send_mouse_move(cx, cy, steps=steps, delay=delay)
+            return True
+
+        if require_rectangle:
+            raise ActionVerificationError(
+                f"{self} has an empty bounding rectangle ({left}, {top}, {right}, "
+                f"{bottom}), so there is no point to hover."
+            )
+        return False
+
+    def middle_click(self, require_rectangle: bool = True) -> bool:
+        """Clicks the centre of this element with a synthesised middle mouse click."""
+        left, top, right, bottom = self.bounding_rectangle
+        if right > left and bottom > top:
+            cx = (left + right) // 2
+            cy = (top + bottom) // 2
+            send_mouse_middle_click(cx, cy)
+            return True
+
+        if require_rectangle:
+            raise ActionVerificationError(
+                f"{self} has an empty bounding rectangle ({left}, {top}, {right}, "
+                f"{bottom}), so there is no point to middle click."
             )
         return False
 
