@@ -6,6 +6,38 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.10] — 2026-09-03
+
+### Fixed
+
+- **The touch delivery check no longer crashes the process.** 0.5.9 took an
+  access violation inside `Touch.available()`, and the cause was one undeclared
+  call: `kernel32.GetModuleHandleW` had no `restype`, so ctypes converted its
+  `HMODULE` as `c_int` and dropped the top 32 bits. That truncated handle went
+  to `RegisterClassW` and `CreateWindowExW`, and USER32 dereferenced it.
+
+  It is now declared in `interop`, where every other handle-returning call
+  already was. The check's window procedure and window class were also moved to
+  module scope, since a registered class holds pointers into both for longer
+  than the call that registers it.
+
+  Worth stating plainly, because it is the reason this shipped: **pytest
+  reported `212 passed` on every run that crashed.** A native crash reaches
+  neither the exit code nor the summary line, and the tests it broke reported
+  themselves as *skipped*.
+
+### Changed
+
+- **CI fails the run when a native crash appears in the test output.** Both
+  pytest steps now search their own output for `Windows fatal exception` and
+  `access violation` and fail the step, printing the matches. Validated against
+  real logs before being trusted: the crashing runs match, a clean one does not.
+
+- `Image.getdata()` → `get_flattened_data()` in the overlay tests. `getdata` is
+  deprecated for removal in Pillow 14 and was producing warnings on every job.
+  The two return an identical sequence in every mode this suite uses — RGB,
+  RGBA, L and 1 — checked rather than assumed.
+
 ## [0.5.9] — 2026-09-03
 
 ### Added
