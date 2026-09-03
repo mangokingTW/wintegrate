@@ -6,6 +6,30 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.8] — 2026-09-03
+
+### Fixed
+
+- **The keyboard HUD no longer draws `0x00` for a keystroke that names no key.**
+  `keybd_event(0, 0, 0, 0)` is the standard way to satisfy Windows' rules about
+  which process may bring a window to the foreground: it injects an event naming
+  neither a virtual key nor a scan code, purely so the caller counts as having
+  received input. The HUD rendered each one as a keycap reading `0x00`, which in
+  a recording looks like a real key with a broken label rather than like nothing
+  having happened.
+
+  Found in a product demo, not in a test: about half the visible keycaps in
+  ImeModePersistence's Store recording were `0x00`, and they lined up with the
+  window switches rather than with the typing.
+
+- **A scan code that arrives with no virtual key is now resolved instead of
+  printed in hex.** `SendInput` with `KEYEVENTF_SCANCODE` sets `wVk` to 0 --
+  which is how this library's own `send_physical_keys` types -- and although
+  Windows normally fills the virtual key in before the hook sees it, a scan code
+  the active layout cannot map leaves it at 0. `MapVirtualKeyW` with
+  `MAPVK_VSC_TO_VK_EX` recovers the key, keeping left and right modifiers
+  distinct.
+
 ## [0.5.7] — 2026-09-03
 
 ### Added

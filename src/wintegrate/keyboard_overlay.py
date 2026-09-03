@@ -29,7 +29,9 @@ from wintegrate.exceptions import DiagnosticPipelineError
 from wintegrate.interop import (
     KBDLLHOOKSTRUCT,
     LLKHF_ALTDOWN,
+    LLKHF_EXTENDED,
     LLKHF_UP,
+    MAPVK_VSC_TO_VK_EX,
     VK_PACKET,
     WH_KEYBOARD_LL,
     WM_KEYDOWN,
@@ -196,6 +198,22 @@ class KeyTracker:
             mods.append("Win")
         return tuple(mods)
 
+    @staticmethod
+    def _no_op_placeholder(vk: int, scan: int) -> bool:
+        """True for a key event that reports no key at all.
+
+        `keybd_event(0, 0, 0, 0)` is the standard way to satisfy Windows' rules
+        about which process may bring a window to the foreground: it injects a
+        keystroke that names neither a virtual key nor a scan code, purely so the
+        caller counts as having received input. Nothing was pressed, so nothing
+        should be drawn -- and the HUD used to render each one as `0x00`, which in
+        a recording reads as a real key with a broken label.
+
+        Both fields must be zero. A scan code on its own is a real key that the
+        layout could not name, and `_decode_key` resolves that instead.
+        """
+        return vk == 0 and scan == 0
+
     def _decode_key(self, vk: int, scan: int, flags: int) -> tuple[str, bool]:
         """Returns (key_label, is_modifier)."""
         # VK_PACKET: scanCode is UTF-16 Unicode character
@@ -204,6 +222,20 @@ class KeyTracker:
                 return chr(scan), False
             except ValueError:
                 return f"\\u{scan:04x}", False
+
+        # A real key can still arrive with no virtual key: SendInput with
+        # KEYEVENTF_SCANCODE sets wVk to 0, and while Windows normally fills the
+        # virtual key in before the hook sees it, a scan code the active layout
+        # does not map leaves it at 0. Resolve it from the scan code rather than
+        # printing 0x00, which names no key at all.
+        if vk == 0 and scan:
+            resolved = int(
+                user32.MapVirtualKeyW(
+                    scan | (0xE000 if flags & LLKHF_EXTENDED else 0), MAPVK_VSC_TO_VK_EX
+                )
+            )
+            if resolved:
+                vk = resolved
 
         # Modifiers
         if vk in _MODIFIER_VKS:
@@ -234,7 +266,7 @@ class KeyTracker:
                         elif vk in (0x5B, 0x5C):
                             self._win = is_down
 
-                        if is_down:
+                        if is_down and not self._no_op_placeholder(vk, scan):
                             key_label, is_mod = self._decode_key(vk, scan, flags)
                             active_mods = self._get_active_modifiers()
 
