@@ -35,6 +35,12 @@ do about it — that callout is the guarantee, not the version number.
 
 - `draw_caption()` is public, for a caller building its own frames.
 
+- **This project's own suite is wired to it**, in `tests/conftest.py`, so every
+  frame of `full-suite-{arch}.mp4` names the test that produced it. Worth stating
+  because the alternative was shipping a feature with no caller: the unit tests
+  assert that `draw_caption` puts pixels in the bottom-left of a synthetic frame,
+  which is not the same claim as a recording of a real run carrying the name.
+
 ## [0.5.6] — 2026-09-02
 
 ### Added
