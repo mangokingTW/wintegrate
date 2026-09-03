@@ -64,7 +64,7 @@ def _pixels_matching(img, colour, background=(255, 255, 255), tolerance=24, min_
         raise ValueError("colour is indistinguishable from the background")
 
     hits = 0
-    for pixel in img.convert("RGB").getdata():
+    for pixel in img.convert("RGB").get_flattened_data():
         strength = (background[index] - pixel[index]) / span
         if strength < min_strength or strength > 1.05:
             continue
@@ -123,7 +123,7 @@ def test_the_ring_expands_and_fades_with_age():
         """How far the most saturated ring pixel gets from the white background.
         Counting near-white pixels cannot measure this: an older ring is fainter
         *and* larger, and the two effects cancel."""
-        return max(255 - min(px) for px in img.convert("RGB").getdata())
+        return max(255 - min(px) for px in img.convert("RGB").get_flattened_data())
 
     assert strongest_mark(old) < strongest_mark(fresh), (
         "an older click should be fainter, so a reader can tell which came first"
@@ -159,7 +159,7 @@ def test_the_origin_offset_moves_the_marker():
     now = time.monotonic()
     draw_click_markers(a, [ClickEvent(now, 200, 150, WM_LBUTTONDOWN)], now=now)
     draw_click_markers(b, [ClickEvent(now, 300, 150, WM_LBUTTONDOWN)], now=now, origin=(100, 0))
-    assert list(a.getdata()) == list(b.getdata()), (
+    assert list(a.get_flattened_data()) == list(b.get_flattened_data()), (
         "a click at 300 with origin 100 should land where a click at 200 does"
     )
 
@@ -198,9 +198,11 @@ def test_drawing_the_cursor_changes_the_frame_where_the_cursor_is():
     drawn = _blank()
     draw_cursor(drawn)
 
-    assert list(plain.getdata()) != list(drawn.getdata()), "no cursor was drawn"
+    assert list(plain.get_flattened_data()) != list(drawn.get_flattened_data()), (
+        "no cursor was drawn"
+    )
     # The halo makes it legible on a white background, which a white arrow is not.
-    dark = sum(1 for r, g, b in drawn.getdata() if r < 90 and g < 90 and b < 90)
+    dark = sum(1 for r, g, b in drawn.get_flattened_data() if r < 90 and g < 90 and b < 90)
     assert dark > 20, "the cursor was drawn with no dark outline, so it vanishes on white"
 
 

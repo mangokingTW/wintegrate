@@ -155,7 +155,7 @@ def test_draw_keyboard_hud_stale_events_draw_nothing():
     draw_keyboard_hud(img, stale_events, now=now)
 
     # Everything must remain pure white
-    all_pixels = list(img.getdata())
+    all_pixels = list(img.get_flattened_data())
     assert all(p == (255, 255, 255) for p in all_pixels)
 
 

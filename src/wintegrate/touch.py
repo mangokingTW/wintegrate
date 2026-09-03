@@ -409,7 +409,6 @@ _WS_EX_TRANSPARENT = 0x00000020
 _SW_SHOWNOACTIVATE = 4
 _PM_REMOVE = 0x0001
 _CLASS_NAME = "WintegrateTouchDeliveryCheck"
-_class_registered = False
 
 
 class _MSG(ctypes.Structure):
@@ -483,36 +482,64 @@ if _u32 is not None:
     _u32.DispatchMessageW.restype = ctypes.c_void_p
 
 
+# The window procedure and its buffer live at module level, and that is the
+# whole point of them being here. An earlier version created both inside
+# `_delivery_check` while registering the window class only once: the class kept
+# a pointer to the first call's callback, Python collected it, and the second
+# call built a window whose WNDPROC pointed at freed memory. That crashed with
+# `Windows fatal exception: access violation` on both architectures, five times
+# per run, and the tests it broke reported themselves as skipped -- so the crash
+# was invisible in the summary line.
+# WINFUNCTYPE is Windows-only, and this now runs at import time rather than
+# inside the check, so it needs the same fallback keyboard_overlay.py uses --
+# otherwise importing wintegrate on a Mac fails outright.
+_WINFUNCTYPE = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+_WNDPROC = _WINFUNCTYPE(
+    ctypes.c_void_p, wintypes.HWND, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p
+)
+_received: list[int] = []
+
+
+def _check_wndproc(hwnd, msg, wparam, lparam):
+    if msg in (_WM_POINTERDOWN, _WM_TOUCH, _WM_LBUTTONDOWN):
+        _received.append(msg)
+    return _u32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+
+#: Kept referenced for the life of the process, because the registered window
+#: class outlives every window made from it.
+_check_proc = _WNDPROC(_check_wndproc) if sys.platform == "win32" else None
+
+#: And so does the WNDCLASSW itself. Registering a class hands USER32 pointers
+#: *into* this struct -- the class-name string among them -- so building it as a
+#: local and letting it fall out of scope leaves the registered class reading
+#: freed memory. That was this bug's second life: hoisting only the procedure
+#: fixed half of it, and RegisterClassW kept crashing.
+_check_cls = None
+_check_registered = False
+
+if sys.platform == "win32" and _check_proc is not None:
+    from wintegrate.interop import kernel32 as _k32
+
+    _check_cls = _WNDCLASSW()
+    _check_cls.lpfnWndProc = ctypes.cast(_check_proc, ctypes.c_void_p)
+    _check_cls.hInstance = _k32.GetModuleHandleW(None)
+    _check_cls.lpszClassName = _CLASS_NAME
+    _check_registered = bool(_u32.RegisterClassW(ctypes.byref(_check_cls)))
+    if not _check_registered:
+        logger.debug(
+            f"touch delivery check: RegisterClassW failed ({ctypes.get_last_error()}); "
+            "availability will report False"
+        )
+
+
 def _delivery_check(touch: Touch) -> bool:
     """Taps a small window of our own and reports whether the tap arrived."""
-    if not touch._ensure_device():
+    if not touch._ensure_device() or not _check_registered:
         return False
-    global _class_registered
 
-    from wintegrate.interop import kernel32
-
-    _WNDPROC = ctypes.WINFUNCTYPE(
-        ctypes.c_void_p, wintypes.HWND, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p
-    )
-    received = []
-
-    def wndproc(hwnd, msg, wparam, lparam):
-        if msg in (_WM_POINTERDOWN, _WM_TOUCH, _WM_LBUTTONDOWN):
-            received.append(msg)
-        return _u32.DefWindowProcW(hwnd, msg, wparam, lparam)
-
-    proc = _WNDPROC(wndproc)
+    _received.clear()
     try:
-        cls = _WNDCLASSW()
-        cls.lpfnWndProc = ctypes.cast(proc, ctypes.c_void_p)
-        cls.hInstance = kernel32.GetModuleHandleW(None)
-        cls.lpszClassName = _CLASS_NAME
-        if not _class_registered:
-            if not _u32.RegisterClassW(ctypes.byref(cls)):
-                logger.debug(f"delivery check: RegisterClassW failed ({ctypes.get_last_error()})")
-                return False
-            _class_registered = True
-
         # Small, topmost, and off in a corner: the check must not cover whatever
         # the caller is about to automate. NOACTIVATE so it does not steal focus.
         width = height = 60
@@ -529,7 +556,7 @@ def _delivery_check(touch: Touch) -> bool:
             height,
             None,
             None,
-            cls.hInstance,
+            _check_cls.hInstance,
             None,
         )
         if not hwnd:
@@ -540,7 +567,7 @@ def _delivery_check(touch: Touch) -> bool:
             _pump(0.2)
             touch.tap(left + width // 2, top + height // 2)
             _pump(0.5)
-            return bool(received)
+            return bool(_received)
         finally:
             _u32.DestroyWindow(hwnd)
             _pump(0.05)

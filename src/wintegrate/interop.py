@@ -604,6 +604,14 @@ kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = wintypes.BOOL
 
+# Declared because it was not, and that cost three CI runs. GetModuleHandleW
+# returns an HMODULE; undeclared, ctypes converts it as c_int and the top 32
+# bits go. Handing that truncated value to RegisterClassW and CreateWindowExW
+# crashed inside window creation with an access violation -- and the crash
+# reached neither pytest's exit code nor its summary line.
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+
 user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 user32.AttachThreadInput.restype = wintypes.BOOL
 
