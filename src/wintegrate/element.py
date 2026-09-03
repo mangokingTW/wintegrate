@@ -476,6 +476,39 @@ class UiaElement:
         loc = Locator(lambda: self, lambda r: [self], description=str(self))
         return loc.get_by_class(class_name)
 
+    def tap(self, require_rectangle: bool = True, touch=None) -> bool:
+        """Taps the centre of this element with an injected touch contact.
+
+        The touch counterpart of `click()`, and it needs a rectangle for the same
+        reason: a contact is a coordinate, and an element that publishes no
+        rectangle has none.
+
+        Returns False when touch cannot be delivered on this host rather than
+        raising, because that is a property of the machine and not of the call --
+        check `Touch().available()` if the distinction matters. Pass an existing
+        `Touch` to reuse one digitizer across many taps instead of creating one
+        per call.
+        """
+        from wintegrate.touch import Touch
+
+        left, top, right, bottom = self.bounding_rectangle
+        if right <= left or bottom <= top:
+            if require_rectangle:
+                raise ActionVerificationError(
+                    f"{self} has an empty bounding rectangle ({left}, {top}, {right}, "
+                    f"{bottom}), so there is no point to tap. It may be scrolled out "
+                    "of view, not laid out yet, or hosted somewhere that publishes no "
+                    "rectangle -- try invoke(), or scroll_into_view() first."
+                )
+            return False
+
+        cx = (left + right) // 2
+        cy = (top + bottom) // 2
+        if touch is not None:
+            return touch.tap(cx, cy)
+        with Touch() as own:
+            return own.tap(cx, cy)
+
     def set_focus(self, verify: bool = True, timeout: float = 2.0, click: bool = True) -> bool:
         """
         Sets focus to this element via UIA SetFocus, then a physical centre click.

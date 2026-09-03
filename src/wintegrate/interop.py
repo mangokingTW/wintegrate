@@ -1923,3 +1923,265 @@ def get_ancestor_pids(pid: int | None = None) -> set[int]:
 def get_foreground_window() -> int:
     """Gets the HWND of the current foreground window."""
     return user32.GetForegroundWindow()
+
+
+# --- Touch injection ---------------------------------------------------------
+#
+# Injected touch goes through a synthetic pointer device: Windows creates a
+# virtual digitizer on request and forwards the contacts we describe to it as if
+# a real one had reported them. Two APIs do this. `CreateSyntheticPointerDevice`
+# (Windows 10 1809+) is the current one and also handles pen;
+# `InitializeTouchInjection` (Windows 8+) is the older touch-only path and is
+# kept as a fallback, since both were measured working on every host that
+# delivers touch at all.
+#
+# What the return values do *not* tell you is whether anything received the
+# contact. On a runner whose desktop is covered by a full-screen onboarding
+# window, all three injection calls report success and no window sees a thing --
+# which is why `touch.py` verifies delivery rather than trusting these.
+
+PT_TOUCH = 2
+PT_PEN = 3
+
+#: Feedback modes for a synthetic pointer device. NONE draws no visual touch
+#: indicator, which is what automation wants: the indicator is the OS drawing on
+#: top of the app under test.
+POINTER_FEEDBACK_DEFAULT = 1
+POINTER_FEEDBACK_INDIRECT = 2
+POINTER_FEEDBACK_NONE = 3
+
+TOUCH_FEEDBACK_DEFAULT = 0x1
+TOUCH_FEEDBACK_INDIRECT = 0x2
+TOUCH_FEEDBACK_NONE = 0x3
+
+POINTER_FLAG_NONE = 0x00000000
+POINTER_FLAG_NEW = 0x00000001
+POINTER_FLAG_INRANGE = 0x00000002
+POINTER_FLAG_INCONTACT = 0x00000004
+POINTER_FLAG_DOWN = 0x00010000
+POINTER_FLAG_UPDATE = 0x00020000
+POINTER_FLAG_UP = 0x00040000
+
+TOUCH_FLAG_NONE = 0x00000000
+TOUCH_MASK_NONE = 0x00000000
+TOUCH_MASK_CONTACTAREA = 0x00000001
+TOUCH_MASK_ORIENTATION = 0x00000002
+TOUCH_MASK_PRESSURE = 0x00000004
+
+#: Pressure is 0..1024 in the API. Real digitizers report a wide range; this is
+#: a firm, unremarkable press.
+TOUCH_DEFAULT_PRESSURE = 512
+
+#: Half-width of the square contact patch, in pixels. A contact with no area is
+#: accepted but describes a fingertip infinitely small, and some gesture
+#: recognisers use the area.
+TOUCH_DEFAULT_CONTACT_RADIUS = 4
+
+#: The most contacts a synthetic device is asked for. Ten is what Windows
+#: reports for its own touch hardware and more than any gesture here needs.
+TOUCH_MAX_CONTACTS = 10
+
+
+class POINTER_INFO(ctypes.Structure):
+    _fields_ = [
+        ("pointerType", wintypes.DWORD),
+        ("pointerId", ctypes.c_uint32),
+        ("frameId", ctypes.c_uint32),
+        ("pointerFlags", ctypes.c_uint32),
+        ("sourceDevice", wintypes.HANDLE),
+        ("hwndTarget", wintypes.HWND),
+        ("ptPixelLocation", POINT),
+        ("ptHimetricLocation", POINT),
+        ("ptPixelLocationRaw", POINT),
+        ("ptHimetricLocationRaw", POINT),
+        ("dwTime", wintypes.DWORD),
+        ("historyCount", ctypes.c_uint32),
+        ("InputData", ctypes.c_int32),
+        ("dwKeyStates", wintypes.DWORD),
+        ("PerformanceCount", ctypes.c_uint64),
+        ("ButtonChangeType", ctypes.c_int),
+    ]
+
+
+class POINTER_TOUCH_INFO(ctypes.Structure):
+    _fields_ = [
+        ("pointerInfo", POINTER_INFO),
+        ("touchFlags", ctypes.c_uint32),
+        ("touchMask", ctypes.c_uint32),
+        ("rcContact", RECT),
+        ("rcContactRaw", RECT),
+        ("orientation", ctypes.c_uint32),
+        ("pressure", ctypes.c_uint32),
+    ]
+
+
+class POINTER_PEN_INFO(ctypes.Structure):
+    """Not used for touch, but the union below has to be the size Windows expects."""
+
+    _fields_ = [
+        ("pointerInfo", POINTER_INFO),
+        ("penFlags", ctypes.c_uint32),
+        ("penMask", ctypes.c_uint32),
+        ("pressure", ctypes.c_uint32),
+        ("rotation", ctypes.c_uint32),
+        ("tiltX", ctypes.c_int32),
+        ("tiltY", ctypes.c_int32),
+    ]
+
+
+class _POINTER_TYPE_INFO_UNION(ctypes.Union):
+    _fields_ = [("touchInfo", POINTER_TOUCH_INFO), ("penInfo", POINTER_PEN_INFO)]
+
+
+class POINTER_TYPE_INFO(ctypes.Structure):
+    """What `InjectSyntheticPointerInput` takes -- not `POINTER_TOUCH_INFO` itself."""
+
+    _fields_ = [("type", wintypes.DWORD), ("u", _POINTER_TYPE_INFO_UNION)]
+    _anonymous_ = ("u",)
+
+
+if sys.platform == "win32":
+    # Handle-returning calls are declared, without exception. An undeclared
+    # restype makes ctypes convert a 64-bit handle as c_int, and above 2^31 that
+    # is an OverflowError or an access violation rather than a wrong number --
+    # this project has lost three separate debugging sessions to it.
+    #
+    # These four are looked up softly: `CreateSyntheticPointerDevice` does not
+    # exist before Windows 10 1809, and its absence is a capability answer, not
+    # an import error.
+    for _fn_name, _fn_argtypes, _fn_restype in (
+        (
+            "CreateSyntheticPointerDevice",
+            [wintypes.DWORD, ctypes.c_ulong, ctypes.c_int],
+            ctypes.c_void_p,
+        ),
+        (
+            "InjectSyntheticPointerInput",
+            [ctypes.c_void_p, ctypes.POINTER(POINTER_TYPE_INFO), ctypes.c_uint32],
+            wintypes.BOOL,
+        ),
+        ("DestroySyntheticPointerDevice", [ctypes.c_void_p], None),
+        ("InitializeTouchInjection", [ctypes.c_uint32, wintypes.DWORD], wintypes.BOOL),
+        (
+            "InjectTouchInput",
+            [ctypes.c_uint32, ctypes.POINTER(POINTER_TOUCH_INFO)],
+            wintypes.BOOL,
+        ),
+    ):
+        try:
+            _fn = getattr(user32, _fn_name)
+        except AttributeError:
+            logger.debug(f"{_fn_name} is not exported by this user32; touch may be limited")
+            continue
+        _fn.argtypes = _fn_argtypes
+        _fn.restype = _fn_restype
+
+
+def touch_injection_api_available() -> bool:
+    """Whether either injection entry point exists at all.
+
+    A `True` here means the API is present, nothing more. Whether an injected
+    contact reaches a window is a separate question with a different answer on
+    some hosts, and `Touch.available()` is the one that measures it.
+    """
+    if sys.platform != "win32":
+        return False
+    return hasattr(user32, "CreateSyntheticPointerDevice") or hasattr(
+        user32, "InitializeTouchInjection"
+    )
+
+
+def create_touch_device(
+    max_contacts: int = TOUCH_MAX_CONTACTS, feedback: int = POINTER_FEEDBACK_NONE
+) -> int | None:
+    """Creates a synthetic touch digitizer, or returns None with the reason logged.
+
+    `feedback` defaults to NONE so Windows draws no touch indicator: the
+    indicator is the OS painting over the application under test, which is
+    exactly what a recording should not contain.
+    """
+    if sys.platform != "win32" or not hasattr(user32, "CreateSyntheticPointerDevice"):
+        return None
+    ctypes.set_last_error(0)
+    handle = user32.CreateSyntheticPointerDevice(PT_TOUCH, max_contacts, feedback)
+    if not handle:
+        logger.debug(
+            f"CreateSyntheticPointerDevice failed (GetLastError={ctypes.get_last_error()})"
+        )
+        return None
+    return int(handle)
+
+
+def destroy_touch_device(handle: int | None) -> None:
+    if sys.platform == "win32" and handle and hasattr(user32, "DestroySyntheticPointerDevice"):
+        user32.DestroySyntheticPointerDevice(ctypes.c_void_p(handle))
+
+
+def initialize_legacy_touch_injection(max_contacts: int = TOUCH_MAX_CONTACTS) -> bool:
+    """Sets up the Windows 8 touch injection path, used when no device handle exists."""
+    if sys.platform != "win32" or not hasattr(user32, "InitializeTouchInjection"):
+        return False
+    ctypes.set_last_error(0)
+    if user32.InitializeTouchInjection(max_contacts, TOUCH_FEEDBACK_NONE):
+        return True
+    logger.debug(f"InitializeTouchInjection failed (GetLastError={ctypes.get_last_error()})")
+    return False
+
+
+def make_touch_contact(
+    x: int,
+    y: int,
+    flags: int,
+    pointer_id: int = 0,
+    pressure: int = TOUCH_DEFAULT_PRESSURE,
+    radius: int = TOUCH_DEFAULT_CONTACT_RADIUS,
+) -> POINTER_TOUCH_INFO:
+    """One contact in one frame. `flags` is the POINTER_FLAG_* combination."""
+    contact = POINTER_TOUCH_INFO()
+    contact.pointerInfo.pointerType = PT_TOUCH
+    contact.pointerInfo.pointerId = pointer_id
+    contact.pointerInfo.pointerFlags = flags
+    contact.pointerInfo.ptPixelLocation.x = x
+    contact.pointerInfo.ptPixelLocation.y = y
+    contact.touchFlags = TOUCH_FLAG_NONE
+    contact.touchMask = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_PRESSURE
+    contact.rcContact.left = x - radius
+    contact.rcContact.right = x + radius
+    contact.rcContact.top = y - radius
+    contact.rcContact.bottom = y + radius
+    contact.pressure = pressure
+    return contact
+
+
+def inject_touch_frame(device: int | None, contacts: list[POINTER_TOUCH_INFO]) -> bool:
+    """Sends one frame describing every contact currently on the digitizer.
+
+    A frame is the complete picture, not a delta: a contact left out of it is a
+    finger lifted. Returns whether the system accepted the frame -- which is not
+    the same as anything having received it.
+    """
+    if not contacts:
+        return True
+    if sys.platform != "win32":
+        return False
+    ctypes.set_last_error(0)
+    if device is not None:
+        typed = (POINTER_TYPE_INFO * len(contacts))()
+        for i, contact in enumerate(contacts):
+            typed[i].type = PT_TOUCH
+            typed[i].touchInfo = contact
+        ok = bool(user32.InjectSyntheticPointerInput(ctypes.c_void_p(device), typed, len(typed)))
+        if not ok:
+            logger.debug(
+                f"InjectSyntheticPointerInput refused {len(typed)} contact(s) "
+                f"(GetLastError={ctypes.get_last_error()})"
+            )
+        return ok
+    array = (POINTER_TOUCH_INFO * len(contacts))(*contacts)
+    ok = bool(user32.InjectTouchInput(len(array), array))
+    if not ok:
+        logger.debug(
+            f"InjectTouchInput refused {len(array)} contact(s) "
+            f"(GetLastError={ctypes.get_last_error()})"
+        )
+    return ok
