@@ -422,6 +422,27 @@ def test_an_injected_contact_presses_a_real_button():
         host.close()
 
 
+def test_availability_can_be_measured_more_than_once():
+    """Repeated checks must not crash, which is what shipped in 0.5.9.
+
+    The window class is registered once and keeps a pointer to its WNDPROC. When
+    that callback was a local of the check, the second call built a window whose
+    procedure pointed at freed memory: `Windows fatal exception: access
+    violation`, five times per run on both architectures -- and the tests it
+    broke reported themselves as *skipped*, so the summary line said nothing.
+
+    Off Windows this asserts the same shape against a host with no digitizer,
+    which still exercises the caching and the repeated entry.
+    """
+    touch = Touch()
+    first = touch.available()
+    for _ in range(3):
+        assert touch.available(force=True) == first, (
+            "availability changed between measurements on an unchanged desktop"
+        )
+    assert touch.available() == first
+
+
 if __name__ == "__main__":
     test_a_contact_describes_a_patch_not_a_point()
     test_contact_ids_are_carried_through()
@@ -431,4 +452,5 @@ if __name__ == "__main__":
     test_more_contacts_than_the_device_was_made_for_is_an_error()
     test_every_gesture_declines_rather_than_raises_where_touch_is_absent()
     test_an_injected_contact_presses_a_real_button()
+    test_availability_can_be_measured_more_than_once()
     print("All touch tests passed!")
