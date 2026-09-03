@@ -6,6 +6,30 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.9] — 2026-09-03
+
+### Added
+
+- **`click=False` on the element typing methods.** `send_physical_keys`,
+  `send_keys` and `type_verified` focus before typing, and that focus included an
+  unconditional physical click. There was no way to ask them not to: a caller
+  that had already focused deliberately still paid one click per typed phrase.
+
+  Default stays `True` — the click is how these guarantee focus on controls that
+  ignore UIA SetFocus, and there is no cheap way to know in advance which those
+  are. What changes is that it can be turned off.
+
+  Noticed in a product demo rather than a test: ImeModePersistence's Store
+  recording collected one click marker per typed phrase, over an empty editor,
+  in a demo with no mouse interaction to show.
+
+### Changed
+
+- **`Element.set_focus`'s docstring no longer calls the click a "fallback".** It
+  is not one, and never was: when `click` is true the click happens before
+  anything is verified, because that is what makes focus reliable. Reading it as
+  a fallback is what made the extra clicks above hard to account for.
+
 ## [0.5.8] — 2026-09-03
 
 ### Fixed

@@ -62,3 +62,51 @@ def test_replace_pywinauto_notepad_workflow():
         assert "replacing pywinauto" in notepad.get_text()
     finally:
         notepad.close()
+
+
+def test_the_typing_methods_can_focus_without_clicking():
+    """`click=False` reaches set_focus, and defaults stay True.
+
+    The click is how these methods guarantee focus, so it has to remain the
+    default; what was missing was any way to turn it off. A caller that has
+    already focused deliberately was paying one physical click per typed phrase,
+    and in a recording each one draws a marker -- which is how this was noticed,
+    in ImeModePersistence's Store demo rather than in a test.
+
+    Checked through the signature and a recorded call rather than by driving a
+    real control, so it runs anywhere: what is under test is the plumbing of the
+    argument, not what focus does.
+    """
+    import inspect
+
+    from wintegrate.element import UiaElement
+
+    for name in ("send_physical_keys", "send_keys", "type_verified"):
+        params = inspect.signature(getattr(UiaElement, name)).parameters
+        assert "click" in params, f"{name} takes no click argument"
+        assert params["click"].default is True, f"{name} must still click by default"
+
+    calls = []
+
+    class Spy(UiaElement):
+        def __init__(self):  # noqa: D107 - deliberately skips UiaElement.__init__
+            pass
+
+        def set_focus(self, verify=True, timeout=2.0, click=True):
+            calls.append(click)
+            return True
+
+        def get_value(self):
+            return ""
+
+    spy = Spy()
+    for kwargs in ({}, {"click": False}):
+        calls.clear()
+        try:
+            spy.send_keys("{ENTER}", **kwargs)
+        except Exception:
+            # The injection itself is not what this asserts; only that set_focus
+            # was told what the caller asked for.
+            pass
+        assert calls, "send_keys did not call set_focus"
+        assert calls[0] is kwargs.get("click", True), f"set_focus got click={calls[0]}"
