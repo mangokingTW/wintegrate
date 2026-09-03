@@ -65,7 +65,22 @@ jobs:
         env:
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/ -v -s -m "not target_app"
+          # Tee'd and then searched for a native crash, because pytest's exit
+          # code does not report one. 0.5.9 shipped an access violation inside
+          # the touch delivery check: faulthandler printed the dump, execution
+          # carried on, the two tests it broke reported themselves as *skipped*,
+          # and the summary line read "15 passed, 2 skipped". The run looked
+          # clean. Nothing about a crash reaches the exit code, so the log is
+          # the only place it exists -- and an unread log is not a check.
+          pytest tests/ -v -s -m "not target_app" 2>&1 | Tee-Object -FilePath pytest-output.txt
+          $failed = $LASTEXITCODE
+          $crashes = Select-String -Path pytest-output.txt -Pattern 'Windows fatal exception|access violation' -SimpleMatch:$false
+          if ($crashes) {
+            Write-Host "::error::a native crash happened during the tests, which pytest reports as neither a failure nor an error"
+            $crashes | Select-Object -First 8 | ForEach-Object { Write-Host "  $($_.Line.Trim())" }
+            exit 1
+          }
+          if ($failed -ne 0) { exit $failed }
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
@@ -159,7 +174,22 @@ jobs:
         env:
           WINTEGRATE_RECORD_SUITE: "1"
         run: |
-          pytest tests/ -v -s -m "not target_app"
+          # Tee'd and then searched for a native crash, because pytest's exit
+          # code does not report one. 0.5.9 shipped an access violation inside
+          # the touch delivery check: faulthandler printed the dump, execution
+          # carried on, the two tests it broke reported themselves as *skipped*,
+          # and the summary line read "15 passed, 2 skipped". The run looked
+          # clean. Nothing about a crash reaches the exit code, so the log is
+          # the only place it exists -- and an unread log is not a check.
+          pytest tests/ -v -s -m "not target_app" 2>&1 | Tee-Object -FilePath pytest-output.txt
+          $failed = $LASTEXITCODE
+          $crashes = Select-String -Path pytest-output.txt -Pattern 'Windows fatal exception|access violation' -SimpleMatch:$false
+          if ($crashes) {
+            Write-Host "::error::a native crash happened during the tests, which pytest reports as neither a failure nor an error"
+            $crashes | Select-Object -First 8 | ForEach-Object { Write-Host "  $($_.Line.Trim())" }
+            exit 1
+          }
+          if ($failed -ne 0) { exit $failed }
 
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
