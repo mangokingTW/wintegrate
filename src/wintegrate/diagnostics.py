@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
 
-from wintegrate import keyboard_overlay, pointer_overlay
+from wintegrate import caption_overlay, keyboard_overlay, pointer_overlay
 from wintegrate.exceptions import DiagnosticPipelineError
 from wintegrate.interop import (
     BITMAPINFOHEADER,
@@ -183,6 +183,7 @@ class ContinuousRecorder:
         draw_cursor: bool = True,
         click_markers: bool = True,
         key_hud: bool = True,
+        caption: str = "",
     ):
         self.output_path = Path(output_path)
         self.fps = fps
@@ -196,6 +197,11 @@ class ContinuousRecorder:
         self.draw_cursor = draw_cursor
         self.click_markers = click_markers
         self.key_hud = key_hud
+        # Settable while recording: a caller that knows what it is doing -- a pytest
+        # hook, say -- assigns this as it moves from one thing to the next, and the
+        # frames from that point on say so. Empty draws nothing.
+        self.caption = caption
+        self.caption_subtitle = ""
         self._clicks: pointer_overlay.ClickTracker | None = None
         self._keys: keyboard_overlay.KeyTracker | None = None
         self._frame_count = 0
@@ -297,6 +303,8 @@ class ContinuousRecorder:
                     pointer_overlay.draw_click_markers(img, self._clicks.recent())
                 if self.key_hud and self._keys is not None:
                     keyboard_overlay.draw_keyboard_hud(img, self._keys.recent())
+                if self.caption:
+                    caption_overlay.draw_caption(img, self.caption, subtitle=self.caption_subtitle)
                 if self.draw_cursor:
                     pointer_overlay.draw_cursor(img)
                 if self._container is not None:
