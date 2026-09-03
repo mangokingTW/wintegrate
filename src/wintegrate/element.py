@@ -478,12 +478,18 @@ class UiaElement:
 
     def set_focus(self, verify: bool = True, timeout: float = 2.0, click: bool = True) -> bool:
         """
-        Sets focus to this element via UIA SetFocus and physical center click fallback.
+        Sets focus to this element via UIA SetFocus, then a physical centre click.
 
-        `click=False` drops the fallback. The click is what makes this reliable on
-        controls that ignore UIA SetFocus, but it is a real click: on a container it
-        lands on whatever is at the centre, which can select or activate something.
-        Pass `click=False` when the focus change has to have no side effects.
+        The click is **not** a fallback, despite how this used to read: it happens
+        whenever `click` is true, before anything is verified, because it is what
+        makes focus reliable on controls that ignore UIA SetFocus. There is no cheap
+        way to know in advance which those are.
+
+        It is a real click, though. On a container it lands on whatever is at the
+        centre, which can select or activate something, and a recording draws a
+        marker for each one. Pass `click=False` when the focus change has to have no
+        side effects, and check the return value: without the click, UIA SetFocus is
+        the only thing that ran.
         """
         try:
             self._element.SetFocus()
@@ -1042,7 +1048,9 @@ class UiaElement:
 
         return TreeViewItem(self)
 
-    def send_physical_keys(self, text: str, delay_per_key: float = 0.03) -> bool:
+    def send_physical_keys(
+        self, text: str, delay_per_key: float = 0.03, click: bool = True
+    ) -> bool:
         """
         Focuses this element and types `text` as physical (scan-code) key presses,
         which an active IME sees and composes.
@@ -1050,19 +1058,26 @@ class UiaElement:
         `type_verified` and `send_char_input` inject Unicode codepoints, which reach
         the control without passing through the IME — fine for getting characters in,
         useless when the IME itself is under test.
+
+        `click=False` focuses without the physical click. Pass it when the caller has
+        already focused deliberately, or when a click would be visible: a recording
+        draws a marker for every one, and a run that types ten phrases otherwise
+        collects ten markers nobody asked for.
         """
-        self.set_focus(verify=False)
+        self.set_focus(verify=False, click=click)
         time.sleep(0.05)
         return send_physical_keys(text, delay_per_key=delay_per_key)
 
-    def send_keys(self, spec: str, delay_per_key: float = 0.02) -> bool:
+    def send_keys(self, spec: str, delay_per_key: float = 0.02, click: bool = True) -> bool:
         """
         Focuses this element and sends a SendKeys-style spec ("{ENTER}", "^a", "{TAB 3}").
 
         Unlike type_verified this asserts no post-condition — the caller decides what
         the keys were supposed to achieve and verifies that.
+
+        `click=False` focuses without the physical click; see `send_physical_keys`.
         """
-        self.set_focus(verify=False)
+        self.set_focus(verify=False, click=click)
         time.sleep(0.05)
         return send_keys(spec, delay_per_key=delay_per_key)
 
@@ -1197,16 +1212,21 @@ class UiaElement:
         verify_contains: str | None = None,
         delay_per_char: float = 0.03,
         timeout: float = 8.0,
+        click: bool = True,
     ) -> bool:
         """
         Sends hardware keypresses via send_char_input (SendInput KEYEVENTF_UNICODE),
         and asserts verified text mutation.
+
+        `click=False` focuses without the physical click; see `send_physical_keys`.
+        Note that it applies to every retry below, so a caller that turns it off is
+        relying on UIA focus working — which is the trade the click exists to avoid.
         """
         # Foreground contention (first-run popups, notification toasts) is usually
         # transient, so retry focus a few times before declaring a steal.
         focus_ok = False
         for _ in range(3):
-            if self.set_focus(timeout=2.0):
+            if self.set_focus(timeout=2.0, click=click):
                 focus_ok = True
                 break
             time.sleep(0.3)
