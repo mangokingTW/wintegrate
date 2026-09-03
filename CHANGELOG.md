@@ -6,7 +6,7 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
-## [0.6.0] — 2026-09-03
+## [0.5.9] — 2026-09-03
 
 ### Added
 
@@ -48,10 +48,6 @@ do about it — that callout is the guarantee, not the version number.
 - `Contact.move_to()` restates every open contact, because an injected frame is
   the whole hand and not a delta -- a finger left out of a frame is a finger
   lifted.
-
-## [0.5.9] — 2026-09-03
-
-### Added
 
 - **`click=False` on the element typing methods.** `send_physical_keys`,
   `send_keys` and `type_verified` focus before typing, and that focus included an
