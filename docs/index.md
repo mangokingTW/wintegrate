@@ -12,9 +12,9 @@ pip install wintegrate
 from wintegrate import NOTEPAD, Session, SessionConfig
 
 with Session(SessionConfig()) as session:
-    with session.app(NOTEPAD) as app:          # cleanup guaranteed, even on failure
-        editor = app.find_text_input()          # no localized control names
-        editor.type_verified(                   # refuses to return unless it worked
+    with session.app(NOTEPAD) as app:  # cleanup guaranteed, even on failure
+        editor = app.find_text_input()  # no localized control names
+        editor.type_verified(  # refuses to return unless it worked
             "hello from CI\n",
             expected_line_count_delta=1,
             verify_contains="hello from CI",

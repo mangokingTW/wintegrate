@@ -62,17 +62,17 @@ dialog = Window.find(title_pattern="Settings", class_name="#32770")
 # empty, or shared with another application.
 win = Window.find(class_name="Notepad", pid=proc.pid)
 
-root = dialog.re_resolve_element()      # always re-resolve; COM wrappers go stale
+root = dialog.re_resolve_element()  # always re-resolve; COM wrappers go stale
 edit = root.find_descendant(automation_id="1002")
-maybe = root.find_descendant(automation_id="9999", required=False)   # None, no raise
+maybe = root.find_descendant(automation_id="9999", required=False)  # None, no raise
 ```
 
 ## Typing, and why there are two ways
 
 ```python
-editor.type_verified("abc", verify_contains="abc")   # Unicode injection
-editor.send_physical_keys("abc")                     # scan codes
-editor.send_keys("{HOME}+{END}{DELETE}")             # named keys and modifiers
+editor.type_verified("abc", verify_contains="abc")  # Unicode injection
+editor.send_physical_keys("abc")  # scan codes
+editor.send_keys("{HOME}+{END}{DELETE}")  # named keys and modifiers
 ```
 
 `type_verified` injects Unicode codepoints. They reach the control directly and
@@ -92,7 +92,7 @@ intercepts. Reach for it when the IME itself is what you are testing.
 ## Screenshots
 
 ```python
-session.capture_screenshot("after-login")            # whole virtual desktop
+session.capture_screenshot("after-login")  # whole virtual desktop
 session.capture_screenshot("dialog", window=dialog)  # that window only
 window.capture("window.png")
 element.capture("control.png")
@@ -111,12 +111,12 @@ something fails, the state that explains it is often gone.
 
 ```python
 check = root.find_descendant(automation_id="1011")
-check.set_toggle_verified(True)          # Toggle() only cycles; this drives to a state
+check.set_toggle_verified(True)  # Toggle() only cycles; this drives to a state
 
 combo = root.find_descendant(automation_id="1003")
 combo.expand_verified(True)
 combo.find_all(control_type_id=50007)[1].select_verified()
-combo.get_value()                        # a Win32 combo reports selection as its value
+combo.get_value()  # a Win32 combo reports selection as its value
 
 items = root.find_descendant(automation_id="1001").children()
 items[1].select_verified()

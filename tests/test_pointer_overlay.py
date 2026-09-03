@@ -198,7 +198,9 @@ def test_drawing_the_cursor_changes_the_frame_where_the_cursor_is():
     drawn = _blank()
     draw_cursor(drawn)
 
-    assert list(plain.get_flattened_data()) != list(drawn.get_flattened_data()), "no cursor was drawn"
+    assert list(plain.get_flattened_data()) != list(drawn.get_flattened_data()), (
+        "no cursor was drawn"
+    )
     # The halo makes it legible on a white background, which a white arrow is not.
     dark = sum(1 for r, g, b in drawn.get_flattened_data() if r < 90 and g < 90 and b < 90)
     assert dark > 20, "the cursor was drawn with no dark outline, so it vanishes on white"

@@ -38,25 +38,27 @@ with Session(SessionConfig()) as session:
    * If typing physical ASCII keys on non-English layouts (e.g. `zh-TW` Bopomofo / Japanese IME):
      ```python
      from wintegrate import ImeConversion
+
      with app.ime_mode(ImeConversion.ALPHANUMERIC):
          app.send_physical_keys("my_input")
      ```
    * Or use Unicode character injection (bypasses IME directly via `VK_PACKET` 0xE7):
      ```python
      from wintegrate.interop import send_char_input
+
      for ch in "Text to insert":
          send_char_input(ch)
      ```
 4. **Always enable continuous recording in CI**:
    ```python
    from wintegrate.diagnostics import ContinuousRecorder
-   
+
    rec = ContinuousRecorder(
        "output.mp4",
        fps=15,
-       draw_cursor=True,      # Renders real cursor position
-       click_markers=True,    # Renders expanding click rings & coordinate crosshair
-       key_hud=True,          # Renders native dark pill keyboard visualizer HUD
+       draw_cursor=True,  # Renders real cursor position
+       click_markers=True,  # Renders expanding click rings & coordinate crosshair
+       key_hud=True,  # Renders native dark pill keyboard visualizer HUD
    )
    rec.start()
    try:
@@ -156,17 +158,17 @@ with Session(config) as session:
 import pytest
 from wintegrate import Session, SessionConfig, NOTEPAD
 
+
 # For bugs that are currently reproducing on an open upstream issue:
 @pytest.mark.xfail(
-    strict=True,
-    reason="Upstream issue #12345: Selection gets cleared after modal close"
+    strict=True, reason="Upstream issue #12345: Selection gets cleared after modal close"
 )
 def test_reproduce_issue_12345():
     with Session(SessionConfig()) as session:
         with session.app(NOTEPAD) as app:
             editor = app.find_text_input()
             editor.type_verified("Test", verify_contains="Test")
-            
+
             # Assert desired/fixed behavior:
             # If bug still exists, assertion fails -> marked as XFAIL (Green run)
             # If bug is fixed, assertion passes -> marked as XPASS (Turns red, notifying author)
