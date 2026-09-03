@@ -10,6 +10,45 @@ do about it — that callout is the guarantee, not the version number.
 
 ### Added
 
+- **Touch and multi-finger gestures**, via `Touch` in `src/wintegrate/touch.py`
+  and `UiaElement.tap()`. Contacts are injected through a synthetic digitizer
+  (`CreateSyntheticPointerDevice`, with the Windows 8 `InitializeTouchInjection`
+  path as a fallback), and an injected tap makes Windows report a real `BUTTON`
+  as clicked -- asserted in `tests/test_touch.py` on both architectures.
+
+  `tap`, `double_tap`, `long_press`, `swipe`, `pinch`, `rotate`, and
+  `contacts()` for hand-written multi-finger choreography:
+
+  ```python
+  with Touch() as touch:
+      touch.tap(x, y)
+      touch.swipe(x1, y1, x2, y2)
+      with touch.contacts([(100, 100), (300, 300)]) as (a, b):
+          a.move_to(120, 120)
+          b.move_to(280, 280)
+  ```
+
+  **Nothing here is named after an outcome.** `pinch()` moves two contacts
+  apart; whether the application zooms is the caller's assertion, because the
+  thresholds -- distance, timing, `GESTURECONFIG` -- are system metrics that
+  differ between machines. Windows has no gesture API, only contacts.
+
+  **`Touch.available()` measures delivery rather than asking the API.** All
+  three injection calls report success on a host where nothing receives the
+  contact, so `available()` taps a small window of its own and checks the tap
+  arrived. That distinction is not theoretical: on a fresh GitHub ARM runner a
+  full-screen onboarding window owns the foreground, every injection succeeds,
+  and no window sees anything -- and a plain mouse click is equally ignored, so
+  the honest reading is "the desktop is covered", not "touch is unavailable".
+  `Touch.available()` returning False logs which of the two it is.
+
+  `double_tap` reads `GetDoubleClickTime` and clamps to it rather than assuming
+  the default: the double-click interval is a user setting.
+
+- `Contact.move_to()` restates every open contact, because an injected frame is
+  the whole hand and not a delta -- a finger left out of a frame is a finger
+  lifted.
+
 - **`click=False` on the element typing methods.** `send_physical_keys`,
   `send_keys` and `type_verified` focus before typing, and that focus included an
   unconditional physical click. There was no way to ask them not to: a caller

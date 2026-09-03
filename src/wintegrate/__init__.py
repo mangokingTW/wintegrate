@@ -123,6 +123,7 @@ from wintegrate.recorder import (
 from wintegrate.scintilla import EolMode, ScintillaView, is_scintilla
 from wintegrate.session import Session, SessionConfig
 from wintegrate.text import count_lines, normalize_line_endings
+from wintegrate.touch import Contact, Touch
 from wintegrate.window import Window
 
 __all__ = [
@@ -181,6 +182,8 @@ __all__ = [
     "Menu",
     "MenuItem",
     "Mouse",
+    "Touch",
+    "Contact",
     "normalize_line_endings",
     "NOTEPAD",
     "parse_hotkey",
