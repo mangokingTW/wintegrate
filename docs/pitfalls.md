@@ -16,6 +16,96 @@ still passes**. The text has the right shape and the wrong content.
 the text you asked it to type when you do not supply one. A `expected_line_count_delta`
 is an additional check, never the only one.
 
+## Touch injection reports success when nothing receives it
+
+`CreateSyntheticPointerDevice`, `InitializeTouchInjection` and every
+`InjectSyntheticPointerInput` call can all return success on a host where no
+window sees a contact. Measured on a fresh `windows-11-arm` runner: the device
+was created, `GetPointerDevices` went from 0 to 2, DOWN, UPDATE and UP were all
+accepted, and the listener received nothing.
+
+The cause turned out not to be touch at all — a full-screen `Shell_OOBEProxy`
+window owned the foreground, and **a plain mouse click was ignored there too**.
+Three rounds of measurement concluded "touch is undeliverable on ARM runners"
+before a mouse control case was added and showed the desktop was simply covered.
+
+So `Touch.available()` does not ask the API. It taps a small window of its own
+and checks the tap arrived:
+
+```python
+with Touch() as touch:
+    if not touch.available():
+        pytest.skip("touch is not delivered on this host")
+    touch.tap(x, y)
+```
+
+Two rules follow, and the second is the one that costs time:
+
+- **Never gate touch on the injection return value, or on `SM_DIGITIZER`.**
+  That metric reads `0` on every host measured, including the ones where touch
+  works.
+- **Give any input experiment a control that is known to work** — the same
+  coordinate clicked with `SendInput` first. Without it, "the feature does not
+  work" cannot be told from "I aimed at nothing", and `WindowFromPoint` plus
+  `GetDlgCtrlID` printed before the press is the cheapest version of that check.
+
+## A covered desktop makes every input test lie, and ARM runners start covered
+
+`windows-11-arm` boots with two things fighting for the foreground: a full-screen
+onboarding window (`Shell_OOBEProxy` / `Windows.UI.Core.CoreWindow`, titled
+*Microsoft account*, covering the whole screen) and a `wsl.exe` terminal that the
+provisioning daemon respawns every 30 seconds until WSL is updated.
+
+A window underneath either of them receives **no input at all**. Not touch, not
+a mouse click, not a keystroke — and nothing in the failure says so. The symptom
+is whatever the test happened to assert.
+
+`.github/actions/setup-windows-gui-test` does both preparations, gated on
+`runner.arch == 'ARM64'`. Reuse it rather than reimplementing:
+
+```yaml
+- uses: mangokingTW/wintegrate/.github/actions/setup-windows-gui-test@main
+  with:
+    wintegrate-version: ">=0.5.10"
+```
+
+The WSL step must stay ARM-only. Run unconditionally, it hangs on the x64 image
+— there is no `wsl.exe` to update — until the job is cancelled and every later
+step is skipped.
+
+## A native crash does not fail the test run
+
+An access violation inside a ctypes callback is printed by `faulthandler` and
+then execution continues. `pytest` reports it as neither a failure nor an error:
+a run that crashed seven times finished `211 passed, 5 skipped`, exit code 0, and
+the two tests it broke reported themselves as **skipped**.
+
+Nothing about the crash reaches the exit code. Search the output for it:
+
+```yaml
+- run: |
+    pytest tests/ -v -s 2>&1 | Tee-Object -FilePath pytest-output.txt
+    $failed = $LASTEXITCODE
+    if (Select-String -Path pytest-output.txt -Pattern 'Windows fatal exception|access violation') {
+      Write-Host "::error::a native crash happened during the tests"
+      exit 1
+    }
+    if ($failed -ne 0) { exit $failed }
+```
+
+The usual cause is a lifetime one. **Anything the OS keeps a pointer to must
+outlive the call that handed it over** — a `WNDPROC`, and the `WNDCLASSW` that
+registered it, because a window class holds pointers *into* that struct
+including its class-name string. Build either as a local and the registered class
+reads freed memory later.
+
+The other cause is a truncated handle: an undeclared `restype` makes ctypes
+convert a 64-bit `HANDLE` as `c_int`. `kernel32.GetModuleHandleW` was the one
+that got through here, and passing its truncated `HMODULE` to `RegisterClassW`
+and `CreateWindowExW` crashed inside window creation. Declare every
+handle-returning call — see also *`ctypes.windll` is process-global shared
+state*, which is the reason to declare it on a private handle.
+
 ## Store apps are single-instance
 
 Launch Notepad while an instance is already running and Windows opens a **tab** in
