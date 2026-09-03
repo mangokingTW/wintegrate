@@ -409,7 +409,6 @@ _WS_EX_TRANSPARENT = 0x00000020
 _SW_SHOWNOACTIVATE = 4
 _PM_REMOVE = 0x0001
 _CLASS_NAME = "WintegrateTouchDeliveryCheck"
-_class_registered = False
 
 
 class _MSG(ctypes.Structure):
@@ -511,27 +510,36 @@ def _check_wndproc(hwnd, msg, wparam, lparam):
 #: class outlives every window made from it.
 _check_proc = _WNDPROC(_check_wndproc) if sys.platform == "win32" else None
 
+#: And so does the WNDCLASSW itself. Registering a class hands USER32 pointers
+#: *into* this struct -- the class-name string among them -- so building it as a
+#: local and letting it fall out of scope leaves the registered class reading
+#: freed memory. That was this bug's second life: hoisting only the procedure
+#: fixed half of it, and RegisterClassW kept crashing.
+_check_cls = None
+_check_registered = False
+
+if sys.platform == "win32" and _check_proc is not None:
+    from wintegrate.interop import kernel32 as _k32
+
+    _check_cls = _WNDCLASSW()
+    _check_cls.lpfnWndProc = ctypes.cast(_check_proc, ctypes.c_void_p)
+    _check_cls.hInstance = _k32.GetModuleHandleW(None)
+    _check_cls.lpszClassName = _CLASS_NAME
+    _check_registered = bool(_u32.RegisterClassW(ctypes.byref(_check_cls)))
+    if not _check_registered:
+        logger.debug(
+            f"touch delivery check: RegisterClassW failed ({ctypes.get_last_error()}); "
+            "availability will report False"
+        )
+
 
 def _delivery_check(touch: Touch) -> bool:
     """Taps a small window of our own and reports whether the tap arrived."""
-    if not touch._ensure_device() or _check_proc is None:
+    if not touch._ensure_device() or not _check_registered:
         return False
-    global _class_registered
-
-    from wintegrate.interop import kernel32
 
     _received.clear()
     try:
-        cls = _WNDCLASSW()
-        cls.lpfnWndProc = ctypes.cast(_check_proc, ctypes.c_void_p)
-        cls.hInstance = kernel32.GetModuleHandleW(None)
-        cls.lpszClassName = _CLASS_NAME
-        if not _class_registered:
-            if not _u32.RegisterClassW(ctypes.byref(cls)):
-                logger.debug(f"delivery check: RegisterClassW failed ({ctypes.get_last_error()})")
-                return False
-            _class_registered = True
-
         # Small, topmost, and off in a corner: the check must not cover whatever
         # the caller is about to automate. NOACTIVATE so it does not steal focus.
         width = height = 60
@@ -548,7 +556,7 @@ def _delivery_check(touch: Touch) -> bool:
             height,
             None,
             None,
-            cls.hInstance,
+            _check_cls.hInstance,
             None,
         )
         if not hwnd:
