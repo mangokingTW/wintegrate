@@ -388,6 +388,16 @@ class Touch:
 # private and deliberately small: it exists because the injection return value
 # does not answer that question.
 
+# The delivery check builds a window, so it needs calls the library does not
+# otherwise pin. It gets its own user32 handle to pin them on: setting argtypes
+# on the shared one is the pollution `tests/test_dll_isolation.py` exists to
+# prevent -- another caller passing its own POINT or MSG would then fail on
+# pointer type identity, which is a bug at a distance.
+if sys.platform == "win32":
+    _u32 = ctypes.WinDLL("user32", use_last_error=True)
+else:  # pragma: no cover - the check never runs off Windows
+    _u32 = None
+
 _WM_POINTERDOWN = 0x0246
 _WM_TOUCH = 0x0240
 _WM_LBUTTONDOWN = 0x0201
@@ -428,6 +438,51 @@ class _WNDCLASSW(ctypes.Structure):
     ]
 
 
+if _u32 is not None:
+    _u32.RegisterClassW.argtypes = [ctypes.POINTER(_WNDCLASSW)]
+    _u32.RegisterClassW.restype = wintypes.WORD
+    _u32.CreateWindowExW.argtypes = [
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.HWND,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    _u32.CreateWindowExW.restype = wintypes.HWND
+    _u32.DefWindowProcW.argtypes = [
+        wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    _u32.DefWindowProcW.restype = ctypes.c_void_p
+    _u32.DestroyWindow.argtypes = [wintypes.HWND]
+    _u32.DestroyWindow.restype = wintypes.BOOL
+    _u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    _u32.ShowWindow.restype = wintypes.BOOL
+    _u32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    _u32.GetSystemMetrics.restype = ctypes.c_int
+    _u32.PeekMessageW.argtypes = [
+        ctypes.POINTER(_MSG),
+        wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.c_uint,
+        ctypes.c_uint,
+    ]
+    _u32.PeekMessageW.restype = wintypes.BOOL
+    _u32.TranslateMessage.argtypes = [ctypes.POINTER(_MSG)]
+    _u32.TranslateMessage.restype = wintypes.BOOL
+    _u32.DispatchMessageW.argtypes = [ctypes.POINTER(_MSG)]
+    _u32.DispatchMessageW.restype = ctypes.c_void_p
+
+
 def _delivery_check(touch: Touch) -> bool:
     """Taps a small window of our own and reports whether the tap arrived."""
     if not touch._ensure_device():
@@ -444,7 +499,7 @@ def _delivery_check(touch: Touch) -> bool:
     def wndproc(hwnd, msg, wparam, lparam):
         if msg in (_WM_POINTERDOWN, _WM_TOUCH, _WM_LBUTTONDOWN):
             received.append(msg)
-        return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+        return _u32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     proc = _WNDPROC(wndproc)
     try:
@@ -453,7 +508,7 @@ def _delivery_check(touch: Touch) -> bool:
         cls.hInstance = kernel32.GetModuleHandleW(None)
         cls.lpszClassName = _CLASS_NAME
         if not _class_registered:
-            if not user32.RegisterClassW(ctypes.byref(cls)):
+            if not _u32.RegisterClassW(ctypes.byref(cls)):
                 logger.debug(f"delivery check: RegisterClassW failed ({ctypes.get_last_error()})")
                 return False
             _class_registered = True
@@ -461,9 +516,9 @@ def _delivery_check(touch: Touch) -> bool:
         # Small, topmost, and off in a corner: the check must not cover whatever
         # the caller is about to automate. NOACTIVATE so it does not steal focus.
         width = height = 60
-        left = max(0, user32.GetSystemMetrics(0) - width - 4)
+        left = max(0, _u32.GetSystemMetrics(0) - width - 4)
         top = 4
-        hwnd = user32.CreateWindowExW(
+        hwnd = _u32.CreateWindowExW(
             _WS_EX_TOPMOST | _WS_EX_NOACTIVATE,
             _CLASS_NAME,
             "touch check",
@@ -481,13 +536,13 @@ def _delivery_check(touch: Touch) -> bool:
             logger.debug(f"delivery check: CreateWindowExW failed ({ctypes.get_last_error()})")
             return False
         try:
-            user32.ShowWindow(hwnd, _SW_SHOWNOACTIVATE)
+            _u32.ShowWindow(hwnd, _SW_SHOWNOACTIVATE)
             _pump(0.2)
             touch.tap(left + width // 2, top + height // 2)
             _pump(0.5)
             return bool(received)
         finally:
-            user32.DestroyWindow(hwnd)
+            _u32.DestroyWindow(hwnd)
             _pump(0.05)
     except Exception as exc:  # pragma: no cover - the check must never raise
         logger.debug(f"delivery check failed ({type(exc).__name__}): {exc}")
@@ -498,7 +553,7 @@ def _pump(seconds: float) -> None:
     msg = _MSG()
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, _PM_REMOVE):
-            user32.TranslateMessage(ctypes.byref(msg))
-            user32.DispatchMessageW(ctypes.byref(msg))
+        while _u32.PeekMessageW(ctypes.byref(msg), None, 0, 0, _PM_REMOVE):
+            _u32.TranslateMessage(ctypes.byref(msg))
+            _u32.DispatchMessageW(ctypes.byref(msg))
         time.sleep(0.005)

@@ -154,12 +154,48 @@ class _ButtonHost:
     """A popup window with one real BUTTON, counting its BN_CLICKED messages."""
 
     def __init__(self):
-        from wintegrate.interop import INPUT, MOUSEINPUT, kernel32, user32
+        # Its own handles and its own structs, deliberately. Pinning argtypes on
+        # wintegrate's shared user32 is the pollution tests/test_dll_isolation.py
+        # exists to prevent, and it bites immediately: interop pins
+        # GetWindowRect against its own RECT, so a wintypes.RECT passed to the
+        # shared handle fails with "expected LP_RECT instead of pointer to RECT".
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [
+                ("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.c_void_p),
+            ]
+
+        class _INPUT_UNION(ctypes.Union):
+            _fields_ = [("mi", MOUSEINPUT), ("pad", ctypes.c_byte * 32)]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
+            _anonymous_ = ("u",)
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", wintypes.LONG),
+                ("top", wintypes.LONG),
+                ("right", wintypes.LONG),
+                ("bottom", wintypes.LONG),
+            ]
+
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
 
         self.user32 = user32
         self.kernel32 = kernel32
         self.INPUT = INPUT
         self.MOUSEINPUT = MOUSEINPUT
+        self.RECT = RECT
+        self.POINT = POINT
         self.clicks = 0
         self.hwnd = None
         self.button = None
@@ -171,7 +207,7 @@ class _ButtonHost:
                 ("wParam", ctypes.c_void_p),
                 ("lParam", ctypes.c_void_p),
                 ("time", wintypes.DWORD),
-                ("pt", wintypes.POINT),
+                ("pt", POINT),
             ]
 
         class WNDCLASSW(ctypes.Structure):
@@ -232,10 +268,19 @@ class _ButtonHost:
         user32.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
         user32.DispatchMessageW.argtypes = [ctypes.POINTER(MSG)]
         user32.DispatchMessageW.restype = ctypes.c_void_p
-        user32.WindowFromPoint.argtypes = [wintypes.POINT]
+        user32.WindowFromPoint.argtypes = [POINT]
         user32.WindowFromPoint.restype = wintypes.HWND
         user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
         user32.GetDlgCtrlID.restype = ctypes.c_int
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.SendInput.argtypes = [ctypes.c_uint, ctypes.c_void_p, ctypes.c_int]
+        user32.SendInput.restype = ctypes.c_uint
+        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        user32.GetSystemMetrics.restype = ctypes.c_int
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.DestroyWindow.argtypes = [wintypes.HWND]
 
         cls = WNDCLASSW()
         cls.lpfnWndProc = ctypes.cast(self._proc, ctypes.c_void_p)
@@ -285,12 +330,12 @@ class _ButtonHost:
         return self.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def centre(self) -> tuple[int, int]:
-        r = wintypes.RECT()
+        r = self.RECT()
         self.user32.GetWindowRect(self.button, ctypes.byref(r))
         return ((r.left + r.right) // 2, (r.top + r.bottom) // 2)
 
     def control_id_at(self, x: int, y: int) -> int:
-        return self.user32.GetDlgCtrlID(self.user32.WindowFromPoint(wintypes.POINT(x, y)))
+        return self.user32.GetDlgCtrlID(self.user32.WindowFromPoint(self.POINT(x, y)))
 
     def pump(self, seconds: float) -> None:
         msg = self._MSG()
@@ -319,7 +364,7 @@ class _ButtonHost:
             )
             events.append(item)
         array = (self.INPUT * len(events))(*events)
-        self.user32.SendInput(len(array), array, ctypes.sizeof(self.INPUT))
+        self.user32.SendInput(len(array), ctypes.byref(array), ctypes.sizeof(self.INPUT))
 
     def close(self) -> None:
         if self.hwnd:
