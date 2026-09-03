@@ -22,7 +22,7 @@ from wintegrate import Session, SessionConfig, Window
 
 config = SessionConfig(
     artifact_dir="./artifacts",
-    record_video=True,  # Records full video trace for CI
+    record_video=True,    # Records full video trace for CI
 )
 
 with Session(config) as session:
@@ -32,23 +32,23 @@ with Session(config) as session:
         window_classes=["CabinetWClass", "Chrome_WidgetWin_1", "TauriAppClass"],
         timeout=15.0,
     )
-
+    
     # 2. Interact with the main window
     win.set_foreground(verify=False)
-
+    
     # 3. Trigger an action that opens a native Windows file dialog
     browse_btn = win.find_descendant(name_contains="Open File", control_type_id=50000)
     if browse_btn:
         browse_btn.invoke()
-
+        
     # 4. Automate the native Windows OpenFileDialog (#32770)
     dialog = Window.find(class_name="#32770", timeout=5.0)
     file_edit = dialog.find_descendant(control_type_id=50004)  # Edit control
     file_edit.type_verified("C:\\test\\sample.json")
-
+    
     open_btn = dialog.find_descendant(name_exact="Open", control_type_id=50000)
     open_btn.invoke()
-
+    
     # 5. Clean teardown
     win.close(force=True)
 ```
@@ -226,8 +226,7 @@ if (text != 'abc')
 # wintegrate
 proc, win = Window.launch_and_discover(
     [npp, "-nosession", "-multiInst", "-noPlugin"],
-    window_classes=("Notepad++",),
-    process_names=("notepad++.exe",),
+    window_classes=("Notepad++",), process_names=("notepad++.exe",),
     require_all=True,
 )
 with win.foreground():

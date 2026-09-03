@@ -624,11 +624,11 @@ Each entry names what was measured.
 
   ```python
   with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
-      edit.send_physical_keys("hello")  # deterministic
+      edit.send_physical_keys("hello")     # deterministic
   with dialog.foreground():
-      ...  # returned to the previous window
+      ...                                   # returned to the previous window
   with session.step("submit the form"):
-      submit.invoke()  # named in the timeline and the artifacts
+      submit.invoke()                       # named in the timeline and the artifacts
   ```
 
   `Window.ime_mode` also neutralises **Caps Lock**, which was not planned:

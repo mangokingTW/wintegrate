@@ -66,10 +66,8 @@ describe the same window:
 
 ```python
 Window.launch_and_discover(
-    cmd,
-    process_names=("Files.exe",),
-    window_classes=("WinUIDesktopWin32WindowClass",),
-    require_all=True,
+    cmd, process_names=("Files.exe",),
+    window_classes=("WinUIDesktopWin32WindowClass",), require_all=True,
 )
 ```
 
@@ -247,7 +245,6 @@ each — one line of text.
 ```python
 HILITE = (239, 203, 5)
 
-
 def highlight_bands(image, colour):
     """Contiguous horizontal runs of `colour`, as inclusive (first_row, last_row)."""
     rgb = image.convert("RGB")
@@ -264,9 +261,8 @@ def highlight_bands(image, colour):
         spans.append((start, rgb.height - 1))
     return spans
 
-
 bands = highlight_bands(pane.capture(), HILITE)
-assert len(bands) == 2  # two differences, and bands says which lines
+assert len(bands) == 2          # two differences, and bands says which lines
 ```
 
 Two details in those ten lines are worth having in front of you rather than
@@ -345,10 +341,10 @@ of the form "the field is not empty" passed while the field was empty.
 ```python
 reading = element.read_value()
 if reading.source == "Name":
-    ...  # this is a label; decide what that means here
+    ...              # this is a label; decide what that means here
 
-element.get_value()  # raises ValueUnavailableError
-element.get_value(allow_name_fallback=True)  # opt in, for a ComboBox or a grid cell
+element.get_value()                             # raises ValueUnavailableError
+element.get_value(allow_name_fallback=True)     # opt in, for a ComboBox or a grid cell
 ```
 
 Reachability is worth knowing when writing a test for this: **every Win32 control
@@ -372,10 +368,10 @@ either.
 Chords go through a separate function, with a separate grammar:
 
 ```python
-send_hotkey("win+alt+space")  # Command Palette
+send_hotkey("win+alt+space")     # Command Palette
 send_hotkey("ctrl+shift+p")
-send_hotkey("ctrl+,")  # layout-dependent keys are resolved at send time
-send_hotkey("win")  # the last token is the key, so this opens Start
+send_hotkey("ctrl+,")            # layout-dependent keys are resolved at send time
+send_hotkey("win")               # the last token is the key, so this opens Start
 ```
 
 The rule is that the last token is the key and everything before it must be a
@@ -402,10 +398,10 @@ still there. That second one is the dangerous shape, and it has already produced
 having done nothing.
 
 ```python
-win.is_visible  # IsWindowVisible: True even when cloaked
-win.is_cloaked  # True / False / None when it cannot be read
-win.cloak_reason  # CloakReason.SHELL, CloakReason.APP, CloakReason(0), None
-win.is_on_screen  # visible AND not cloaked -- the one to assert on
+win.is_visible        # IsWindowVisible: True even when cloaked
+win.is_cloaked        # True / False / None when it cannot be read
+win.cloak_reason      # CloakReason.SHELL, CloakReason.APP, CloakReason(0), None
+win.is_on_screen      # visible AND not cloaked -- the one to assert on
 win.exists(require_on_screen=True)
 ```
 
@@ -457,7 +453,7 @@ way pressing Shift does:
 
 ```python
 with dialog.ime_mode(ImeConversion.ALPHANUMERIC):
-    send_physical_keys("hey")  # 'hey' lands; the layout never changes
+    send_physical_keys("hey")        # 'hey' lands; the layout never changes
 ```
 
 Measured on a zh-TW machine: without the block the field stays empty, with it the

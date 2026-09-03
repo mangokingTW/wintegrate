@@ -94,8 +94,8 @@ Modern Windows apps break naive launch-and-poll automation in specific, repeatab
 from wintegrate import NOTEPAD, Session, SessionConfig
 
 with Session(SessionConfig()) as session:
-    with session.app(NOTEPAD) as app:  # cleanup guaranteed, even on failure
-        editor = app.find_text_input()  # locale-independent control ladder
+    with session.app(NOTEPAD) as app:                # cleanup guaranteed, even on failure
+        editor = app.find_text_input()               # locale-independent control ladder
         editor.type_verified("hello\n", expected_line_count_delta=1)
 ```
 
