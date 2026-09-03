@@ -150,149 +150,166 @@ _MOUSEEVENTF_ABSOLUTE = 0x8000
 _INPUT_MOUSE = 0
 
 
+# Everything USER32 keeps a pointer to lives at module level, and stays alive
+# for the process. A window class registration hands the OS pointers into the
+# WNDCLASSW that registered it -- the class name string and the window
+# procedure among them -- so building that struct as a local and letting it fall
+# out of scope leaves the registered class pointing at freed memory. That
+# crashed with `Windows fatal exception: access violation` at RegisterClassW,
+# and pytest still reported "212 passed": a native crash reaches neither the
+# exit code nor the summary line, which is why ci.yml now greps for it.
+_HOST_CLASS_NAME = "WintegrateTouchTestHost"
+_host_clicks = [0]
+
+if WINDOWS:
+    _host_u32 = ctypes.WinDLL("user32", use_last_error=True)
+    _host_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class _POINT(ctypes.Structure):
+        _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+    class _RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", wintypes.LONG),
+            ("top", wintypes.LONG),
+            ("right", wintypes.LONG),
+            ("bottom", wintypes.LONG),
+        ]
+
+    class _MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ctypes.c_void_p),
+        ]
+
+    class _INPUT_UNION(ctypes.Union):
+        _fields_ = [("mi", _MOUSEINPUT), ("pad", ctypes.c_byte * 32)]
+
+    class _INPUT(ctypes.Structure):
+        _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
+        _anonymous_ = ("u",)
+
+    class _MSG(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("message", ctypes.c_uint),
+            ("wParam", ctypes.c_void_p),
+            ("lParam", ctypes.c_void_p),
+            ("time", wintypes.DWORD),
+            ("pt", _POINT),
+        ]
+
+    class _WNDCLASSW(ctypes.Structure):
+        _fields_ = [
+            ("style", ctypes.c_uint),
+            ("lpfnWndProc", ctypes.c_void_p),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", ctypes.c_void_p),
+            ("hIcon", ctypes.c_void_p),
+            ("hCursor", ctypes.c_void_p),
+            ("hbrBackground", ctypes.c_void_p),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+        ]
+
+    # Own handles, own structs: pinning argtypes on wintegrate's shared user32
+    # is what tests/test_dll_isolation.py exists to prevent, and interop pins
+    # GetWindowRect against its own RECT, so a foreign RECT fails there.
+    _host_u32.RegisterClassW.argtypes = [ctypes.POINTER(_WNDCLASSW)]
+    _host_u32.RegisterClassW.restype = wintypes.WORD
+    _host_u32.CreateWindowExW.argtypes = [
+        wintypes.DWORD,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.HWND,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    _host_u32.CreateWindowExW.restype = wintypes.HWND
+    _host_u32.DefWindowProcW.argtypes = [
+        wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    _host_u32.DefWindowProcW.restype = ctypes.c_void_p
+    _host_u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_RECT)]
+    _host_u32.GetWindowRect.restype = wintypes.BOOL
+    _host_u32.WindowFromPoint.argtypes = [_POINT]
+    _host_u32.WindowFromPoint.restype = wintypes.HWND
+    _host_u32.GetDlgCtrlID.argtypes = [wintypes.HWND]
+    _host_u32.GetDlgCtrlID.restype = ctypes.c_int
+    _host_u32.PeekMessageW.argtypes = [
+        ctypes.POINTER(_MSG),
+        wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.c_uint,
+        ctypes.c_uint,
+    ]
+    _host_u32.PeekMessageW.restype = wintypes.BOOL
+    _host_u32.TranslateMessage.argtypes = [ctypes.POINTER(_MSG)]
+    _host_u32.DispatchMessageW.argtypes = [ctypes.POINTER(_MSG)]
+    _host_u32.DispatchMessageW.restype = ctypes.c_void_p
+    _host_u32.SendInput.argtypes = [ctypes.c_uint, ctypes.c_void_p, ctypes.c_int]
+    _host_u32.SendInput.restype = ctypes.c_uint
+    _host_u32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    _host_u32.GetSystemMetrics.restype = ctypes.c_int
+    _host_u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    _host_u32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    _host_u32.DestroyWindow.argtypes = [wintypes.HWND]
+    _host_k32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    _host_k32.GetModuleHandleW.restype = ctypes.c_void_p
+
+    _HOST_WNDPROC = ctypes.WINFUNCTYPE(
+        ctypes.c_void_p, wintypes.HWND, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p
+    )
+
+    def _host_wndproc(hwnd, msg, wparam, lparam):
+        if msg == _WM_COMMAND:
+            wp = int(wparam or 0)
+            if (wp & 0xFFFF) == _BUTTON_ID and ((wp >> 16) & 0xFFFF) == _BN_CLICKED:
+                _host_clicks[0] += 1
+        return _host_u32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    _host_proc = _HOST_WNDPROC(_host_wndproc)
+
+    # Registered once, from a struct that is never collected.
+    _host_cls = _WNDCLASSW()
+    _host_cls.lpfnWndProc = ctypes.cast(_host_proc, ctypes.c_void_p)
+    _host_cls.hInstance = _host_k32.GetModuleHandleW(None)
+    _host_cls.lpszClassName = _HOST_CLASS_NAME
+    _host_cls.hbrBackground = ctypes.c_void_p(6)  # COLOR_WINDOW + 1
+    _host_registered = bool(_host_u32.RegisterClassW(ctypes.byref(_host_cls)))
+else:  # pragma: no cover - the host is Windows-only
+    _host_u32 = _host_k32 = None
+    _host_registered = False
+
+
 class _ButtonHost:
     """A popup window with one real BUTTON, counting its BN_CLICKED messages."""
 
     def __init__(self):
-        # Its own handles and its own structs, deliberately. Pinning argtypes on
-        # wintegrate's shared user32 is the pollution tests/test_dll_isolation.py
-        # exists to prevent, and it bites immediately: interop pins
-        # GetWindowRect against its own RECT, so a wintypes.RECT passed to the
-        # shared handle fails with "expected LP_RECT instead of pointer to RECT".
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-        class MOUSEINPUT(ctypes.Structure):
-            _fields_ = [
-                ("dx", wintypes.LONG),
-                ("dy", wintypes.LONG),
-                ("mouseData", wintypes.DWORD),
-                ("dwFlags", wintypes.DWORD),
-                ("time", wintypes.DWORD),
-                ("dwExtraInfo", ctypes.c_void_p),
-            ]
-
-        class _INPUT_UNION(ctypes.Union):
-            _fields_ = [("mi", MOUSEINPUT), ("pad", ctypes.c_byte * 32)]
-
-        class INPUT(ctypes.Structure):
-            _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
-            _anonymous_ = ("u",)
-
-        class RECT(ctypes.Structure):
-            _fields_ = [
-                ("left", wintypes.LONG),
-                ("top", wintypes.LONG),
-                ("right", wintypes.LONG),
-                ("bottom", wintypes.LONG),
-            ]
-
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-
-        self.user32 = user32
-        self.kernel32 = kernel32
-        self.INPUT = INPUT
-        self.MOUSEINPUT = MOUSEINPUT
-        self.RECT = RECT
-        self.POINT = POINT
-        self.clicks = 0
         self.hwnd = None
         self.button = None
+        _host_clicks[0] = 0
+        if not _host_registered:
+            return
 
-        class MSG(ctypes.Structure):
-            _fields_ = [
-                ("hwnd", wintypes.HWND),
-                ("message", ctypes.c_uint),
-                ("wParam", ctypes.c_void_p),
-                ("lParam", ctypes.c_void_p),
-                ("time", wintypes.DWORD),
-                ("pt", POINT),
-            ]
-
-        class WNDCLASSW(ctypes.Structure):
-            _fields_ = [
-                ("style", ctypes.c_uint),
-                ("lpfnWndProc", ctypes.c_void_p),
-                ("cbClsExtra", ctypes.c_int),
-                ("cbWndExtra", ctypes.c_int),
-                ("hInstance", ctypes.c_void_p),
-                ("hIcon", ctypes.c_void_p),
-                ("hCursor", ctypes.c_void_p),
-                ("hbrBackground", ctypes.c_void_p),
-                ("lpszMenuName", wintypes.LPCWSTR),
-                ("lpszClassName", wintypes.LPCWSTR),
-            ]
-
-        self._MSG = MSG
-        WNDPROC = ctypes.WINFUNCTYPE(
-            ctypes.c_void_p, wintypes.HWND, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p
-        )
-        self._proc = WNDPROC(self._wndproc)
-
-        # Declared here rather than trusted: an undeclared CreateWindowExW
-        # converts hInstance as c_int and dies with OverflowError on a 64-bit
-        # handle, which has cost this project several debugging sessions.
-        user32.CreateWindowExW.argtypes = [
-            wintypes.DWORD,
-            wintypes.LPCWSTR,
-            wintypes.LPCWSTR,
-            wintypes.DWORD,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            wintypes.HWND,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-        ]
-        user32.CreateWindowExW.restype = wintypes.HWND
-        user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
-        user32.RegisterClassW.restype = wintypes.WORD
-        user32.DefWindowProcW.argtypes = [
-            wintypes.HWND,
-            ctypes.c_uint,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-        ]
-        user32.DefWindowProcW.restype = ctypes.c_void_p
-        user32.PeekMessageW.argtypes = [
-            ctypes.POINTER(MSG),
-            wintypes.HWND,
-            ctypes.c_uint,
-            ctypes.c_uint,
-            ctypes.c_uint,
-        ]
-        user32.PeekMessageW.restype = wintypes.BOOL
-        user32.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
-        user32.DispatchMessageW.argtypes = [ctypes.POINTER(MSG)]
-        user32.DispatchMessageW.restype = ctypes.c_void_p
-        user32.WindowFromPoint.argtypes = [POINT]
-        user32.WindowFromPoint.restype = wintypes.HWND
-        user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
-        user32.GetDlgCtrlID.restype = ctypes.c_int
-        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
-        user32.GetWindowRect.restype = wintypes.BOOL
-        user32.SendInput.argtypes = [ctypes.c_uint, ctypes.c_void_p, ctypes.c_int]
-        user32.SendInput.restype = ctypes.c_uint
-        user32.GetSystemMetrics.argtypes = [ctypes.c_int]
-        user32.GetSystemMetrics.restype = ctypes.c_int
-        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
-        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
-        user32.DestroyWindow.argtypes = [wintypes.HWND]
-
-        cls = WNDCLASSW()
-        cls.lpfnWndProc = ctypes.cast(self._proc, ctypes.c_void_p)
-        cls.hInstance = kernel32.GetModuleHandleW(None)
-        cls.lpszClassName = "WintegrateTouchTestHost"
-        cls.hbrBackground = ctypes.c_void_p(6)
-        user32.RegisterClassW(ctypes.byref(cls))  # idempotent enough for one process
-
-        width, height = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-        self.hwnd = user32.CreateWindowExW(
+        width, height = _host_u32.GetSystemMetrics(0), _host_u32.GetSystemMetrics(1)
+        self.hwnd = _host_u32.CreateWindowExW(
             _WS_EX_TOPMOST,
-            "WintegrateTouchTestHost",
+            _HOST_CLASS_NAME,
             "wintegrate touch test",
             _WS_POPUP | _WS_VISIBLE,
             width // 4,
@@ -301,54 +318,52 @@ class _ButtonHost:
             240,
             None,
             None,
-            cls.hInstance,
+            _host_cls.hInstance,
             None,
         )
-        if self.hwnd:
-            self.button = user32.CreateWindowExW(
-                0,
-                "BUTTON",
-                "Tap me",
-                _WS_CHILD | _WS_VISIBLE,
-                100,
-                80,
-                200,
-                80,
-                self.hwnd,
-                ctypes.c_void_p(_BUTTON_ID),
-                cls.hInstance,
-                None,
-            )
-            user32.ShowWindow(self.hwnd, _SW_SHOW)
-            user32.SetForegroundWindow(self.hwnd)
+        if not self.hwnd:
+            return
+        self.button = _host_u32.CreateWindowExW(
+            0,
+            "BUTTON",
+            "Tap me",
+            _WS_CHILD | _WS_VISIBLE,
+            100,
+            80,
+            200,
+            80,
+            self.hwnd,
+            ctypes.c_void_p(_BUTTON_ID),
+            _host_cls.hInstance,
+            None,
+        )
+        _host_u32.ShowWindow(self.hwnd, _SW_SHOW)
+        _host_u32.SetForegroundWindow(self.hwnd)
 
-    def _wndproc(self, hwnd, msg, wparam, lparam):
-        if msg == _WM_COMMAND:
-            wp = int(wparam or 0)
-            if (wp & 0xFFFF) == _BUTTON_ID and ((wp >> 16) & 0xFFFF) == _BN_CLICKED:
-                self.clicks += 1
-        return self.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+    @property
+    def clicks(self) -> int:
+        return _host_clicks[0]
 
     def centre(self) -> tuple[int, int]:
-        r = self.RECT()
-        self.user32.GetWindowRect(self.button, ctypes.byref(r))
+        r = _RECT()
+        _host_u32.GetWindowRect(self.button, ctypes.byref(r))
         return ((r.left + r.right) // 2, (r.top + r.bottom) // 2)
 
     def control_id_at(self, x: int, y: int) -> int:
-        return self.user32.GetDlgCtrlID(self.user32.WindowFromPoint(self.POINT(x, y)))
+        return _host_u32.GetDlgCtrlID(_host_u32.WindowFromPoint(_POINT(x, y)))
 
     def pump(self, seconds: float) -> None:
-        msg = self._MSG()
+        msg = _MSG()
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            while self.user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, _PM_REMOVE):
-                self.user32.TranslateMessage(ctypes.byref(msg))
-                self.user32.DispatchMessageW(ctypes.byref(msg))
+            while _host_u32.PeekMessageW(ctypes.byref(msg), None, 0, 0, _PM_REMOVE):
+                _host_u32.TranslateMessage(ctypes.byref(msg))
+                _host_u32.DispatchMessageW(ctypes.byref(msg))
             time.sleep(0.005)
 
     def click_with_mouse(self, x: int, y: int) -> None:
-        sw = self.user32.GetSystemMetrics(0)
-        sh = self.user32.GetSystemMetrics(1)
+        sw = _host_u32.GetSystemMetrics(0)
+        sh = _host_u32.GetSystemMetrics(1)
         ax = int(x * 65535 / max(sw - 1, 1))
         ay = int(y * 65535 / max(sh - 1, 1))
         events = []
@@ -357,18 +372,18 @@ class _ButtonHost:
             _MOUSEEVENTF_LEFTDOWN | _MOUSEEVENTF_ABSOLUTE,
             _MOUSEEVENTF_LEFTUP | _MOUSEEVENTF_ABSOLUTE,
         ):
-            item = self.INPUT()
+            item = _INPUT()
             item.type = _INPUT_MOUSE
-            item.mi = self.MOUSEINPUT(
+            item.mi = _MOUSEINPUT(
                 dx=ax, dy=ay, mouseData=0, dwFlags=flags, time=0, dwExtraInfo=None
             )
             events.append(item)
-        array = (self.INPUT * len(events))(*events)
-        self.user32.SendInput(len(array), ctypes.byref(array), ctypes.sizeof(self.INPUT))
+        array = (_INPUT * len(events))(*events)
+        _host_u32.SendInput(len(array), ctypes.byref(array), ctypes.sizeof(_INPUT))
 
     def close(self) -> None:
         if self.hwnd:
-            self.user32.DestroyWindow(self.hwnd)
+            _host_u32.DestroyWindow(self.hwnd)
 
 
 def test_an_injected_contact_presses_a_real_button():
