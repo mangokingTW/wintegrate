@@ -34,6 +34,12 @@ Generated from the source, so it cannot drift from the code.
 
 ::: wintegrate.interop.send_vk_input
 
+## Touch
+
+::: wintegrate.touch.Touch
+
+::: wintegrate.touch.Contact
+
 ## IME and keyboard layout
 
 ::: wintegrate.interop.get_ime_status

@@ -306,3 +306,71 @@ See [What breaks in CI](pitfalls.md).
 
 The dividing line is not the automation. It is whether a failure has to explain
 itself to someone who was not there.
+
+## 7. Touch and multi-finger gestures
+
+Windows has no API for "pinch" or "swipe". It has one for **contacts**: where
+each finger is, frame by frame, and whether it is down, moving or lifted. Every
+gesture here is a trajectory of contacts, and the recogniser that turns one into
+a pinch lives in the system and the application.
+
+That is why nothing in `Touch` is named after an outcome. `pinch()` moves two
+contacts apart; whether the application zooms is your assertion to make, because
+the thresholds involved — distance, timing, `GESTURECONFIG` — are system metrics
+that differ between machines.
+
+```python
+from wintegrate import Touch
+
+with Touch() as touch:
+    if not touch.available():
+        pytest.skip("touch is not delivered on this host")
+
+    touch.tap(x, y)
+    touch.double_tap(x, y)          # clamped to GetDoubleClickTime
+    touch.long_press(x, y)          # re-sends frames, so the finger stays down
+    touch.swipe(x1, y1, x2, y2)
+    touch.pinch(cx, cy, start_radius=40, end_radius=160)
+    touch.rotate(cx, cy, radius=80, degrees=90)
+```
+
+`UiaElement.tap()` covers the common case and needs a rectangle for the same
+reason `click()` does — a contact is a coordinate.
+
+```python
+button = root.find_all(automation_id="SingleLineToggleButton")[0]
+before = button.toggle_state
+button.tap()
+assert button.toggle_state != before      # read back, never assumed
+```
+
+### Hand-written gestures
+
+An injected frame is the **whole hand**, not a delta: a finger left out of a
+frame is a finger lifted. `contacts()` keeps that bookkeeping, so moving one
+contact restates the others.
+
+```python
+with touch.contacts([(100, 100), (300, 300)]) as (a, b):
+    a.move_to(120, 120)
+    b.move_to(280, 280)
+```
+
+### Verify at the layer that matters
+
+"The contact was accepted" is the weakest possible claim — see *Touch injection
+reports success when nothing receives it*. Assert what the application did:
+
+```python
+# The strongest form: a real control reporting that Windows decided it was pressed.
+touch.tap(*button_centre)
+assert host.clicks > before, "the tap did not press the button"
+```
+
+This is worth doing because touch is a genuinely different code path from the
+mouse, not a synonym for it. `WM_POINTER` carries a different pointer type, and
+Windows synthesises the mouse messages separately — which is why an injected tap
+satisfied a PowerToys checklist item that no mouse gesture could:
+*click a single word without dragging*, where five mouse deliveries produced
+nothing and a tap returned the word.
+
