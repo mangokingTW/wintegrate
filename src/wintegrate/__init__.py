@@ -19,6 +19,7 @@ from wintegrate.apps import (
     launch_packaged_app,
     sweep_processes_verified,
 )
+from wintegrate.caption_overlay import draw_caption
 from wintegrate.controls import (
     CheckBox,
     ComboBox,
@@ -141,6 +142,7 @@ __all__ = [
     "ComboBox",
     "ContinuousRecorder",
     "count_lines",
+    "draw_caption",
     "cursor_overlay_image",
     "DataGrid",
     "DataGridCell",

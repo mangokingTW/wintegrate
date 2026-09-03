@@ -32,6 +32,45 @@ logger = logging.getLogger(__name__)
 # three-minute suite inside a couple of megabytes.
 SUITE_RECORDING_FPS = 10
 
+# The run's recorder, held at module level so the per-test hooks below can reach
+# it. A fixture would not do: `pytest_runtest_logstart` fires outside any test's
+# fixtures, which is precisely when the caption has to change.
+_suite_recorder: ContinuousRecorder | None = None
+
+# What the caption should say right now. The hooks own this unconditionally,
+# because the first test's logstart fires before the session fixture has built
+# the recorder — writing only to the recorder would leave that one test unnamed.
+_caption: tuple[str, str] = ("", "")
+
+
+def _apply_caption():
+    if _suite_recorder is not None:
+        _suite_recorder.caption, _suite_recorder.caption_subtitle = _caption
+
+
+def pytest_runtest_logstart(nodeid, location):
+    """Names the running test in the recording's bottom-left corner.
+
+    A single video of the whole suite is only searchable if each frame says what
+    produced it; otherwise finding the stretch that belongs to one test means
+    counting windows and guessing. The recorder draws whatever is in `caption`,
+    so setting it here is the entire integration.
+
+    The test's own name goes on the first line and its file on the second: the
+    name is what a viewer is looking for, and a long path would push it out.
+    """
+    global _caption
+    filename, _lineno, _domain = location
+    _caption = (nodeid.split("::")[-1], str(filename))
+    _apply_caption()
+
+
+def pytest_runtest_logfinish(nodeid, location):
+    """Clears the caption between tests, so a frame never names the wrong one."""
+    global _caption
+    _caption = ("", "")
+    _apply_caption()
+
 
 @pytest.fixture(scope="session", autouse=True)
 def full_suite_recording():
@@ -67,9 +106,15 @@ def full_suite_recording():
         return
 
     logger.info(f"Full-suite recording started via {recorder.backend} -> {output}")
+    global _suite_recorder
+    _suite_recorder = recorder
+    # The first test is already running by the time this fixture builds the
+    # recorder, so hand it the caption that logstart has already set.
+    _apply_caption()
     try:
         yield
     finally:
+        _suite_recorder = None
         try:
             frames = recorder.stop()
             logger.info(f"Full-suite recording finished: {frames} frames -> {output}")

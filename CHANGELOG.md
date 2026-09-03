@@ -6,6 +6,41 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.7] — 2026-09-03
+
+### Added
+
+- **`ContinuousRecorder` can caption its frames**, in the bottom-left corner, with
+  whatever the caller puts in `recorder.caption` (and an optional
+  `recorder.caption_subtitle` on a second line). Empty draws nothing.
+
+  A recording of a suite shows a series of applications being driven and says
+  nothing about which test is driving them. Finding the moment a particular test
+  failed means counting windows and guessing, and that moment is the one worth
+  watching.
+
+  The recorder holds the text and the caller sets it, deliberately: pytest,
+  unittest and a plain script all name their work differently, and none of that
+  belongs in this library. With pytest the whole integration is two hooks --
+
+  ```python
+  def pytest_runtest_logstart(nodeid, location):
+      recorder.caption = nodeid.split("::")[-1]
+      recorder.caption_subtitle = location[0]
+  ```
+
+  Composited after the screen grab, like the pointer and keyboard overlays, so
+  nothing on screen can cover it. A long test id is trimmed from the *front*: the
+  tail is the part a viewer is looking for.
+
+- `draw_caption()` is public, for a caller building its own frames.
+
+- **This project's own suite is wired to it**, in `tests/conftest.py`, so every
+  frame of `full-suite-{arch}.mp4` names the test that produced it. Worth stating
+  because the alternative was shipping a feature with no caller: the unit tests
+  assert that `draw_caption` puts pixels in the bottom-left of a synthetic frame,
+  which is not the same claim as a recording of a real run carrying the name.
+
 ## [0.5.6] — 2026-09-02
 
 ### Added
