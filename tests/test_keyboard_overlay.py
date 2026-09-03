@@ -3,6 +3,7 @@ try:
 except ImportError:
     pytest = None
 
+import sys
 import time
 
 from wintegrate.interop import VK_PACKET
@@ -164,6 +165,40 @@ def test_draw_keyboard_hud_empty_events_noop():
     assert res is img
 
 
+def test_a_keystroke_that_names_no_key_is_not_a_keystroke():
+    """`keybd_event(0, 0, 0, 0)` must draw nothing.
+
+    It is the standard foreground-activation trick -- an injected event that
+    names neither a virtual key nor a scan code, sent only so the caller counts
+    as having received input. The HUD used to render each one as `0x00`, and in
+    a recording that reads as a real key with a broken label. Found in this
+    project's own demo capture, where it fired at every window switch.
+    """
+    tracker = KeyTracker()
+    assert tracker._no_op_placeholder(0, 0), "an event naming no key must be dropped"
+
+    # A scan code with no virtual key is a real press: `SendInput` with
+    # KEYEVENTF_SCANCODE sets wVk to 0, and that is how this library's own
+    # send_physical_keys types. Dropping those would blank the HUD entirely.
+    assert not tracker._no_op_placeholder(0, 0x1C), "a scan code alone is a real key"
+    assert not tracker._no_op_placeholder(0x0D, 0), "a virtual key alone is a real key"
+    assert not tracker._no_op_placeholder(0x41, 0x1E)
+
+
+def test_a_scan_code_without_a_virtual_key_still_names_the_key():
+    """vk=0 with a scan code is resolved rather than printed as 0x00.
+
+    Guarded in the body rather than by a decorator: this module is written to run
+    without pytest installed, so `pytest` may be None here.
+    """
+    if sys.platform != "win32":
+        return  # resolving a scan code needs MapVirtualKeyW
+    tracker = KeyTracker()
+    key, is_mod = tracker._decode_key(0, 0x1C, 0)  # scan code for Enter
+    assert key == "Enter", f"scan 0x1C decoded as {key!r}"
+    assert not is_mod
+
+
 if __name__ == "__main__":
     test_decode_vk_packet_unicode_characters()
     print("✓ test_decode_vk_packet_unicode_characters passed")
@@ -178,4 +213,8 @@ if __name__ == "__main__":
         print("✓ test_draw_keyboard_hud_stale_events_draw_nothing passed")
         test_draw_keyboard_hud_empty_events_noop()
         print("✓ test_draw_keyboard_hud_empty_events_noop passed")
+    test_a_keystroke_that_names_no_key_is_not_a_keystroke()
+    print("✓ test_a_keystroke_that_names_no_key_is_not_a_keystroke passed")
+    test_a_scan_code_without_a_virtual_key_still_names_the_key()
+    print("✓ test_a_scan_code_without_a_virtual_key_still_names_the_key passed")
     print("\nAll keyboard overlay tests passed!")

@@ -271,6 +271,9 @@ GCS_COMPSTR = 0x0008
 GCS_RESULTSTR = 0x0800
 
 MAPVK_VK_TO_VSC = 0
+#: Scan code back to a virtual key, distinguishing left from right modifiers.
+#: The plain MAPVK_VSC_TO_VK (1) collapses them, which loses which Shift it was.
+MAPVK_VSC_TO_VK_EX = 3
 
 # Named keys accepted inside braces by send_keys, e.g. "{ENTER}", "{TAB 3}".
 # Names are matched case-insensitively.
