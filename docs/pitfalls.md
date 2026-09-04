@@ -188,6 +188,49 @@ a collapsed dock's children coordinates far outside the window, so "the rectangl
 is off-screen" can mean "this control is not currently shown" rather than "the
 window is misplaced".
 
+## A window can opt out of being in your recording
+
+`SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` tells Windows to withhold a
+window from screen capture, and Windows honours it in **every** path: GDI
+`BitBlt`, DXGI Desktop Duplication, `Windows.Graphics.Capture`, DWM thumbnails.
+There is no flag on the capturing side that overrides it, and the call only
+works on windows of the calling process, so nothing outside the application can
+clear it.
+
+What makes it expensive is that every other instrument says the window is fine.
+It is `IsWindowVisible`, its cloak reason is 0, it is on screen, and a person
+looking at the monitor sees it — only the capture comes back without it:
+
+| reason a window is missing | `is_visible` | `cloak_reason` | `is_on_screen` | in a capture |
+|---|---|---|---|---|
+| off-screen coordinates | True | 0 | False | yes, elsewhere in frame |
+| DWM cloaked | True | non-zero | False | no |
+| **excluded from capture** | **True** | **0** | **True** | **no** |
+
+Measured on KeePassXC, which does this deliberately — it is an anti-screenshot
+feature, not a bug. A session recording of it showed the credential prompt, the
+keystroke HUD and every step of the run with the application itself absent from
+the frame, while a screenshot taken at the same moment from outside the guest
+(QEMU's `screendump`) had it filling the screen. Two plausible explanations were
+measured wrong first: that the app had hidden itself, and that `BitBlt` was
+missing `CAPTUREBLT` — the pixels are identical with and without that flag.
+
+```python
+win.display_affinity          # DisplayAffinity.EXCLUDE_FROM_CAPTURE
+win.is_excluded_from_capture  # True; None when it could not be read
+```
+
+`capture_window_image()` logs a warning naming the exclusion rather than quietly
+handing back a picture of the wallpaper, and `Session.capture_screenshot()`
+records it in the event timeline next to the file — an artifact that cannot
+contain the window it is named after has to say so where the artifacts are read.
+
+Making such a window recordable is the *application's* decision, and for a
+password manager that decision is the feature. If an app offers a switch,
+driving it is an explicit step with its own post-condition: KeePassXC's lives in
+View › Allow Screen Capture, is not persisted anywhere, and has no accelerator,
+so the only reliable confirmation is re-reading the affinity afterwards.
+
 ## A modal dialog leaves every element query working
 
 An application that opens a modal over its own window keeps its whole UIA tree

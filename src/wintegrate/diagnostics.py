@@ -24,10 +24,12 @@ from wintegrate.interop import (
     SM_YVIRTUALSCREEN,
     SRCCOPY,
     WNDENUMPROC,
+    DisplayAffinity,
     attach_to_input_desktop,
     gdi32,
     get_input_desktop_handle,
     get_window_class,
+    get_window_display_affinity,
     get_window_pid,
     get_window_title,
     user32,
@@ -152,6 +154,20 @@ def capture_window_image(hwnd: int):
 
     if img is not None and not _looks_blank(img):
         return img
+
+    # Said out loud, because the fallback below cannot help here and the result
+    # would otherwise be a picture of the desktop presented as a picture of the
+    # window. A window that has called SetWindowDisplayAffinity is withheld from
+    # every capture path there is, so neither PrintWindow nor a crop will ever
+    # contain it -- and it is visible, uncloaked and on screen the whole time,
+    # which is what makes it look like a capture bug.
+    affinity = get_window_display_affinity(hwnd)
+    if affinity not in (None, DisplayAffinity.NONE):
+        logger.warning(
+            f"hwnd {hwnd:#x} is excluded from capture ({affinity.name}): it will not appear "
+            "in screenshots or recordings no matter which capture API is used, because the "
+            "application asked Windows to withhold it. Only that application can allow it."
+        )
 
     logger.debug(
         f"PrintWindow gave no usable content for hwnd {hwnd}; cropping the desktop instead"
