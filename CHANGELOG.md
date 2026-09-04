@@ -6,6 +6,42 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.11] — 2026-09-04
+
+### Added
+
+- **`DisplayAffinity`, `get_window_display_affinity()`, `Window.display_affinity`
+  and `Window.is_excluded_from_capture`.** A window can call
+  `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` and Windows will then
+  withhold it from every capture path there is — GDI, DXGI Desktop Duplication,
+  `Windows.Graphics.Capture`, DWM thumbnails. No flag on the capturing side
+  overrides it, and the call only works on windows of the calling process, so
+  nothing outside the application can clear it.
+
+  It needed its own reading because every existing one answers wrongly: such a
+  window is `is_visible`, has a cloak reason of 0, is `is_on_screen`, and a
+  person watching the monitor sees it. Found on KeePassXC, which does this on
+  purpose as an anti-screenshot feature: a session recording showed the
+  credential prompt, the keystroke HUD and every step of the run with the
+  application under test simply absent from the frame. A screenshot of the same
+  moment taken from outside the guest contained it.
+
+  `None` still means "could not be read", as with `get_window_cloak_reason` —
+  "nothing is excluding this window" is a fact, "no idea" is not, and a caller
+  that merges them promises a recording it cannot produce.
+
+### Changed
+
+- **`capture_window_image()` says when a window is excluded from capture.** It
+  already fell back to cropping the desktop when `PrintWindow` returned nothing;
+  for an excluded window that crop is a picture of the wallpaper, returned under
+  the name of the window. It now logs a warning naming the reason. Still an
+  image and not an exception: a diagnostic that fails a test run is worse than
+  one that explains itself.
+- **`Session.capture_screenshot()` records the exclusion in the event
+  timeline.** An artifact that cannot contain the window it is named after has
+  to say so where the artifacts are read.
+
 ## [0.5.10] — 2026-09-03
 
 ### Fixed

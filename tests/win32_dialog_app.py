@@ -17,6 +17,7 @@ automation client blocks on.
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 import time
 from ctypes import wintypes
@@ -53,6 +54,8 @@ CB_SETCURSEL = 0x014E
 LB_ADDSTRING = 0x0180
 WM_QUIT = 0x0012
 PM_REMOVE = 0x0001
+
+WDA_EXCLUDEFROMCAPTURE = 0x11
 
 DIALOG_TITLE = "wintegrate test dialog"
 
@@ -198,8 +201,27 @@ def build_dialog() -> int:
     return dlg
 
 
+def _exclude_self_from_capture(dlg) -> None:
+    """Asks Windows to withhold this window from screen captures.
+
+    Done here rather than from the test, because `SetWindowDisplayAffinity` only
+    works on windows of the calling process -- which is the whole reason nothing
+    outside an application can undo it. Producing the state is the only way to
+    test the reading of it.
+    """
+    user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+    ok = user32.SetWindowDisplayAffinity(dlg, WDA_EXCLUDEFROMCAPTURE)
+    # Printed either way: a silent failure here would make the test look like a
+    # bug in the reading rather than an unsupported build. WDA_EXCLUDEFROMCAPTURE
+    # needs Windows 10 2004 or later.
+    print(f"EXCLUDE_FROM_CAPTURE={bool(ok)} error={ctypes.get_last_error()}", flush=True)
+
+
 def main() -> int:
     dlg = build_dialog()
+    if os.environ.get("WINTEGRATE_TEST_EXCLUDE_FROM_CAPTURE"):
+        _exclude_self_from_capture(dlg)
     print(DIALOG_TITLE, flush=True)
 
     # Pump with PeekMessage rather than blocking in GetMessage: the system dialog

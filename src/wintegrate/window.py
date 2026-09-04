@@ -28,6 +28,7 @@ from wintegrate.interop import (
     SWP_SHOWWINDOW,
     VK_CAPITAL,
     CloakReason,
+    DisplayAffinity,
     attach_to_input_desktop,
     describe_dialog_contents,
     find_child_windows,
@@ -40,6 +41,7 @@ from wintegrate.interop import (
     get_toggle_key_state,
     get_window_class,
     get_window_cloak_reason,
+    get_window_display_affinity,
     get_window_pid,
     get_window_title,
     kernel32,
@@ -296,6 +298,28 @@ class Window:
         """Whether DWM is hiding this window. None when it cannot be determined."""
         reason = self.cloak_reason
         return None if reason is None else bool(reason)
+
+    @property
+    def display_affinity(self) -> DisplayAffinity | None:
+        """Whether this window has asked to be kept out of screen captures.
+
+        None means it could not be read, which is not the same answer as
+        `DisplayAffinity.NONE` — see `get_window_display_affinity`.
+        """
+        return get_window_display_affinity(self.hwnd)
+
+    @property
+    def is_excluded_from_capture(self) -> bool | None:
+        """Whether captures of this window will come back without it in them.
+
+        None when it cannot be determined. Worth checking before trusting a
+        screenshot or a recording of a specific application: this is the one
+        reason for a missing window that `is_visible`, `cloak_reason` and
+        `is_on_screen` all answer wrongly, because the window really is visible
+        and really is on screen — only capture cannot see it.
+        """
+        affinity = self.display_affinity
+        return None if affinity is None else affinity != DisplayAffinity.NONE
 
     @property
     def is_on_screen(self) -> bool:

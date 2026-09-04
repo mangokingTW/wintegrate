@@ -479,7 +479,23 @@ class Session:
 
         img = capture_window_image(window.hwnd) if window else capture_screen_image(all_monitors)
         img.save(path)
-        self.log_event("screenshot", f"Captured {path.name}", size=list(img.size))
+        # Recorded next to the screenshot, not only in the log: an artifact that
+        # cannot contain the window it is named after has to say so where the
+        # artifacts are read. Windows withholds a window that called
+        # SetWindowDisplayAffinity from every capture API, and it stays visible,
+        # uncloaked and on screen throughout -- so the file looks like evidence
+        # and the timeline is the only place the absence is explained.
+        excluded = window.is_excluded_from_capture if window else None
+        self.log_event(
+            "screenshot",
+            f"Captured {path.name}",
+            size=list(img.size),
+            **(
+                {"excluded_from_capture": True, "affinity": window.display_affinity.name}
+                if excluded
+                else {}
+            ),
+        )
         logger.info(f"Saved screenshot to {path}")
         return path
 

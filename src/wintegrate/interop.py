@@ -174,6 +174,66 @@ def get_window_cloak_reason(hwnd: int) -> CloakReason | None:
     return CloakReason(value.value)
 
 
+class DisplayAffinity(enum.IntEnum):
+    """Whether a window has asked Windows to keep it out of screen captures.
+
+    A window sets this on itself with `SetWindowDisplayAffinity`, and Windows
+    then honours it in **every** capture path: GDI `BitBlt`, DXGI Desktop
+    Duplication, `Windows.Graphics.Capture`, DWM thumbnails. There is no flag on
+    the capturing side that overrides it, and the call only works on windows of
+    the calling process, so nothing outside the application can clear it.
+
+    This is a third, separate reason a window can be missing from a capture, and
+    it is the one every other instrument answers wrongly:
+
+    | reason | `IsWindowVisible` | cloak reason | in a capture |
+    |---|---|---|---|
+    | off-screen coordinates | True | 0 | yes, just not where you looked |
+    | DWM cloaked | True | non-zero | no |
+    | **excluded from capture** | **True** | **0** | **no** |
+
+    So the window is visible, uncloaked, on screen, and the user can see it --
+    only the recording cannot. Password managers do this deliberately, which is
+    where it was found: a session recording that showed the credential prompt,
+    the keystroke HUD and every step of the run, with the application under test
+    simply absent from the frame.
+    """
+
+    NONE = 0x00
+    MONITOR = 0x01
+    EXCLUDE_FROM_CAPTURE = 0x11
+
+
+def get_window_display_affinity(hwnd: int) -> DisplayAffinity | None:
+    """Returns the window's display affinity, or None when it cannot be read.
+
+    None and `DisplayAffinity.NONE` are deliberately different, for the same
+    reason as in `get_window_cloak_reason`: "nothing is excluding this window"
+    is an answer, "could not ask" is not, and a caller that collapses them ends
+    up promising a recording it cannot produce. An affinity value Windows has
+    added since this was written is also None -- it is readable but not something
+    this code can claim to understand.
+    """
+    if not hwnd:
+        return None
+    value = wintypes.DWORD(0)
+    try:
+        ok = user32.GetWindowDisplayAffinity(wintypes.HWND(hwnd), ctypes.byref(value))
+    except Exception as exc:  # noqa: BLE001 - an older platform is a None, not a crash
+        logger.debug(f"GetWindowDisplayAffinity failed ({type(exc).__name__}): {exc}")
+        return None
+    if not ok:
+        logger.debug(
+            f"GetWindowDisplayAffinity failed for {hwnd:#x} (error {ctypes.get_last_error()})"
+        )
+        return None
+    try:
+        return DisplayAffinity(value.value)
+    except ValueError:
+        logger.debug(f"unknown display affinity {value.value:#x} for {hwnd:#x}")
+        return None
+
+
 # GetSystemMetrics indices
 SM_CXSCREEN = 0
 SM_CYSCREEN = 1
@@ -529,6 +589,10 @@ user32.GetClassNameW.restype = ctypes.c_int
 
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
+# Declared like everything else here, and for the usual reason: an undeclared
+# out-pointer is marshalled as a C int, and the address of a DWORD overflows it.
+user32.GetWindowDisplayAffinity.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowDisplayAffinity.restype = wintypes.BOOL
 user32.IsWindow.argtypes = [wintypes.HWND]
 user32.IsWindow.restype = wintypes.BOOL
 user32.IsZoomed.argtypes = [wintypes.HWND]
