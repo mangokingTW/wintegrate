@@ -37,11 +37,22 @@ def dialog():
     """A plain Win32 window. Function-scoped: some tests here hide or move it."""
     proc = subprocess.Popen([sys.executable, str(APP)])
     try:
-        win = Window.find(class_name="#32770", title_exact=DIALOG_TITLE, timeout=20.0)
+        # pid= : the previous test's dialog has the same title and its process is
+        # killed without being waited for, so a title-only match could be a window
+        # that is about to disappear.
+        win = Window.find(class_name="#32770", title_exact=DIALOG_TITLE, pid=proc.pid, timeout=20.0)
+        print(f"dialog app pid={proc.pid} hwnd={win.hwnd:#x}")
         win.set_foreground(verify=False)
         time.sleep(0.5)
         yield win
     finally:
+        # Written before the kill, so a failure report says whether the window
+        # was still there and the process still running when the test ended --
+        # a dead handle at assertion time is a different bug from a hidden one.
+        print(
+            f"dialog app pid={proc.pid} at teardown: exit={proc.poll()} (None = still running)"
+            f" window valid={bool(user32.IsWindow(win.hwnd)) if 'win' in locals() else 'never found'}"
+        )
         try:
             proc.kill()
         except Exception:

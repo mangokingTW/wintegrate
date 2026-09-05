@@ -7,9 +7,12 @@ import logging
 import os
 import re
 import subprocess
+import sys
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -283,6 +286,17 @@ class Session:
         self._orig_virtual_desktop = None
         self._test_virtual_desktop = None
         self._mouse = None
+        # The durable journal: one JSON line per event, flushed as it is written, so
+        # a process that dies without unwinding still leaves everything it logged.
+        # None until __enter__ opens it, and None again if opening fails -- a
+        # diagnostic must never be the reason a session cannot start.
+        self._journal = None
+        self._journal_lock = threading.Lock()
+        self._current_step: str | None = None
+        self._last_event_mono = 0.0
+        self._beat_stop = threading.Event()
+        self._beat_thread: threading.Thread | None = None
+        self._run_id = os.environ.get("GITHUB_RUN_ID", "")
 
     @property
     def mouse(self):
@@ -294,15 +308,298 @@ class Session:
         return self._mouse
 
     def log_event(self, event_type: str, message: str, **kwargs):
-        """Records a structured event in session log."""
+        """Records a structured event, in memory and -- once open -- in the journal.
+
+        Every line carries the wall clock, a monotonic offset, the pid and the
+        current step. The pid is not decoration: a console is shared, orphans
+        outlive their parent, and a journal opened in append mode can hold more
+        than one process's lines. Without it nothing says who wrote what.
+        """
+        now = time.monotonic()
         entry = {
-            "timestamp": time.time(),
+            "wall": datetime.now(timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            "monotonic": round(now, 3),
+            "pid": os.getpid(),
+            "timestamp": time.time(),  # kept: existing readers use it
             "type": event_type,
             "message": message,
+            "step": self._current_step,
             **kwargs,
         }
         self.logs.append(entry)
+        self._journal_write(entry)
+        self._last_event_mono = now
         logger.info(f"[{event_type}] {message} ({kwargs})")
+
+    # ------------------------------------------------------------------ journal
+    #
+    # Why this exists, in one incident: a library call inside __enter__ ended the
+    # process that made it. session_events.json is written from __exit__, __exit__
+    # never ran, and the artifact directory was empty. Three CI rounds produced no
+    # evidence at all, and the traceback that did surface pointed at whatever the
+    # process happened to be doing -- `import av` -- rather than at the cause. A
+    # line written *before* each risky thing, to a file, flushed, is the only
+    # record that survives that. stdout does not: it died with the console.
+
+    def _journal_write(self, entry: dict) -> None:
+        if self._journal is None:
+            return
+        try:
+            line = json.dumps(entry, default=str) + "\n"
+            # One lock around write+flush: the heartbeat thread shares this file,
+            # and two writers tearing a line corrupts the one record the
+            # post-mortem depends on.
+            with self._journal_lock:
+                self._journal.write(line)
+                self._journal.flush()
+        except Exception as exc:
+            logger.debug(f"journal write skipped ({type(exc).__name__}): {exc}")
+
+    def _open_journal(self) -> None:
+        """Opens session_events.jsonl and starts the heartbeat. Degrades to memory."""
+        try:
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            self._journal = open(
+                self.artifact_dir / "session_events.jsonl", "a", encoding="utf-8", buffering=1
+            )
+        except Exception as exc:
+            self._journal = None
+            logger.warning(
+                f"journal unavailable ({type(exc).__name__}): {exc}; events stay in memory"
+            )
+            return
+        try:
+            from wintegrate import __version__
+        except Exception:
+            __version__ = "?"
+        self.log_event(
+            "session_open",
+            "journal opened",
+            argv=sys.argv,
+            run=self._run_id,
+            python=sys.version.split()[0],
+            wintegrate=__version__,
+            cwd=os.getcwd(),
+        )
+        self._beat_stop.clear()
+        self._beat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._beat_thread.start()
+        self._write_index("opening")
+
+    #: Seconds between heartbeat checks. A test may shorten it.
+    _beat_interval: float = 1.0
+
+    def _beat_due(self, now: float) -> bool:
+        """Whether a beat is owed at `now`: nothing else was written for about one interval.
+
+        "About": the wait wakes a few milliseconds early or late, so a strict
+        `>= interval` skipped the first beat on a slow machine and a 2.3 s
+        session recorded one beat instead of two. Half an interval of slack
+        cannot double the rate -- the wait itself spaces the checks.
+        """
+        return now - self._last_event_mono >= self._beat_interval * 0.5
+
+    def _heartbeat_loop(self) -> None:
+        """One line a second, when nothing else was written that second.
+
+        The beat exists to tell *dead* from *hung*. A step that stays in_progress
+        for minutes looks like a live process to anyone reading the CI page; the
+        journal's last beat says when the process was last alive, to the second.
+        It does not localise a sub-second death -- the events around it do -- and
+        it does not survive a runner that is destroyed rather than killed.
+        """
+        while not self._beat_stop.wait(self._beat_interval):
+            if self._beat_due(time.monotonic()):
+                self._journal_write(
+                    {
+                        "wall": datetime.now(timezone.utc)
+                        .isoformat(timespec="milliseconds")
+                        .replace("+00:00", "Z"),
+                        "monotonic": round(time.monotonic(), 3),
+                        "pid": os.getpid(),
+                        "type": "heartbeat",
+                        "step": self._current_step,
+                    }
+                )
+
+    def _close_journal(self) -> None:
+        self._beat_stop.set()
+        if self._beat_thread is not None:
+            self._beat_thread.join(timeout=2.0)
+            self._beat_thread = None
+        if self._journal is not None:
+            try:
+                with self._journal_lock:
+                    self._journal.flush()
+                    self._journal.close()
+            except Exception:
+                pass
+            self._journal = None
+
+    def _write_step_summary(self, exc_type=None) -> None:
+        """Appends a summary to $GITHUB_STEP_SUMMARY, when there is one.
+
+        The run page is what a person -- or an agent -- reads first, and it is
+        readable without downloading anything. The artifacts hold the detail;
+        this says which step failed, how long each took, and where to look.
+        """
+        path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if not path:
+            return
+        try:
+            starts: dict[str, float] = {}
+            rows = []
+            for e in self.logs:
+                if e.get("type") == "step_start":
+                    starts[e["message"]] = e.get("monotonic", 0.0)
+                elif e.get("type") in ("step_ok", "step_failed"):
+                    rows.append(
+                        (
+                            e["message"],
+                            "ok"
+                            if e["type"] == "step_ok"
+                            else f"**failed** ({e.get('error', '?')})",
+                            e.get("seconds", ""),
+                        )
+                    )
+            verdict = "failed" if exc_type is not None else "completed"
+            lines = [
+                "",
+                f"### wintegrate session -- {verdict}",
+                "",
+                f"artifacts: `{self.artifact_dir}` -- start with `READ_THIS_FIRST.md`; `session_events.jsonl` is the authority.",
+                "",
+            ]
+            if rows:
+                lines += ["| step | outcome | seconds |", "| --- | --- | ---: |"]
+                lines += [f"| {name} | {outcome} | {secs} |" for name, outcome, secs in rows]
+                lines.append("")
+            errors = [e for e in self.logs if e.get("type") == "session_error"]
+            for e in errors:
+                lines.append(
+                    f"- error: `{e.get('message')}`"
+                    + (f" in step `{e.get('step')}`" if e.get("step") else "")
+                )
+            files = (
+                sorted(p.name for p in self.artifact_dir.iterdir() if p.is_file())
+                if self.artifact_dir.exists()
+                else []
+            )
+            if files:
+                lines.append("- files: " + ", ".join(f"`{f}`" for f in files))
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+        except Exception as exc:
+            logger.debug(f"step summary skipped ({type(exc).__name__}): {exc}")
+
+    def _write_index(self, state: str) -> None:
+        """Writes READ_THIS_FIRST.md and artifact_index.json for whoever opens the folder.
+
+        Rewritten at every step boundary, so it is also an on-disk record of how
+        far the run got -- including the case that used to leave the directory
+        completely empty, a death inside __enter__. Every sentence is generated
+        from the files that are actually there; a stale sentence here is worse
+        than no file.
+        """
+        try:
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            files = {}
+            for p in sorted(self.artifact_dir.iterdir()):
+                if p.is_file() and p.name not in ("READ_THIS_FIRST.md", "artifact_index.json"):
+                    files[p.name] = p.stat().st_size
+            recent = [
+                {
+                    "wall": e.get("wall"),
+                    "type": e.get("type"),
+                    "message": e.get("message"),
+                    "step": e.get("step"),
+                }
+                for e in self.logs[-8:]
+            ]
+            index = {
+                "state": state,
+                "written": datetime.now(timezone.utc)
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z"),
+                "pid": os.getpid(),
+                "run": self._run_id,
+                "current_step": self._current_step,
+                "recording": self.recorder is not None and self.recorder.backend is not None,
+                "files": files,
+                "recent_events": recent,
+            }
+            (self.artifact_dir / "artifact_index.json").write_text(
+                json.dumps(index, indent=2), encoding="utf-8"
+            )
+
+            has_json = "session_events.json" in files
+            has_mp4 = "session_recording.mp4" in files
+            lines = [
+                "# Read this first",
+                "",
+                f"State: **{state}** -- written {index['written']} by pid {os.getpid()}"
+                + (f", run {self._run_id}" if self._run_id else "")
+                + (f", inside step `{self._current_step}`" if self._current_step else "")
+                + ".",
+                "",
+                "## Which file to trust",
+                "",
+                "- `session_events.jsonl` is the authority. One JSON line per event, flushed as written,",
+                "  so it survives a process that was killed without unwinding. Read it in order; the last",
+                "  line is the last thing the process did. A `heartbeat` line every second means the",
+                "  process was alive then and merely quiet.",
+            ]
+            if has_json:
+                lines.append(
+                    "- `session_events.json` is the same timeline, pretty-printed, written at exit."
+                )
+            else:
+                lines.append(
+                    "- `session_events.json` is **absent**: it is written from `__exit__`, so the process"
+                    " never reached teardown. That is a fact about the run, not a missing artifact."
+                )
+            if has_mp4:
+                lines += [
+                    "- `session_recording.mp4` is the **primary monitor only**, fragmented so it plays back even",
+                    "  if the process was killed mid-write. `recording_anchor.json` maps wall time to video",
+                    "  time. Screenshots (`*.png`) are the **whole virtual desktop**, so they are offset from",
+                    "  the video by the primary monitor's origin.",
+                ]
+            else:
+                lines.append(
+                    "- No recording: either `record_video` was off, PyAV is not installed, or the process"
+                    " died before the recorder started. `session_events.jsonl` says which."
+                )
+            lines += [
+                "",
+                "## What a screenshot cannot show",
+                "",
+                "A window can ask Windows to withhold it from every capture path (display affinity).",
+                "It is then visible on the monitor and absent from the recording and screenshots alike.",
+                "Screenshot events carry `excluded_from_capture` when this was measured; when a window",
+                "you expect is missing from an image, read `window_census.json` before concluding it",
+                "was not there.",
+                "",
+                "## Files",
+                "",
+            ]
+            lines += [f"- `{name}` ({size} bytes)" for name, size in files.items()] or [
+                "- (none yet)"
+            ]
+            if recent:
+                lines += ["", "## Last events", ""]
+                lines += [
+                    f"- {e['wall']} `{e['type']}` {e['message']}"
+                    + (f" (step: {e['step']})" if e["step"] else "")
+                    for e in recent
+                ]
+            (self.artifact_dir / "READ_THIS_FIRST.md").write_text(
+                "\n".join(lines) + "\n", encoding="utf-8"
+            )
+        except Exception as exc:
+            logger.debug(f"artifact index skipped ({type(exc).__name__}): {exc}")
 
     def _census_or_none(self):
         """A window census, or None when one cannot be taken.
@@ -365,12 +662,16 @@ class Session:
         # cannot see anything that appears and goes during the run — which is
         # exactly where the interesting windows live.
         before = self._census_or_none()
+        outer_step = self._current_step
+        self._current_step = name
         self.log_event("step_start", name)
+        self._write_index("running")
         try:
             yield
         except BaseException as exc:
             elapsed = time.monotonic() - started
             self.log_event("step_failed", name, seconds=round(elapsed, 3), error=type(exc).__name__)
+            self._write_index("running")
             try:
                 self.capture_screenshot(f"failure-{safe}", all_monitors=True)
             except Exception as shot_exc:
@@ -385,10 +686,34 @@ class Session:
         else:
             elapsed = time.monotonic() - started
             self.log_event("step_ok", name, seconds=round(elapsed, 3), **self._census_delta(before))
+            self._write_index("running")
+        finally:
+            self._current_step = outer_step
 
     def __enter__(self) -> Session:
         logger.info("Starting Wintegrate UI automation session...")
+        # The journal opens before anything else happens, so that if the next call
+        # ends this process the directory is not empty.
+        self._open_journal()
         attach_to_input_desktop()
+
+        # The recorder starts before the runner is touched. Everything below it
+        # kills processes, hides windows and switches desktops -- exactly the
+        # actions a recording exists to show -- and used to run off-camera, with
+        # the mp4 not yet created at the moment anything went wrong.
+        if self.config.record_video:
+            video_path = self.artifact_dir / "session_recording.mp4"
+            self.recorder = ContinuousRecorder(output_path=video_path, fps=self.config.fps)
+            if self.recorder.start():
+                self.log_event("video_recording_started", f"Streaming to {video_path}")
+                anchor = self.recorder.anchor()
+                if anchor:
+                    try:
+                        (self.artifact_dir / "recording_anchor.json").write_text(
+                            json.dumps(anchor, indent=2), encoding="utf-8"
+                        )
+                    except Exception as exc:
+                        logger.debug(f"recording anchor skipped ({type(exc).__name__}): {exc}")
 
         if self.config.should_dismiss_oobe:
             try_dismiss_oobe_privacy_screen(timeout=3.0)
@@ -397,7 +722,9 @@ class Session:
             self._setup_isolated_virtual_desktop()
 
         if self.config.should_sanitize_runner:
+            self.log_event("sanitize_start", "sanitising the runner")
             sanitize_ci_runner_environment()
+            self.log_event("sanitize_done", "runner sanitised")
 
         if self.config.should_dismiss_oobe:
             try_dismiss_oobe_privacy_screen(timeout=3.0)
@@ -407,14 +734,7 @@ class Session:
         self.log_event(
             "session_start", "Baseline window census captured", count=len(self.initial_census)
         )
-
-        # Start continuous video recording if requested
-        if self.config.record_video:
-            video_path = self.artifact_dir / "session_recording.mp4"
-            self.recorder = ContinuousRecorder(output_path=video_path, fps=self.config.fps)
-            if self.recorder.start():
-                self.log_event("video_recording_started", f"Streaming to {video_path}")
-
+        self._write_index("running")
         return self
 
     def _setup_isolated_virtual_desktop(self):
@@ -453,6 +773,14 @@ class Session:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         logger.info("Tearing down Wintegrate UI automation session...")
+        if exc_type is not None:
+            self.log_event("session_error", f"{exc_type.__name__}: {exc_val}")
+        # The timeline is saved before the recorder's thread join and the final
+        # census. Under a console's seconds-long kill deadline the last statement
+        # is the one most likely to be cut off, and this is the artifact that
+        # matters most.
+        self._flush_session_logs()
+        self._write_index("closing")
 
         # Stop recorder
         if self.recorder:
@@ -486,6 +814,9 @@ class Session:
 
         # Flush session logs
         self._flush_session_logs()
+        self._write_index("closed")
+        self._write_step_summary(exc_type)
+        self._close_journal()
 
         return False  # Do not suppress exceptions
 

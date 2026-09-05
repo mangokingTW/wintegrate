@@ -186,7 +186,7 @@ def _launch_target_note(cmd: list[str] | str) -> str:
         return ""
 
 
-def _describe_desktop_now(before: list, limit: int = 12) -> str:
+def _describe_desktop_now(before: list, limit: int = 12, launched: bool = True) -> str:
     """What was on the desktop when discovery gave up, for the exception message.
 
     "Window failed to appear" says what did not happen; the next question is
@@ -196,6 +196,11 @@ def _describe_desktop_now(before: list, limit: int = 12) -> str:
 
     Newly-arrived windows come first: those are the candidates that were rejected
     for some reason, and they are what a reader wants to see.
+
+    This decorates an exception that is already being raised, so nothing in it
+    may raise: a diagnostic that fails replaces the real error with its own.
+    `launched` says whether a process was started and its window awaited; the
+    closing line only makes sense then.
     """
     try:
         before_hwnds = {b.hwnd for b in before}
@@ -223,12 +228,15 @@ def _describe_desktop_now(before: list, limit: int = 12) -> str:
         # static text inside it is the part somebody can act on, and nobody can
         # look at the screen of a runner that no longer exists.
         if snap.class_name in DIALOG_WINDOW_CLASSES:
-            for line in describe_dialog_contents(snap.hwnd):
-                lines.append(f"\n          {line}")
+            try:
+                for line in describe_dialog_contents(snap.hwnd):
+                    lines.append(f"\n          {line}")
+            except Exception as exc:  # noqa: BLE001 - decoration, never the error
+                lines.append(f"\n          (contents unreadable: {type(exc).__name__})")
     hidden = len(now) - len(shown)
     if hidden > 0:
         lines.append(f"\n    ... and {hidden} more (untitled shells last)")
-    if not fresh:
+    if launched and not fresh:
         lines.append("\n    (nothing new appeared at all - the launch produced no window)")
     return "".join(lines)
 
@@ -319,6 +327,10 @@ class Window:
         a traceback about formatting.
         """
         try:
+            if not user32.IsWindow(self.hwnd):
+                # class='' title='' reads like a window with no name. Say what it is:
+                # a handle whose window has since been destroyed.
+                return f"<Window hwnd={self.hwnd:#x} pid={self.pid} (destroyed: handle no longer valid)>"
             return (
                 f"<Window hwnd={self.hwnd:#x} pid={self.pid} "
                 f"class={self.class_name!r} title={self.title!r}>"
@@ -1077,6 +1089,7 @@ class Window:
         deadline = time.monotonic() + timeout
         compiled_re = re.compile(title_pattern, re.IGNORECASE) if title_pattern else None
 
+        snapshots: list = []
         while time.monotonic() < deadline:
             snapshots = WindowCensus.capture()
             for snap in snapshots:
@@ -1093,9 +1106,13 @@ class Window:
                 return cls(snap.hwnd, snap.pid)
             time.sleep(0.1)
 
+        # The library may not report an absence without saying what it looked at.
+        # The last census is still in hand; printing it costs nothing and turns
+        # "not found" into "not found, and here is what was there instead".
         raise WindowDiscoveryTimeoutError(
             f"Window not found (title_exact={title_exact}, title_pattern={title_pattern}, "
             f"class_name={class_name}, pid={pid})"
+            f"{_describe_desktop_now(snapshots, launched=False)}"
         )
 
     @classmethod

@@ -226,12 +226,36 @@ class ContinuousRecorder:
         self._container = None
         self._stream = None
         self._t0 = 0.0
+        self._wall0 = 0.0
         self._size: tuple[int, int] = (0, 0)
 
     @property
     def backend(self) -> str | None:
         """ "pyav", or None when recording is not running."""
         return "pyav" if self._container is not None else None
+
+    def anchor(self) -> dict | None:
+        """How to map a timestamp in the event timeline onto the recording.
+
+        Frames are stamped `pts_ms = (monotonic - monotonic_start) * 1000`, and
+        events carry both `monotonic` and a wall clock, so
+        `video_ms = (event.monotonic - monotonic_start) * 1000`. Also says what the
+        frame covers: the primary monitor at its native size, not the virtual
+        desktop that the screenshots cover -- a mismatch that is otherwise written
+        nowhere.
+        """
+        if self._container is None:
+            return None
+        return {
+            "backend": "pyav",
+            "wall_start": self._wall0,
+            "monotonic_start": self._t0,
+            "fps": self.fps,
+            "width": self._size[0],
+            "height": self._size[1],
+            "covers": "primary monitor",
+            "video_ms": "(event.monotonic - monotonic_start) * 1000",
+        }
 
     def _start_pyav(self, w: int, h: int) -> bool:
         try:
@@ -242,10 +266,28 @@ class ContinuousRecorder:
         codec = "libx264" if self.output_path.suffix.lower() == ".mp4" else "libvpx-vp9"
         container = None
         try:
-            container = av.open(str(self.output_path), mode="w")
+            # Fragmented MP4, so the file plays back even if this process is
+            # killed mid-write: with the default layout the index is written at
+            # close, and a recording whose process never closed it is unreadable
+            # -- which is exactly the recording anyone wants to watch. One
+            # fragment per keyframe, and a keyframe every second (gop_size), so
+            # the tail lost to a kill is bounded by a second rather than by
+            # libx264's default ~8s.
+            container = av.open(
+                str(self.output_path),
+                mode="w",
+                options={
+                    "movflags": "frag_keyframe+empty_moov+default_base_moof",
+                    "flush_packets": "1",
+                },
+            )
             stream = container.add_stream(codec, rate=self.fps)
             stream.width, stream.height = w, h
             stream.pix_fmt = "yuv420p"
+            try:
+                stream.codec_context.gop_size = int(self.fps)
+            except Exception as exc:  # noqa: BLE001 - keeps recording without it
+                logger.debug(f"gop_size not set ({type(exc).__name__}): {exc}")
             # Wall-clock presentation timestamps in milliseconds. Screen capture
             # rarely sustains the nominal frame rate, and encoding at a fixed rate
             # would then play the recording back faster than the run happened.
@@ -283,6 +325,7 @@ class ContinuousRecorder:
             self.stop_event.clear()
             self._frame_count = 0
             self._t0 = time.monotonic()
+            self._wall0 = time.time()
             self.thread = threading.Thread(target=self._record_loop, daemon=True)
             self.thread.start()
             logger.info(

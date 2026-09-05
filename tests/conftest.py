@@ -106,6 +106,16 @@ def full_suite_recording():
         return
 
     logger.info(f"Full-suite recording started via {recorder.backend} -> {output}")
+    # The job log timestamps events in wall time; the video counts from zero. Without
+    # this file the offset has to be reconstructed from the step's end time and the
+    # video's duration, which is guesswork to the second.
+    try:
+        import json as _json
+
+        anchor_path = output.with_suffix(".anchor.json")
+        anchor_path.write_text(_json.dumps(recorder.anchor(), indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.warning(f"Full-suite recording anchor not written ({type(exc).__name__}): {exc}")
     global _suite_recorder
     _suite_recorder = recorder
     # The first test is already running by the time this fixture builds the
