@@ -681,6 +681,8 @@ user32.AttachThreadInput.restype = wintypes.BOOL
 
 kernel32.GetConsoleWindow.argtypes = []
 kernel32.GetConsoleWindow.restype = wintypes.HWND
+kernel32.GetConsoleProcessList.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+kernel32.GetConsoleProcessList.restype = wintypes.DWORD
 user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 
@@ -2009,7 +2011,16 @@ def has_console() -> bool:
     all -- and the answer is no for the ordinary case of a test runner started
     by a service or a GUI.
     """
-    return bool(kernel32.GetConsoleWindow())
+    if kernel32.GetConsoleWindow():
+        return True
+    # GetConsoleWindow answers a narrower question than the one that matters:
+    # is there a console *window*. A ConPTY has none, and that is what a CI
+    # runner hands a step -- so on a hosted runner the window check returned 0
+    # for a process that was attached to a console all along, the sweep went
+    # ahead, and it killed the terminal hosting the step. GetConsoleProcessList
+    # asks the question that was meant, and answers it for a windowless console.
+    buffer = (wintypes.DWORD * 1)()
+    return kernel32.GetConsoleProcessList(buffer, 1) > 0
 
 
 def get_foreground_window() -> int:

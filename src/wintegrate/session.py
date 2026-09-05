@@ -133,7 +133,16 @@ def sanitize_ci_runner_environment():
         # whose parent chain runs to services.exe. Measured on Windows 11 -- with
         # WindowsTerminal excluded the caller survived the whole sweep; killing
         # it alone ended the caller before its next heartbeat, a second later.
-        name_list = ",".join(f"'{name}'" for name in sweep_process_names(has_console()))
+        attached = has_console()
+        # Logged, because this decision has been wrong once and was invisible
+        # when it was: the sweep swept a terminal host, that host was this
+        # process's own, and the process ended a moment later somewhere
+        # unrelated-looking.
+        logger.info(
+            f"Runner sweep: attached to a console = {attached}; "
+            f"terminal hosts {'spared' if attached else 'included'}"
+        )
+        name_list = ",".join(f"'{name}'" for name in sweep_process_names(attached))
         ps_cmd = f"Get-Process -Name {name_list} -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
