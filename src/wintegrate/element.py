@@ -25,6 +25,10 @@ from wintegrate.interop import (
     WM_GETTEXT,
     WM_GETTEXTLENGTH,
     attach_to_input_desktop,
+    get_foreground_window,
+    get_process_image_name,
+    get_window_class,
+    get_window_pid,
     ole32,
     send_char_input,
     send_keys,
@@ -137,6 +141,36 @@ def get_uia() -> IUIAutomation:
 
         _uia = comtypes.client.CreateObject(CUIAutomation, interface=IUIAutomation)
     return _uia
+
+
+def _foreground_facts(target_handle: int | None) -> dict:
+    """What holds the foreground right now, as signature facts.
+
+    Sampled by the caller *during* its retry loop, not at raise time: a toast or a
+    first-run page that stole focus for a second is gone by the time a 2 s poll
+    has run three times. `foreground_is_target_process` says whether the
+    foreground belongs to the target's own process -- `set_focus` can leave the
+    target's window in front while UIA focus lands on a sibling, and labelling
+    that a thief would be exactly the misleading diagnostic this exists to avoid.
+    """
+    try:
+        fg = get_foreground_window()
+        if not fg:
+            return {
+                "foreground_image": "none",
+                "foreground_class": "",
+                "foreground_is_target_process": False,
+            }
+        pid = get_window_pid(fg)
+        image = get_process_image_name(pid) if pid else ""
+        same = bool(target_handle) and pid != 0 and get_window_pid(int(target_handle)) == pid
+        return {
+            "foreground_image": image or "?",
+            "foreground_class": get_window_class(fg) or "",
+            "foreground_is_target_process": same,
+        }
+    except Exception:
+        return {}
 
 
 class UiaElement:
@@ -1212,7 +1246,8 @@ class UiaElement:
             time.sleep(0.05)
 
         raise TextMismatchError(
-            f"Value verification failed. Expected '{text}', got '{self.get_value()}'"
+            f"Value verification failed. Expected '{text}', got '{self.get_value()}'",
+            **_foreground_facts(self.handle),
         )
 
     def invoke(self, verify_closed: bool = False, timeout: float = 3.0) -> bool:
@@ -1258,10 +1293,13 @@ class UiaElement:
         # Foreground contention (first-run popups, notification toasts) is usually
         # transient, so retry focus a few times before declaring a steal.
         focus_ok = False
+        foreground: dict = {}
         for _ in range(3):
             if self.set_focus(timeout=2.0, click=click):
                 focus_ok = True
                 break
+            # Sampled here, while whatever took the focus is still in front.
+            foreground = _foreground_facts(self.handle) or foreground
             time.sleep(0.3)
         if not focus_ok:
             # Focus verification needs a native handle or an automation id to compare
@@ -1269,7 +1307,7 @@ class UiaElement:
             # verification is the only meaningful check available.
             if self.handle or self.automation_id:
                 raise FocusStealDetectedError(
-                    f"Failed to focus element {self} before sending keystrokes"
+                    f"Failed to focus element {self} before sending keystrokes", **foreground
                 )
             logger.warning(
                 f"Focus verification is not possible for {self} (no native window handle "
@@ -1358,7 +1396,11 @@ class UiaElement:
             pass
 
         final_text = self.get_value()
+        # The raise a mid-typing steal most often reaches: the physical click
+        # usually wins focus back, so the FocusSteal branch above never fires and
+        # the text is what shows the loss. Carry the foreground with it.
         raise TextMismatchError(
             f"type_verified failed. Expected delta {expected_line_count_delta} lines (had {initial_lines}, got {count_lines(final_text)} lines), "
-            f"contains='{target_verify_contains}'. Final buffer: '{final_text}'"
+            f"contains='{target_verify_contains}'. Final buffer: '{final_text}'",
+            **_foreground_facts(self.handle),
         )

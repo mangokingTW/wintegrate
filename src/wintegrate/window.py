@@ -1112,7 +1112,10 @@ class Window:
         raise WindowDiscoveryTimeoutError(
             f"Window not found (title_exact={title_exact}, title_pattern={title_pattern}, "
             f"class_name={class_name}, pid={pid})"
-            f"{_describe_desktop_now(snapshots, launched=False)}"
+            f"{_describe_desktop_now(snapshots, launched=False)}",
+            title_exact=title_exact,
+            title_pattern=title_pattern,
+            class_name=class_name,
         )
 
     @classmethod
@@ -1173,7 +1176,9 @@ class Window:
             # Same error, plus what the command was: a Store app behind an
             # execution alias fails to appear for a reason the desktop listing
             # cannot show.
-            raise WindowDiscoveryTimeoutError(f"{exc}{_launch_target_note(cmd)}") from exc
+            raise WindowDiscoveryTimeoutError(
+                f"{exc}{_launch_target_note(cmd)}", **exc.facts
+            ) from exc
         return proc, window
 
     @classmethod
@@ -1239,5 +1244,8 @@ class Window:
             f"No new window appeared within {timeout}s{where} "
             f"(pattern={title_pattern}, classes={window_classes}, "
             f"process_names={process_names}).{detail}"
-            f"{_describe_desktop_now(before)}"
+            f"{_describe_desktop_now(before)}",
+            title_pattern=title_pattern,
+            window_classes=tuple(window_classes) if window_classes else None,
+            process_names=tuple(process_names) if process_names else None,
         )

@@ -27,6 +27,7 @@ from wintegrate.diagnostics import (
 )
 from wintegrate.element import UiaElement
 from wintegrate.env import env, is_ci
+from wintegrate.exceptions import ConsoleHostEndedError
 from wintegrate.interop import (
     SW_HIDE,
     WNDENUMPROC,
@@ -115,6 +116,46 @@ def sweep_process_names(caller_has_console: bool) -> list[str]:
     if not caller_has_console:
         names.extend(TERMINAL_HOST_NAMES)
     return names
+
+
+def console_host_verdict(
+    preflight: dict[str, Any],
+    console_attached_now: bool | None,
+    console_clients_now: tuple[int, ...] | None,
+    exc: BaseException,
+    plan: KillPlan | None,
+) -> dict[str, Any] | None:
+    """Whether `exc` is the console host being destroyed, on evidence. None when it is not.
+
+    Pure, so the rule is testable without a desktop. The rule is differential: the
+    console probes answered at preflight (`console_attached` True, a non-empty
+    client list) and answer nothing now (False, empty, or the probe itself failed
+    -- passed in as None). A process that never had a console cannot produce a
+    verdict, so the common path cannot manufacture one; and an exception that
+    already is the verdict is left alone.
+    """
+    if isinstance(exc, (ConsoleHostEndedError, GeneratorExit)):
+        return None
+    clients_before = preflight.get("console_clients") or []
+    had_console = bool(preflight.get("console_attached")) and bool(clients_before)
+    gone = not console_attached_now and not console_clients_now
+    if not (had_console and gone):
+        return None
+    ended: list[str] = []
+    ended_pids: list[int] = []
+    if plan is not None:
+        names = {e.pid: e.name for e in plan.entries}
+        for pid, result in plan.results.items():
+            if result == "terminated":
+                ended.append(names.get(int(pid), "?"))
+                ended_pids.append(int(pid))
+    peers = [c.get("name", "?") for c in clients_before if c.get("pid") != os.getpid()]
+    return {
+        "ended": sorted(set(ended)),
+        "ended_pids": ended_pids,
+        "peers": peers,
+        "original": type(exc).__name__,
+    }
 
 
 def collect_preflight() -> dict[str, Any]:
@@ -390,6 +431,8 @@ class Session:
         self.artifact_dir = Path(self.config.artifact_dir)
         self.recorder: ContinuousRecorder | None = None
         self.preflight: dict[str, Any] = {}
+        self._phase: str | None = None
+        self._phase_since: float | None = None
         self.kill_plan: KillPlan | None = None
         self.initial_census: list[WindowSnapshot] = []
         self.final_census: list[WindowSnapshot] = []
@@ -590,7 +633,7 @@ class Session:
             errors = [e for e in self.logs if e.get("type") == "session_error"]
             for e in errors:
                 lines.append(
-                    f"- error: `{e.get('message')}`"
+                    f"- error `{e.get('signature') or '?'}`: {str(e.get('message'))[:300]}"
                     + (f" in step `{e.get('step')}`" if e.get("step") else "")
                 )
             files = (
@@ -647,6 +690,25 @@ class Session:
 
             has_json = "session_events.json" in files
             has_mp4 = "session_recording.mp4" in files
+            failures = [
+                e for e in self.logs if e.get("type") in ("session_error", "console_host_ended")
+            ]
+            failure_lines: list[str] = []
+            if failures:
+                failure_lines = ["## Failure", ""]
+                for e in failures:
+                    sig = e.get("signature") or (
+                        f"ConsoleHostEndedError[ended={'+'.join(e.get('ended') or [])}]"
+                        if e.get("type") == "console_host_ended"
+                        else "?"
+                    )
+                    failure_lines.append(f"- `{sig}` -- {str(e.get('message'))[:400]}")
+                failure_lines += [
+                    "",
+                    "The signature is the class plus the facts that identify *this* failure; compare",
+                    "it across runs before comparing counts.",
+                    "",
+                ]
             lines = [
                 "# Read this first",
                 "",
@@ -655,6 +717,7 @@ class Session:
                 + (f", inside step `{self._current_step}`" if self._current_step else "")
                 + ".",
                 "",
+                *failure_lines,
                 "## Which file to trust",
                 "",
                 "- `session_events.jsonl` is the authority. One JSON line per event, flushed as written,",
@@ -792,7 +855,18 @@ class Session:
             yield
         except BaseException as exc:
             elapsed = time.monotonic() - started
-            self.log_event("step_failed", name, seconds=round(elapsed, 3), error=type(exc).__name__)
+            # The windows that came and went during the *failing* step were being
+            # computed for step_ok and thrown away here -- the only path that
+            # matters. And the signature, so two failures with the same count stop
+            # reading as the same problem.
+            self.log_event(
+                "step_failed",
+                name,
+                seconds=round(elapsed, 3),
+                error=type(exc).__name__,
+                signature=getattr(exc, "signature", type(exc).__name__),
+                **self._census_delta(before),
+            )
             self._write_index("running")
             try:
                 self.capture_screenshot(f"failure-{safe}", all_monitors=True)
@@ -836,12 +910,34 @@ class Session:
         )
         for line in self.preflight.get("warnings") or []:
             logger.warning(f"preflight: {line}")
+        # Everything below can end this process -- the sweep did once, by ending
+        # the console host it shared with this process. Wrapped so that if it
+        # happens again the exception says so, on evidence, instead of surfacing
+        # as a KeyboardInterrupt at whatever line was executing.
+        try:
+            self._prepare_desktop()
+        except BaseException as exc:
+            named = self._name_death(exc)
+            if named is exc:
+                raise
+            raise named from exc
+        return self
+
+    def _mark_phase(self, name: str) -> None:
+        """Labels what `__enter__` is doing, so a death can say how far it got."""
+        self._phase = name
+        self._phase_since = time.monotonic()
+
+    def _prepare_desktop(self) -> None:
+        """The hazardous half of `__enter__`: recorder, OOBE, desktop, sweep, census."""
+        self._mark_phase("attach")
         attach_to_input_desktop()
 
         # The recorder starts before the runner is touched. Everything below it
         # kills processes, hides windows and switches desktops -- exactly the
         # actions a recording exists to show -- and used to run off-camera, with
         # the mp4 not yet created at the moment anything went wrong.
+        self._mark_phase("recorder")
         if self.config.record_video:
             video_path = self.artifact_dir / "session_recording.mp4"
             self.recorder = ContinuousRecorder(output_path=video_path, fps=self.config.fps)
@@ -856,12 +952,15 @@ class Session:
                     except Exception as exc:
                         logger.debug(f"recording anchor skipped ({type(exc).__name__}): {exc}")
 
+        self._mark_phase("oobe")
         if self.config.should_dismiss_oobe:
             try_dismiss_oobe_privacy_screen(timeout=3.0)
 
+        self._mark_phase("virtual_desktop")
         if self.config.should_isolate_virtual_desktop:
             self._setup_isolated_virtual_desktop()
 
+        self._mark_phase("sanitize")
         if self.config.should_sanitize_runner:
             self.log_event("sanitize_start", "sanitising the runner")
             self.kill_plan = sanitize_ci_runner_environment(
@@ -873,13 +972,64 @@ class Session:
         if self.config.should_dismiss_oobe:
             try_dismiss_oobe_privacy_screen(timeout=3.0)
 
+        self._mark_phase("census")
         # Capture baseline window state
         self.initial_census = WindowCensus.capture()
         self.log_event(
             "session_start", "Baseline window census captured", count=len(self.initial_census)
         )
         self._write_index("running")
-        return self
+
+    def _name_death(self, exc: BaseException) -> BaseException:
+        """Replaces `exc` with a ConsoleHostEndedError when the evidence supports it.
+
+        Runs in a process that may be dying: one console re-probe, no census, no
+        screenshot, no subprocess, and its own try/except -- a failure in here
+        must never replace the original exception. The verdict goes to the
+        journal before it is raised.
+        """
+        try:
+            try:
+                attached_now: bool | None = has_console()
+            except Exception:
+                attached_now = None
+            try:
+                clients_now: tuple[int, ...] | None = console_client_pids()
+            except Exception:
+                clients_now = None
+            verdict = console_host_verdict(
+                self.preflight, attached_now, clients_now, exc, self.kill_plan
+            )
+            if verdict is None:
+                return exc
+            since = round(time.monotonic() - self._phase_since, 2) if self._phase_since else None
+            ended = ", ".join(f"{n}" for n in verdict["ended"]) or "nothing this session planned"
+            peers = ", ".join(verdict["peers"]) or "none"
+            message = (
+                f"this {verdict['original']} is your console host being destroyed, not a Ctrl-C and not a"
+                f" timeout. Console at session start: {len(self.preflight.get('console_clients') or [])}"
+                f" processes ({peers} besides this one); console now: attached={attached_now},"
+                f" clients={clients_now}. Last phase: {self._phase}"
+                + (f", entered {since}s ago" if since is not None else "")
+                + f". The sweep ended: {ended}. Where the traceback points is where this process happened"
+                " to be when the console died, not what killed it. The other console processes are dying"
+                " with it; if one is your CI worker, the step will report cancelled and ordinary"
+                " cancellation will not work."
+            )
+            self.log_event(
+                "console_host_ended",
+                message,
+                ended=verdict["ended"],
+                ended_pids=verdict["ended_pids"],
+                peers=verdict["peers"],
+                phase=self._phase,
+                original=verdict["original"],
+            )
+            return ConsoleHostEndedError(
+                message, ended=verdict["ended"], peers=verdict["peers"], phase=self._phase
+            )
+        except Exception:
+            return exc
 
     def _setup_isolated_virtual_desktop(self):
         """Creates a dedicated Virtual Desktop and switches to it for test isolation."""
@@ -918,7 +1068,11 @@ class Session:
     def __exit__(self, exc_type, exc_val, exc_tb):
         logger.info("Tearing down Wintegrate UI automation session...")
         if exc_type is not None:
-            self.log_event("session_error", f"{exc_type.__name__}: {exc_val}")
+            self.log_event(
+                "session_error",
+                f"{exc_type.__name__}: {exc_val}",
+                signature=getattr(exc_val, "signature", exc_type.__name__),
+            )
         # The timeline is saved before the recorder's thread join and the final
         # census. Under a console's seconds-long kill deadline the last statement
         # is the one most likely to be cut off, and this is the artifact that
