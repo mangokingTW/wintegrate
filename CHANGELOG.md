@@ -6,6 +6,39 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.14] — 2026-09-05
+
+### Fixed
+
+- **The console check that 0.5.13 added does not work on a CI runner.**
+  `GetConsoleWindow()` answers a narrower question than the one that matters --
+  is there a console *window* -- and a ConPTY has none. That is exactly what a
+  hosted runner hands a step, so the check returned "no console" for a process
+  that was attached to one all along, the sweep went ahead, and it killed the
+  terminal hosting the step. The symptom was unchanged from 0.5.12: a job that
+  ended eleven seconds in, with a `KeyboardInterrupt` wherever the process
+  happened to be.
+
+  `GetConsoleProcessList()` answers the question that was meant and answers it
+  for a windowless console. The window check is kept as the first branch, so
+  this is strictly more conservative than 0.5.13.
+
+  Measured on a `windows-latest` runner, from the step itself:
+
+  ```
+  GetConsoleWindow      = 0
+  GetConsoleProcessList = 3 [python.exe, pwsh.exe, Runner.Worker.exe]
+  has_console()         = False        <- 0.5.13 answering wrongly
+  ```
+
+  The three processes sharing that console are the point: `Runner.Worker.exe`
+  is on it too, so killing the terminal took the runner's own worker with it.
+  That is why the job reported the step as cancelled eleven seconds in rather
+  than failed.
+
+  The decision is now logged as well. It was wrong once and invisible while it
+  was, which is most of why it took so long to find.
+
 ## [0.5.13] — 2026-09-05
 
 ### Fixed
