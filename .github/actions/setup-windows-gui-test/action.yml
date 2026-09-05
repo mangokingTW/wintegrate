@@ -38,65 +38,10 @@ runs:
     # A test that loses the foreground does not fail with "the foreground was
     # taken" — it fails with an empty field, a keystroke that went nowhere, or a
     # window that never came up.
-    - name: Quiet the arm64 image
+    - name: Quiet the runner
       if: runner.arch == 'ARM64'
       shell: pwsh
-      run: |
-        $p = Start-Process -FilePath wsl.exe -ArgumentList '--update', '--confirm' `
-          -NoNewWindow -PassThru
-        if (-not $p.WaitForExit(60000)) { $p.Kill(); Write-Host 'wsl --update timed out' }
-
-        # `wsl --status` writes UTF-16; through a pipe the interleaved NULs make
-        # the string match nothing, so the encoding is set for the call.
-        function Get-WslStatus {
-          $prev = [Console]::OutputEncoding
-          try {
-            [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
-            return ((& wsl.exe --status 2>&1 | Out-String) -replace "\0", '')
-          } finally { [Console]::OutputEncoding = $prev }
-        }
-        $status = Get-WslStatus
-        Write-Host "WSL status: $status"
-
-        # The part that is easy to leave out, and was: `wsl --update` alone is a
-        # no-op here and exits 0. There is nothing to update until WSL exists.
-        if ($status -match 'not installed') {
-          try {
-            $rel = Invoke-RestMethod 'https://api.github.com/repos/microsoft/WSL/releases/latest'
-            $asset = $rel.assets | Where-Object { $_.name -match 'arm64\.msi$' } | Select-Object -First 1
-            if ($asset) {
-              Write-Host "Downloading $($asset.name)..."
-              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile wsl-arm64.msi
-              Start-Process msiexec -ArgumentList '/i', 'wsl-arm64.msi', '/qn', '/norestart' -Wait
-              Write-Host "WSL status after install: $(Get-WslStatus)"
-            }
-          } catch {
-            Write-Host "WSL MSI fallback skipped: $_"
-          }
-        }
-
-        # Edge's first-run page, in both hives.
-        foreach ($hive in 'HKLM', 'HKCU') {
-          $key = "${hive}:\SOFTWARE\Policies\Microsoft\Edge"
-          New-Item -Path $key -Force -ErrorAction SilentlyContinue | Out-Null
-          Set-ItemProperty -Path $key -Name 'HideFirstRunExperience' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-          Set-ItemProperty -Path $key -Name 'PreventFirstRunPage' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-        }
-        # The OOBE privacy experience is a different dialog from Edge's.
-        $oobe = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE'
-        New-Item -Path $oobe -Force -ErrorAction SilentlyContinue | Out-Null
-        Set-ItemProperty -Path $oobe -Name 'DisablePrivacyExperience' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-
-        Get-Process -Name 'wsl','wslhost','msedge','msedgewebview2' `
-          -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-        # WindowsTerminal is hidden, not killed. On Windows 11 it is also the default
-        # console host, so Stop-Process ends every console it hosts -- this step's
-        # included, and on a hosted runner the agent reporting the job with it. What
-        # steals the foreground is its window; hiding that leaves the process alone.
-        $u32 = Add-Type -Namespace Quiet -Name User32 -PassThru -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);'
-        Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$u32::ShowWindow($_.MainWindowHandle, 0) }
-        # wsl.exe exits non-zero when WSL is absent, and this step is best-effort.
-        $global:LASTEXITCODE = 0
+      run: ${{ github.action_path }}/quiet-runner.ps1
 
     - name: Set up Python
       if: inputs.python-version != ''
