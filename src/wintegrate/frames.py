@@ -171,6 +171,8 @@ def extract_frames(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[dict[str, Any]] = []
+    tail_ms: int | None = None
+    dropped: list[FrameMark] = []
     try:
         with av.open(str(video)) as container:
             stream = container.streams.video[0]
@@ -248,6 +250,7 @@ def extract_frames(
     index = {
         "video": video.name,
         "anchor": anchor,
+        "tail_ms": tail_ms,
         "max_frames": max_frames,
         "frames": written,
         "dropped": [asdict(m) for m in dropped],

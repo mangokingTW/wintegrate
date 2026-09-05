@@ -49,8 +49,16 @@ def test_a_failed_session_extracts_frames_around_the_failure(tmp_path):
     assert pngs, "a failed session with a recording must leave frames/; journal says: " + str(
         [e for e in events if e["type"].startswith("frames_")]
     )
-    assert any("step-failed" in n for n in pngs) and any("tail" in n for n in pngs)
+    assert any("step-failed" in n for n in pngs), pngs
     index = json.loads((frames / "index.json").read_text(encoding="utf-8"))
+    # The tail is a separate frame unless the failure window already reached the
+    # end of the recording -- a 2 s recording that fails at 1.8 s has its +0 and
+    # tail marks on the same frame, and the same frame is written once (CI,
+    # arm64 3.11, run 33965119896). Either way the last frame is covered.
+    last_ms = max(f["frame_ms"] for f in index["frames"])
+    assert any(f["kind"] == "tail" for f in index["frames"]) or (
+        index["tail_ms"] is not None and last_ms >= index["tail_ms"] - 300
+    ), index
     assert [f["file"] for f in index["frames"]] == sorted(
         pngs, key=lambda n: [f["file"] for f in index["frames"]].index(n)
     )
