@@ -6,6 +6,32 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [Unreleased]
+
+### Added
+
+- **Failure signatures.** `WintegrateError` keeps the facts passed at raise time
+  and builds `signature` from the class's `SIGNATURE_KEYS` allow-list --
+  `FocusStealDetectedError[foreground_image=explorer.exe]`,
+  `WindowDiscoveryTimeoutError[process_names=notepad.exe]` -- so two failures with
+  the same count stop reading as the same problem. No hwnd, pid or timestamp may
+  be a key: one per-run integer makes every signature unique. The foreground is
+  sampled *during* the focus retry loop, not at raise time, and carried on
+  `TextMismatchError` too, the raise a mid-typing steal most often reaches.
+  `step_failed`, `session_error`, the job summary and `READ_THIS_FIRST.md` print
+  it.
+- **`ConsoleHostEndedError`.** When the console this process shares is destroyed
+  during `Session.__enter__`, what reaches the traceback is a `KeyboardInterrupt`
+  at whatever line was executing. `__enter__` now re-labels it, on evidence only:
+  the console probes that answered at preflight answer nothing now. The message
+  names the phase it was in, how long ago it entered it, the processes the sweep
+  ended and the console peers that die with it. Still a `KeyboardInterrupt`, so a
+  pytest run aborts once. A real Ctrl-C with the console intact is untouched. The
+  verdict is journaled (`console_host_ended`) before it is raised.
+- `step_failed` now carries the same window census delta as `step_ok`: the
+  windows that came and went during the failing step were computed and thrown
+  away on the only path that matters.
+
 ## [0.6.1] — 2026-09-05
 
 ### Added
