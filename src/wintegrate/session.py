@@ -30,6 +30,7 @@ from wintegrate.interop import (
     get_ancestor_pids,
     get_window_class,
     get_window_title,
+    has_console,
     user32,
 )
 from wintegrate.window import Window
@@ -72,6 +73,32 @@ class SessionConfig:
         return bool(self.isolated_virtual_desktop)
 
 
+# Store apps are single-instance: an instance leaked by an earlier test makes
+# the next launch open a tab in the old window instead of a new top-level
+# window, which breaks window discovery.
+SWEEP_PROCESS_NAMES = (
+    "wsl",
+    "wslhost",
+    "msedge",
+    "msedgewebview2",
+    "notepad",
+    "CalculatorApp",
+    "Calculator",
+)
+
+# Left alone whenever this process has a console, because it is probably the
+# one hosting it.
+TERMINAL_HOST_NAMES = ("WindowsTerminal",)
+
+
+def sweep_process_names(caller_has_console: bool) -> list[str]:
+    """What the sweep may kill, given whether the caller has a console."""
+    names = list(SWEEP_PROCESS_NAMES)
+    if not caller_has_console:
+        names.extend(TERMINAL_HOST_NAMES)
+    return names
+
+
 def sanitize_ci_runner_environment():
     """
     Cleans up known GitHub Actions CI runner hazards:
@@ -95,7 +122,19 @@ def sanitize_ci_runner_environment():
         # Notepad/Calculator are swept because Store apps are single-instance: an
         # instance leaked by an earlier test makes the next launch open a tab in the
         # old window instead of a new top-level window, breaking window discovery.
-        ps_cmd = f"Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2','notepad','CalculatorApp','Calculator' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
+        #
+        # Terminal hosts are swept only when this process has no console of its
+        # own. A console-subsystem process does not own its console -- a terminal
+        # hosts it -- and on Windows 11 that host is Windows Terminal, which is
+        # on this list by name. Killing it destroys the console and every process
+        # attached to it, this one included, and excluding it by pid is not
+        # possible: it is not an ancestor, and it is not the owner of
+        # GetConsoleWindow() either, which belongs to a brokered OpenConsole.exe
+        # whose parent chain runs to services.exe. Measured on Windows 11 -- with
+        # WindowsTerminal excluded the caller survived the whole sweep; killing
+        # it alone ended the caller before its next heartbeat, a second later.
+        name_list = ",".join(f"'{name}'" for name in sweep_process_names(has_console()))
+        ps_cmd = f"Get-Process -Name {name_list} -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
         )
