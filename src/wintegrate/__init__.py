@@ -19,6 +19,7 @@ from wintegrate.apps import (
     launch_packaged_app,
     sweep_processes_verified,
 )
+from wintegrate.artifacts import expect_artifact
 from wintegrate.caption_overlay import draw_caption
 from wintegrate.controls import (
     CheckBox,
@@ -57,6 +58,7 @@ from wintegrate.env import (
 )
 from wintegrate.exceptions import (
     ActionVerificationError,
+    ArtifactMissingError,
     DiagnosticPipelineError,
     ElementNotFoundError,
     FocusStealDetectedError,
@@ -65,6 +67,7 @@ from wintegrate.exceptions import (
     WindowDiscoveryTimeoutError,
     WintegrateError,
 )
+from wintegrate.frames import FrameMark, extract_frames, plan_marks, video_ms_for
 from wintegrate.interop import (
     KEY_NAMES,
     CloakReason,
@@ -129,6 +132,12 @@ from wintegrate.touch import Contact, Touch
 from wintegrate.window import Window
 
 __all__ = [
+    "ArtifactMissingError",
+    "FrameMark",
+    "expect_artifact",
+    "extract_frames",
+    "plan_marks",
+    "video_ms_for",
     "__version__",
     "ActionPlayer",
     "ActionVerificationError",
