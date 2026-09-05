@@ -203,26 +203,35 @@ def _clear_runner_desktop() -> list[dict]:
 
 
 def _hide_start_menu_when_it_arrives(foreground, seconds: float) -> list[dict]:
-    """Polls the foreground for a Start/Search CoreWindow and hides it; records what happened."""
+    """Waits for the Start menu the dismissal leaves open and closes it the way a person would: Esc.
+
+    `ShowWindow(SW_HIDE)` on the "Search" CoreWindow does not take -- run
+    33960259368 recorded eight hides with the foreground unchanged each time --
+    so this presses Escape while it holds the foreground and re-measures. What a
+    person does in the first second, done by the process, and recorded.
+    """
     import time
 
-    from wintegrate.interop import SW_HIDE, user32
+    from wintegrate.interop import send_vk_input
 
+    VK_ESCAPE = 0x1B
     actions: list[dict] = []
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+    presses = 0
+    while time.monotonic() < deadline and presses < 3:
         fg = foreground()
         if fg.get("class") == "Windows.UI.Core.CoreWindow" and fg.get("title") in (
             "Search",
             "Start",
         ):
             try:
-                user32.ShowWindow(fg["hwnd"], SW_HIDE)
-                time.sleep(0.5)
+                send_vk_input(VK_ESCAPE)
+                presses += 1
+                time.sleep(0.7)
                 after = foreground()
                 actions.append(
                     {
-                        "action": "hide",
+                        "action": "escape",
                         "hwnd": fg["hwnd"],
                         "class": fg["class"],
                         "title": fg["title"],
@@ -291,7 +300,7 @@ def desktop_prepared(full_suite_recording):
     # in run 33959944188 every arm64 job's desktop_prep.json ended with the
     # foreground on the "Search" CoreWindow, and test_foreground_gives_the_window_back
     # failed in all four with that very hwnd as the foreground it could not take
-    # back. So: wait for it, and hide it the way the Session sweep does.
+    # back. So: wait for it, and close it the way a person does -- Esc.
     record["actions"] += _hide_start_menu_when_it_arrives(foreground, seconds=6.0)
     record["seconds"] = round(time.time() - record["started"], 2)
     record["foreground_after"] = foreground()
