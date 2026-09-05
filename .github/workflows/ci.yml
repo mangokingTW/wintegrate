@@ -49,6 +49,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # Same preparation as the arm64 job. The x64 image has fewer of the
+      # dialogs, not none, and a job without the step leaves no line saying
+      # what the desktop looked like.
+      - name: Quiet the runner
+        shell: pwsh
+        run: .github/actions/setup-windows-gui-test/quiet-runner.ps1
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:

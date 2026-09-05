@@ -130,3 +130,52 @@ def full_suite_recording():
             logger.info(f"Full-suite recording finished: {frames} frames -> {output}")
         except Exception as exc:
             logger.warning(f"Full-suite recording failed to stop ({type(exc).__name__}): {exc}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def desktop_prepared(full_suite_recording):
+    """Clears the OOBE privacy screen before the first test, not inside the first Session.
+
+    `try_dismiss_oobe_privacy_screen` has lived in `Session.__enter__` since the
+    first version, so on a hosted arm64 runner the privacy page stayed up until
+    the first test that opened a Session -- about 70 s and forty tests in,
+    measured from the suite recording of run 33956153832. Tests that never open
+    a Session ran under it the whole time. Depends on `full_suite_recording` so
+    it happens after the camera starts, and writes what it saw and did to
+    `recording-artifacts/desktop_prep.json`, because a session fixture's stdout
+    is only shown when the first test fails.
+    """
+    if not env.is_windows:
+        yield
+        return
+    import json
+    import time
+
+    from wintegrate.interop import get_foreground_window, get_window_class, get_window_title
+    from wintegrate.session import try_dismiss_oobe_privacy_screen
+
+    def foreground() -> dict:
+        try:
+            hwnd = get_foreground_window()
+            return {"hwnd": hwnd, "class": get_window_class(hwnd), "title": get_window_title(hwnd)}
+        except Exception as exc:  # a diagnostic never blocks the suite
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    record = {"foreground_before": foreground(), "started": time.time()}
+    try:
+        record["oobe_dismissed"] = bool(try_dismiss_oobe_privacy_screen(timeout=15.0))
+    except Exception as exc:
+        record["oobe_dismissed"] = False
+        record["error"] = f"{type(exc).__name__}: {exc}"
+    record["seconds"] = round(time.time() - record["started"], 2)
+    record["foreground_after"] = foreground()
+    try:
+        out = Path("recording-artifacts")
+        out.mkdir(exist_ok=True)
+        (out / "desktop_prep.json").write_text(
+            json.dumps(record, indent=2, default=str), encoding="utf-8"
+        )
+    except Exception as exc:
+        logger.warning(f"desktop_prep.json not written ({type(exc).__name__}): {exc}")
+    logger.info(f"desktop prepared: {record}")
+    yield
