@@ -538,6 +538,7 @@ class Session:
         self.preflight: dict[str, Any] = {}
         self._phase: str | None = None
         self._phase_since: float | None = None
+        self._recording_anchor: dict[str, Any] | None = None
         self.kill_plan: KillPlan | None = None
         self.initial_census: list[WindowSnapshot] = []
         self.final_census: list[WindowSnapshot] = []
@@ -768,6 +769,8 @@ class Session:
             for p in sorted(self.artifact_dir.iterdir()):
                 if p.is_file() and p.name not in ("READ_THIS_FIRST.md", "artifact_index.json"):
                     files[p.name] = p.stat().st_size
+                elif p.is_dir() and p.name == "frames":
+                    files["frames/"] = sum(f.stat().st_size for f in p.iterdir() if f.is_file())
             recent = [
                 {
                     "wall": e.get("wall"),
@@ -855,6 +858,15 @@ class Session:
                 lines.append(
                     "- `preflight.json` is what this process was before it touched anything: console"
                     " clients, protected pids, foreground. Its `warnings` are the sentences to read first."
+                )
+            frames_dir = self.artifact_dir / "frames"
+            if frames_dir.is_dir():
+                count = len(list(frames_dir.glob("*.png")))
+                lines.append(
+                    f"- `frames/` holds {count} frame(s) of the recording at the moments the timeline"
+                    " names -- the window around the last `step_failed` first, then the tail. Each file"
+                    " is named by video time and event; `frames/index.json` maps files to events and"
+                    " lists the marks that did not fit the budget."
                 )
             if "kill_plan.json" in files:
                 lines.append(
@@ -1068,6 +1080,9 @@ class Session:
             if self.recorder.start():
                 self.log_event("video_recording_started", f"Streaming to {video_path}")
                 anchor = self.recorder.anchor()
+                # Kept: the recorder answers None once stopped, and the frames
+                # are pulled after it has stopped.
+                self._recording_anchor = anchor
                 if anchor:
                     try:
                         (self.artifact_dir / "recording_anchor.json").write_text(
@@ -1253,6 +1268,7 @@ class Session:
                 f"Test failed with {exc_type.__name__}: {exc_val}. Capturing failure artifact."
             )
             self._capture_failure_screenshot()
+            self._extract_failure_frames()
 
         # Teardown isolated virtual desktop if configured
         if self.config.should_isolate_virtual_desktop:
@@ -1323,6 +1339,48 @@ class Session:
         )
         logger.info(f"Saved screenshot to {path}")
         return path
+
+    def _extract_failure_frames(self, max_frames: int = 8) -> None:
+        """Pulls the recording's frames around the failure into `frames/`.
+
+        After the recorder has stopped, so the file is complete. A diagnostic:
+        it never raises, and it says in the timeline whether it ran and how many
+        frames it kept and dropped.
+        """
+        video = self.artifact_dir / "session_recording.mp4"
+        if not video.is_file():
+            return
+        anchor = self._recording_anchor
+        if anchor is None:
+            try:
+                anchor = json.loads(
+                    (self.artifact_dir / "recording_anchor.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                anchor = None
+        if anchor is None:
+            self.log_event(
+                "frames_skipped", "no recording anchor: the frames cannot be placed in time"
+            )
+            return
+        try:
+            from wintegrate.frames import extract_frames
+
+            index = extract_frames(
+                video,
+                anchor,
+                list(self.logs),
+                self.artifact_dir / "frames",
+                max_frames=max_frames,
+            )
+            self.log_event(
+                "frames_extracted",
+                f"{len(index['frames'])} frame(s) into frames/, {len(index['dropped'])} mark(s) dropped",
+                frames=[f["file"] for f in index["frames"]],
+                dropped=len(index["dropped"]),
+            )
+        except Exception as exc:
+            self.log_event("frames_skipped", f"{type(exc).__name__}: {exc}")
 
     def _capture_failure_screenshot(self):
         try:

@@ -92,6 +92,14 @@ class FocusStealDetectedError(ActionVerificationError):
     SIGNATURE_KEYS = ("foreground_image", "foreground_class", "foreground_is_target_process")
 
 
+class ArtifactMissingError(WintegrateError):
+    """Raised when a file another process should have written did not arrive in time.
+
+    Carries the directory listing at the deadline, so the negative says what it
+    examined.
+    """
+
+
 class DiagnosticPipelineError(WintegrateError):
     """Raised when a diagnostic subsystem (e.g. streaming recorder) fails."""
 

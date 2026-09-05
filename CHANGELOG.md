@@ -48,6 +48,19 @@ do about it — that callout is the guarantee, not the version number.
   directory and a discovery timeout quotes it -- a child that printed an error and
   exited is the usual reason no window appeared. Outside a session, DEVNULL. stdin is
   DEVNULL either way. `READ_THIS_FIRST.md` explains both when the files are present.
+- **`frames/` at the failure.** A failed session now pulls the recording's frames
+  at the moments the timeline names into `frames/`, each named by video time and
+  event (`t041830ms_step-failed_submit.png`), with `frames/index.json` mapping
+  files to events. The budget is small (8) and the priority explicit: the window
+  around the last `step_failed` first, the tail of the recording second, the rest
+  after -- and marks that do not fit are dropped whole and listed as dropped,
+  because a silently truncated set reads as the whole story. `READ_THIS_FIRST.md`
+  says the directory is there. `extract_frames`, `plan_marks` and `video_ms_for`
+  are public, for pulling frames from any recording with its anchor.
+- **`expect_artifact(path, timeout)`**, replacing a `sleep` after launching
+  something that writes a file: waits for the file to exist, be non-empty and
+  stop growing, and on the deadline raises `ArtifactMissingError` naming what the
+  directory actually held -- the `.tmp` that was left behind, or nothing.
 
 ## [0.6.1] — 2026-09-05
 
