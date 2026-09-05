@@ -25,6 +25,28 @@ class PlannedKill:
     reason: str  # why it is spared, or "matches sweep list" for a kill
 
 
+@dataclass(frozen=True)
+class InterventionResult:
+    """One thing the sweep did to one window, with what it meant and what it saw after.
+
+    `intended` is the state asked for (e.g. {"visible": False}); `observed` is
+    what a re-measurement found a moment later (e.g. {"visible": False,
+    "exists": True}); `verified` is whether they agree. A hide that did not
+    take is a different fact from one that did -- the Start menu's CoreWindow
+    ignores SW_HIDE, measured -- and only a re-measurement tells them apart.
+    """
+
+    action: str  # "hide" | "restore"
+    hwnd: int
+    class_name: str
+    title: str
+    process: str
+    reason: str
+    intended: dict
+    observed: dict
+    verified: bool
+
+
 @dataclass
 class KillPlan:
     attached_to_console: bool
@@ -33,6 +55,9 @@ class KillPlan:
     dry_run: bool
     protection_degraded: str | None = None
     results: dict[int, str] = field(default_factory=dict)
+    interventions: list[InterventionResult] = field(default_factory=list)
+    foreground_before_hide: dict | None = None
+    foreground_after_hide: dict | None = None
 
     @property
     def kills(self) -> list[PlannedKill]:
@@ -46,6 +71,15 @@ class KillPlan:
         d = asdict(self)
         d["summary"] = self.summary()
         return d
+
+    def interventions_summary(self) -> str:
+        if not self.interventions:
+            return "hid nothing"
+        parts = []
+        for i in self.interventions:
+            state = "ok" if i.verified else "NOT verified"
+            parts.append(f"{i.action} {i.class_name}({i.hwnd:#x}) [{state}]")
+        return "; ".join(parts)
 
     def summary(self) -> str:
         k = ", ".join(f"{e.name}({e.pid})" for e in self.kills) or "nothing"
@@ -105,6 +139,45 @@ def write_plan(plan: KillPlan, path: str | Path) -> None:
         json.dump(plan.to_dict(), fh, indent=2)
         fh.flush()
         os.fsync(fh.fileno())
+
+
+def hide_reason(class_name: str, title: str) -> str | None:
+    """Why a visible window would be hidden by the sweep, or None to leave it alone.
+
+    Pure, so the rule is testable without a desktop. The rule is the one the
+    sweep has always applied: WSL prompts, Edge's first-run pages, and the
+    shell's search popup -- windows that take the foreground on a hosted
+    runner and belong to nobody's test.
+    """
+    t = (title or "").lower()
+    if "wsl" in t:
+        return "WSL prompt"
+    if "edge" in t and ("welcome" in t or "first run" in t):
+        return "Edge first-run page"
+    if "search" in t and class_name == "Windows.UI.Core.CoreWindow":
+        return "shell search popup"
+    return None
+
+
+def restore_targets(
+    interventions: Iterable[InterventionResult],
+    window_exists: Callable[[int], bool],
+    window_visible: Callable[[int], bool],
+) -> list[InterventionResult]:
+    """Which hides to undo: verified hides whose window still exists and is still hidden.
+
+    Pure. Not a window the session never hid; not one that is already back
+    (something else showed it); not one that is gone. Restoring more than
+    that would put windows on screen that nobody took away.
+    """
+    out = []
+    for i in interventions:
+        if i.action != "hide" or not i.verified:
+            continue
+        if not window_exists(i.hwnd) or window_visible(i.hwnd):
+            continue
+        out.append(i)
+    return out
 
 
 def dry_run_requested(explicit: bool | None) -> bool:

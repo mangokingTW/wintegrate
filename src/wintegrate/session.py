@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,12 +24,14 @@ from wintegrate.diagnostics import (
     WindowSnapshot,
     capture_screen_image,
     capture_window_image,
+    set_launch_output_dir,
 )
 from wintegrate.element import UiaElement
 from wintegrate.env import env, is_ci
 from wintegrate.exceptions import ConsoleHostEndedError
 from wintegrate.interop import (
     SW_HIDE,
+    SW_SHOWNA,
     WNDENUMPROC,
     attach_to_input_desktop,
     console_client_pids,
@@ -46,10 +48,13 @@ from wintegrate.interop import (
     user32,
 )
 from wintegrate.sweep import (
+    InterventionResult,
     KillPlan,
     build_kill_plan,
     dry_run_requested,
     execute_kill_plan,
+    hide_reason,
+    restore_targets,
     write_plan,
 )
 from wintegrate.window import Window
@@ -302,26 +307,126 @@ def sanitize_ci_runner_environment(
         except Exception:
             pass
 
-    # 2. Hide noisy background popups
+    # 2. Hide noisy background popups -- recorded, verified, and undone by the
+    # session that did it. Three ShowWindow calls used to run here recording
+    # nothing: no list of what was hidden, no check that the hide took (the
+    # Start menu's CoreWindow ignores SW_HIDE, measured), and nothing to give
+    # the windows back at the end.
     try:
-
-        def enum_proc(hwnd, _):
-            if user32.IsWindowVisible(hwnd):
-                title = get_window_title(hwnd).lower()
-                cls = get_window_class(hwnd)
-                # Match WSL, Edge welcome screens, search popups
-                if "wsl" in title:
-                    user32.ShowWindow(hwnd, SW_HIDE)
-                elif "edge" in title and ("welcome" in title or "first run" in title):
-                    user32.ShowWindow(hwnd, SW_HIDE)
-                elif "search" in title and cls == "Windows.UI.Core.CoreWindow":
-                    user32.ShowWindow(hwnd, SW_HIDE)
-            return True
-
-        user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
+        plan.foreground_before_hide = _describe_foreground(table)
+        plan.interventions = hide_noisy_windows(table)
+        plan.foreground_after_hide = _describe_foreground(table)
+        if journal is not None:
+            journal(
+                "hide_result",
+                plan.interventions_summary(),
+                interventions=[asdict(i) for i in plan.interventions],
+                foreground_before=plan.foreground_before_hide,
+                foreground_after=plan.foreground_after_hide,
+            )
+        if report_path is not None and not dry:
+            try:
+                write_plan(plan, report_path)  # now with the interventions
+            except Exception:
+                pass
     except Exception as exc:
-        logger.debug(f"Window minimization skipped ({type(exc).__name__}): {exc}")
+        logger.debug(f"Window hiding skipped ({type(exc).__name__}): {exc}")
     return plan
+
+
+def _describe_foreground(table: dict[int, tuple[int, str]] | None = None) -> dict[str, Any]:
+    hwnd = get_foreground_window()
+    pid = get_window_pid(hwnd) if hwnd else 0
+    name = (table or {}).get(pid, (0, "?"))[1] if pid else ""
+    return {
+        "hwnd": hwnd,
+        "class": get_window_class(hwnd) if hwnd else "",
+        "title": (get_window_title(hwnd) if hwnd else "")[:80],
+        "pid": pid,
+        "process": name,
+    }
+
+
+def hide_noisy_windows(
+    table: dict[int, tuple[int, str]] | None = None, settle_seconds: float = 0.3
+) -> list[InterventionResult]:
+    """Hides the windows `hide_reason` names, and says for each whether the hide took.
+
+    Intended state and observed state are both recorded: `ShowWindow(SW_HIDE)`
+    returns the *previous* visibility, not success, so the only way to know a
+    window is hidden is to ask again after a moment.
+    """
+    candidates: list[tuple[int, str, str, str]] = []
+
+    def enum_proc(hwnd, _):
+        try:
+            if user32.IsWindowVisible(hwnd):
+                cls = get_window_class(hwnd)
+                title = get_window_title(hwnd)
+                reason = hide_reason(cls, title)
+                if reason:
+                    candidates.append((hwnd, cls, title, reason))
+        except Exception:
+            pass
+        return True
+
+    user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
+    for hwnd, _cls, _title, _reason in candidates:
+        user32.ShowWindow(hwnd, SW_HIDE)
+    if candidates:
+        time.sleep(settle_seconds)
+    results = []
+    for hwnd, cls, title, reason in candidates:
+        pid = get_window_pid(hwnd)
+        exists = bool(user32.IsWindow(hwnd))
+        visible = bool(user32.IsWindowVisible(hwnd)) if exists else False
+        results.append(
+            InterventionResult(
+                action="hide",
+                hwnd=hwnd,
+                class_name=cls,
+                title=title[:80],
+                process=(table or {}).get(pid, (0, "?"))[1],
+                reason=reason,
+                intended={"visible": False},
+                observed={"exists": exists, "visible": visible},
+                verified=exists and not visible,
+            )
+        )
+    return results
+
+
+def restore_hidden_windows(
+    interventions: list[InterventionResult], settle_seconds: float = 0.3
+) -> list[InterventionResult]:
+    """Shows again what `hide_noisy_windows` hid and still holds hidden; records each."""
+    targets = restore_targets(
+        interventions,
+        window_exists=lambda h: bool(user32.IsWindow(h)),
+        window_visible=lambda h: bool(user32.IsWindowVisible(h)),
+    )
+    for i in targets:
+        user32.ShowWindow(i.hwnd, SW_SHOWNA)
+    if targets:
+        time.sleep(settle_seconds)
+    results = []
+    for i in targets:
+        exists = bool(user32.IsWindow(i.hwnd))
+        visible = bool(user32.IsWindowVisible(i.hwnd)) if exists else False
+        results.append(
+            InterventionResult(
+                action="restore",
+                hwnd=i.hwnd,
+                class_name=i.class_name,
+                title=i.title,
+                process=i.process,
+                reason=f"hidden by this session ({i.reason})",
+                intended={"visible": True},
+                observed={"exists": exists, "visible": visible},
+                verified=exists and visible,
+            )
+        )
+    return results
 
 
 def try_dismiss_oobe_privacy_screen(timeout: float = 15.0) -> bool:
@@ -757,6 +862,21 @@ class Session:
                     " ends at `kill_plan` with no `kill_result`, the sweep ended this process: read the"
                     " plan's `kills` against `preflight.json`'s console clients."
                 )
+                if self.kill_plan is not None and self.kill_plan.interventions:
+                    lines.append(
+                        "  Its `interventions` list every window the sweep hid (and, at exit, showed"
+                        " again), each with the state intended and the state re-measured a moment"
+                        " later; `verified: false` means the window ignored the request."
+                    )
+            launched = sorted(
+                f for f in files if f.startswith("launched_") and f.endswith((".out", ".err"))
+            )
+            if launched:
+                lines.append(
+                    "- `launched_NN.out` / `.err` hold what each process started through"
+                    " `launch_and_discover` printed; a child that wrote an error and exited is the"
+                    " usual reason no window appeared."
+                )
             lines += [
                 "",
                 "## What a screenshot cannot show",
@@ -891,6 +1011,10 @@ class Session:
         # The journal opens before anything else happens, so that if the next call
         # ends this process the directory is not empty.
         self._open_journal()
+        # Children launched through Window.launch_and_discover write their
+        # stdout/stderr here rather than inheriting this process's -- see
+        # diagnostics.set_launch_output_dir.
+        set_launch_output_dir(self.artifact_dir)
         # Preflight before anything is touched: what this process is, what shares
         # its console, what is in the foreground. On disk first, so a run that
         # dies in the next hundred lines still says what it was.
@@ -1084,6 +1208,30 @@ class Session:
         if self.recorder:
             frames = self.recorder.stop()
             self.log_event("video_recording_stopped", "Recorder finalized", frames=frames)
+
+        # Give back what the sweep hid, before the census records the desktop
+        # as this session leaves it. Only what this session hid, only if still
+        # hidden, only if still there -- and re-measured, like the hide was.
+        if self.kill_plan is not None and self.kill_plan.interventions:
+            try:
+                restored = restore_hidden_windows(self.kill_plan.interventions)
+                self.kill_plan.interventions.extend(restored)
+                self.log_event(
+                    "restore_result",
+                    "; ".join(
+                        f"{r.class_name}({r.hwnd:#x}) [{'ok' if r.verified else 'NOT verified'}]"
+                        for r in restored
+                    )
+                    or "nothing to restore",
+                    interventions=[asdict(r) for r in restored],
+                )
+                try:
+                    write_plan(self.kill_plan, self.artifact_dir / "kill_plan.json")
+                except Exception:
+                    pass
+            except Exception as exc:
+                logger.debug(f"restore skipped ({type(exc).__name__}): {exc}")
+        set_launch_output_dir(None)
 
         # Capture final census and compute diff
         self.final_census = WindowCensus.capture()

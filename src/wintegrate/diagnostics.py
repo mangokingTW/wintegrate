@@ -37,6 +37,33 @@ from wintegrate.interop import (
 
 logger = logging.getLogger(__name__)
 
+# Where `Window.launch_and_discover` sends a child's stdout/stderr while a
+# Session is open. Set by the Session; None means no session, and the child's
+# output goes to DEVNULL. A child must never inherit this process's stdio: an
+# orphan holding the step's pipes is what keeps a CI step `in_progress` after
+# the process that started it has died.
+_launch_output_dir: Path | None = None
+_launch_output_lock = threading.Lock()
+_launch_seq = 0
+
+
+def set_launch_output_dir(path: Path | None) -> None:
+    global _launch_output_dir
+    with _launch_output_lock:
+        _launch_output_dir = path
+
+
+def launch_output_paths() -> tuple[Path, Path] | None:
+    """A fresh (stdout, stderr) file pair in the session's artifact dir, or None without a session."""
+    global _launch_seq
+    with _launch_output_lock:
+        if _launch_output_dir is None:
+            return None
+        _launch_seq += 1
+        base = _launch_output_dir / f"launched_{_launch_seq:02d}"
+    return base.with_suffix(".out"), base.with_suffix(".err")
+
+
 _PILLOW_HINT = (
     "Screen capture needs Pillow, which ships in the optional 'video' extra: "
     "pip install 'wintegrate[video]'"

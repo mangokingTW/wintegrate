@@ -31,6 +31,23 @@ do about it — that callout is the guarantee, not the version number.
 - `step_failed` now carries the same window census delta as `step_ok`: the
   windows that came and went during the failing step were computed and thrown
   away on the only path that matters.
+- **The sweep's hides are recorded, verified and undone.** `sanitize_ci_runner_environment()`
+  used to run three `ShowWindow(SW_HIDE)` calls that recorded nothing, verified nothing
+  and restored nothing -- on a library whose charter names focus stealing as the
+  enemy. Each window hidden is now an `InterventionResult` (what was intended, what
+  a re-measurement found 0.3 s later, whether they agree) on `KillPlan.interventions`,
+  journalled as `hide_result` and written into `kill_plan.json`; the foreground is
+  measured before and after the pass. `Session.__exit__` shows again what *this*
+  session hid and that is still hidden and still exists -- nothing else -- and
+  records that too (`restore_result`). The rule (`hide_reason`) and the restore
+  selection (`restore_targets`) are pure functions with offline tests.
+- **Launched children no longer inherit this process's stdio.** `Window.launch_and_discover`
+  gave every child the step's stdout/stderr handles; an orphan holding those pipes is
+  what kept a CI step `in_progress` after the process that started it had died. Inside
+  a `Session` a child's output goes to `launched_NN.out` / `.err` in the artifact
+  directory and a discovery timeout quotes it -- a child that printed an error and
+  exited is the usual reason no window appeared. Outside a session, DEVNULL. stdin is
+  DEVNULL either way. `READ_THIS_FIRST.md` explains both when the files are present.
 
 ## [0.6.1] — 2026-09-05
 
