@@ -145,6 +145,32 @@ $oobe = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE'
 New-Item -Path $oobe -Force -ErrorAction SilentlyContinue | Out-Null
 Set-ItemProperty -Path $oobe -Name 'DisablePrivacyExperience' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
 
+# The Store applies a downloaded app update the moment the app closes. On the
+# arm64 image Notepad is the Store package and ships behind the current version,
+# so the first test that closes Notepad is when the package gets swapped, and a
+# launch during the swap produces no window at all -- measured 2026-09-05 on
+# windows-11-arm as a 30 s discovery timeout right after a test that had shown
+# Notepad's "a new version is available" banner. The x64 image carries the
+# classic notepad.exe, which the Store never touches. AutoDownload=2 is the
+# policy "turn off automatic download and install of updates".
+$store = 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore'
+New-Item -Path $store -Force -ErrorAction SilentlyContinue | Out-Null
+Set-ItemProperty -Path $store -Name 'AutoDownload' -Value 2 -Type DWord -Force -ErrorAction SilentlyContinue
+Write-Host "WindowsStore AutoDownload: $((Get-ItemProperty -Path $store -Name AutoDownload -ErrorAction SilentlyContinue).AutoDownload)"
+
+# Measured, so a later failure can be attributed: the version now, and whether a
+# second version is already staged. A policy set after the download has started
+# may or may not stop the swap; this line is how that gets found out.
+foreach ($name in 'Microsoft.WindowsNotepad', 'Microsoft.WindowsCalculator') {
+    $pkgs = @(Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue)
+    if ($pkgs.Count -eq 0) { Write-Host "${name}: not a packaged app on this image"; continue }
+    $desc = ($pkgs | ForEach-Object { "$($_.Version) [$($_.Status)]" }) -join ', '
+    Write-Host "${name}: $desc"
+    if ($pkgs.Count -gt 1) {
+        Write-Host "::warning::${name} has $($pkgs.Count) package versions present; a Store update is staged and applies when the app closes. A launch during that swap shows no window."
+    }
+}
+
 # Background popups that steal the foreground. None of these hosts a console.
 Get-Process -Name 'wsl', 'wslhost', 'msedge', 'msedgewebview2' -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue

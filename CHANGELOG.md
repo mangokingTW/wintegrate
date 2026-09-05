@@ -6,6 +6,21 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [Unreleased]
+
+### Changed
+
+- **A discovery timeout names a packaged (Store) app.** When the command that
+  produced no window is an app execution alias, or an ordinary executable with an
+  installed package of the same name (Windows 11's `System32\notepad.exe` hands
+  off to `Microsoft.WindowsNotepad`; measured), the error says so, lists the
+  installed package versions, and says what more than one version means: the Store applies a pending update the moment the app
+  closes, and a launch during that swap shows no window. Measured on
+  windows-11-arm, whose Notepad is the Store package: the test after the first
+  one to close Notepad timed out with nothing on the desktop. The composite
+  action's quiet step now sets the Store policy `AutoDownload=2` on hosted runners
+  and prints the Notepad and Calculator package versions at job start.
+
 ## [0.5.15] — 2026-09-05
 
 ### Added
