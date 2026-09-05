@@ -6,7 +6,35 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
-## [Unreleased]
+## [0.6.0] — 2026-09-05
+
+### Added
+
+- **`session_events.jsonl`, opened before anything else in `Session.__enter__`.** One
+  JSON line per event, flushed as written, with the wall clock, a monotonic offset,
+  the pid and the current step on every line, and a heartbeat every quiet second.
+  It exists because a library call inside `__enter__` once ended the process that
+  made it: `session_events.json` is written from `__exit__`, `__exit__` never ran,
+  and the artifact directory was empty -- three CI rounds produced no evidence at
+  all. The heartbeat is the difference between *dead* and *hung*, which a CI page
+  showing `in_progress` for twelve minutes cannot tell you. Degrades to memory if
+  the file cannot open; a diagnostic is never why a session cannot start.
+- **`READ_THIS_FIRST.md` and `artifact_index.json`**, written at open and at every
+  step boundary, generated from the files actually present: which file to trust,
+  what an absent `session_events.json` means (the process never reached teardown),
+  what a screenshot cannot show (a window excluded from capture by design -- read
+  the census), and the last events. Also an on-disk record of how far the run got.
+- **`recording_anchor.json`** and `ContinuousRecorder.anchor()`: how an event's
+  `monotonic` maps onto video time, and the fact -- written nowhere before -- that
+  the video covers the primary monitor while screenshots cover the virtual desktop.
+- **`Window.__repr__` says when the handle is dead.** `class='' title=''` read like
+  a window with no name; it now reads `(destroyed: handle no longer valid)`, which is
+  the answer to a different question -- and the one a failing assertion needs.
+- **The full-suite CI recording writes `full-suite-<arch>.anchor.json`** so a job-log
+  timestamp can be mapped onto the video without arithmetic on the step's end time.
+- **A job summary** on GitHub Actions (`$GITHUB_STEP_SUMMARY`): steps, outcomes,
+  durations, failures and the artifact list, readable on the run page without
+  downloading anything.
 
 ### Changed
 
@@ -20,6 +48,18 @@ do about it — that callout is the guarantee, not the version number.
   one to close Notepad timed out with nothing on the desktop. The composite
   action's quiet step now sets the Store policy `AutoDownload=2` on hosted runners
   and prints the Notepad and Calculator package versions at job start.
+- **The recorder starts before the runner is touched.** Killing, hiding and
+  desktop-switching -- the actions a recording exists to show -- ran off camera,
+  with the mp4 not yet created at the moment anything went wrong.
+- **The mp4 is fragmented** (`frag_keyframe+empty_moov`) with a one-second GOP, so a
+  recording whose process never closed it is still playable and loses at most a
+  second instead of the whole file.
+- **`__exit__` flushes the timeline first**, before the recorder's thread join and
+  the final census: under a kill deadline the last statement is the one cut off.
+- **`Window.find` says what it saw when it says it found nothing.** The negative
+  now carries the visible windows at the moment it gave up, as
+  `launch_and_discover` already did. A diagnostic decoration never raises; if a
+  dialog's contents cannot be read, it says so instead.
 
 ## [0.5.15] — 2026-09-05
 
