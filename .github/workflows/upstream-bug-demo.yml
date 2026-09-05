@@ -134,54 +134,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install WSL on ARM Runner (Stop 30s probe popups)
+      - name: Quiet the runner
         if: matrix.arch == 'arm64'
         shell: pwsh
-        run: |
-          # 1. Update WSL stub so the provision daemon stops spawning terminal popups every 30s
-          $p = Start-Process -FilePath wsl.exe -ArgumentList '--update', '--confirm' -NoNewWindow -PassThru
-          if (-not $p.WaitForExit(60000)) { $p.Kill(); Write-Host 'wsl --update timed out' }
-
-          # 2. Fallback to arm64 MSI if needed
-          function Get-WslStatus {
-            $prev = [Console]::OutputEncoding
-            try {
-              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
-              return ((& wsl.exe --status 2>&1 | Out-String) -replace "\0", '')
-            } finally { [Console]::OutputEncoding = $prev }
-          }
-          $status = Get-WslStatus
-          Write-Host "WSL status: $status"
-          if ($status -match 'not installed') {
-            try {
-              $rel = Invoke-RestMethod 'https://api.github.com/repos/microsoft/WSL/releases/latest'
-              $asset = $rel.assets | Where-Object { $_.name -match 'arm64\.msi$' } | Select-Object -First 1
-              if ($asset) {
-                Write-Host "Downloading $($asset.name)..."
-                Invoke-WebRequest -Uri $asset.browser_download_url -OutFile wsl-arm64.msi
-                Start-Process msiexec -ArgumentList '/i', 'wsl-arm64.msi', '/qn', '/norestart' -Wait
-              }
-            } catch {
-              Write-Host "WSL MSI fallback skipped: $_"
-            }
-          }
-
-          # 3. Disable Microsoft Edge First Run Experience via Registry
-          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "PreventFirstRunPage" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-          New-Item -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Force -ErrorAction SilentlyContinue
-          Set-ItemProperty -Path "HKCU:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
-
-          # 4. Sweep existing background popups
-          Get-Process -Name "wsl","wslhost","msedge","msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          # WindowsTerminal is hidden, not killed. On Windows 11 it is also the default
-          # console host, so Stop-Process ends every console it hosts -- this step's
-          # included, and on a hosted runner the agent reporting the job with it. What
-          # steals the foreground is its window; hiding that leaves the process alone.
-          $u32 = Add-Type -Namespace Quiet -Name User32 -PassThru -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);'
-          Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$u32::ShowWindow($_.MainWindowHandle, 0) }
-          $global:LASTEXITCODE = 0
+        run: .github/actions/setup-windows-gui-test/quiet-runner.ps1
 
       # Python 3.12+ ships pre-installed in the windows-11-arm image's tool cache,
       # but 3.11 does not: setup-python downloads and installs it on every run
