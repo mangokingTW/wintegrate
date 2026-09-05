@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,11 +31,25 @@ from wintegrate.interop import (
     SW_HIDE,
     WNDENUMPROC,
     attach_to_input_desktop,
+    console_client_pids,
     get_ancestor_pids,
+    get_foreground_window,
+    get_process_table,
     get_window_class,
+    get_window_pid,
     get_window_title,
     has_console,
+    kernel32,
+    protected_pids,
+    terminate_pid,
     user32,
+)
+from wintegrate.sweep import (
+    KillPlan,
+    build_kill_plan,
+    dry_run_requested,
+    execute_kill_plan,
+    write_plan,
 )
 from wintegrate.window import Window
 
@@ -102,56 +117,149 @@ def sweep_process_names(caller_has_console: bool) -> list[str]:
     return names
 
 
-def sanitize_ci_runner_environment():
+def collect_preflight() -> dict[str, Any]:
+    """What this process is, before it touches anything: written first, so a run that dies has it.
+
+    Every probe is wrapped on its own; a probe that fails lands in `probe_errors`
+    and never blocks the session. `warnings` holds the sentences worth reading
+    first -- above all which processes share this console, because ending that
+    console ends them: measured on a hosted runner, `python.exe`, `pwsh.exe` and
+    `Runner.Worker.exe`, the last of which is the agent reporting the job.
     """
-    Cleans up known GitHub Actions CI runner hazards:
-    1. Terminates background WSL, Windows Terminal, and Edge popups without touching current runner PID or parents.
-    2. Minimizes background windows (excluding current test runner process).
+    out: dict[str, Any] = {"probe_errors": {}, "warnings": []}
+
+    def probe(name: str, fn: Callable[[], Any]) -> Any:
+        try:
+            value = fn()
+            out[name] = value
+            return value
+        except Exception as exc:
+            out["probe_errors"][name] = f"{type(exc).__name__}: {exc}"
+            return None
+
+    import platform
+
+    out["pid"] = os.getpid()
+    out["python"] = sys.version.split()[0]
+    out["machine"] = platform.machine()
+    out["env"] = {
+        k: os.environ.get(k) for k in ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_ARCH", "CI")
+    }
+    table = probe("process_table_size", lambda: len(get_process_table()))
+    names: dict[int, str] = {}
+    if table is not None:
+        try:
+            names = {pid: image for pid, (_p, image) in get_process_table().items()}
+        except Exception:
+            names = {}
+
+    def named(pids) -> list[dict[str, Any]]:
+        return [{"pid": pid, "name": names.get(pid, "?")} for pid in pids]
+
+    probe("ancestors", lambda: named(sorted(get_ancestor_pids() - {os.getpid()})))
+    attached = probe("console_attached", has_console)
+    probe("console_window", lambda: int(kernel32.GetConsoleWindow() or 0))
+    peers = probe("console_clients", lambda: named(console_client_pids()))
+    probe("protected", lambda: {str(pid): rel for pid, rel in protected_pids().items()})
+
+    def fg() -> dict[str, Any]:
+        hwnd = get_foreground_window()
+        pid = get_window_pid(hwnd) if hwnd else 0
+        return {
+            "hwnd": hwnd,
+            "class": get_window_class(hwnd) if hwnd else "",
+            "title": get_window_title(hwnd) if hwnd else "",
+            "pid": pid,
+            "name": names.get(pid, "?"),
+        }
+
+    probe("foreground", fg)
+    if peers:
+        others = [p["name"] for p in peers if p["pid"] != os.getpid()]
+        if others:
+            out["warnings"].append(
+                "ending this console ends: "
+                + ", ".join(others)
+                + " -- a sweep must not touch its host"
+            )
+    if attached and out.get("console_window") == 0:
+        out["warnings"].append(
+            "GetConsoleWindow=0 while attached to a console: a ConPTY. Any check that asks for the console"
+            " window answers 'none' here and is wrong."
+        )
+    return out
+
+
+def sanitize_ci_runner_environment(
+    dry_run: bool | None = None,
+    report_path: str | Path | None = None,
+    journal: Callable[..., None] | None = None,
+) -> KillPlan:
+    """Cleans up known GitHub Actions runner hazards, against a plan written first.
+
+    1. Ends the background processes on the sweep list -- WSL, Edge popups, Store
+       apps left over from earlier tests, and terminal hosts when this process
+       has no console of its own -- sparing every process this one depends on,
+       by measured relation (`protected_pids`), never by name.
+    2. Hides background windows that steal the foreground.
+
+    The plan (`KillPlan`) is built from one process snapshot, written to
+    `report_path` and handed to `journal` **before** the first kill, and executed
+    per pid with `TerminateProcess` so each outcome is recorded. `dry_run`
+    (default: `WINTEGRATE_SANITIZE_DRY_RUN`) builds and writes the plan and ends
+    nothing -- the way to find out what a sweep would do to a machine before
+    letting it. Returns the plan with results.
     """
     attach_to_input_desktop()
-    excluded_pids = {os.getpid()}
+    dry = dry_run_requested(dry_run)
+
+    degraded: str | None = None
     try:
-        excluded_pids |= get_ancestor_pids()
+        protected = protected_pids()
+    except Exception as exc:
+        # Fail closed on what can still be measured: self and ancestors. Said
+        # out loud, because the console peers are the set that was lethal once.
+        degraded = f"protected_pids failed ({type(exc).__name__}: {exc}); console peers unknown"
+        logger.warning(f"Runner sweep: {degraded}")
+        protected = {pid: "self or ancestor (degraded)" for pid in get_ancestor_pids()}
+
+    attached = has_console()
+    logger.info(
+        f"Runner sweep: attached to a console = {attached}; "
+        f"terminal hosts {'spared' if attached else 'included'}"
+    )
+    try:
+        table = get_process_table()
     except Exception as exc:
         logger.warning(
-            f"Parent-process exclusion degraded ({type(exc).__name__}: {exc}); "
-            "only the current PID is protected from sanitization"
+            f"Runner sweep skipped: process snapshot failed ({type(exc).__name__}: {exc})"
         )
+        table = {}
+    plan = build_kill_plan(table, sweep_process_names(attached), protected, attached, dry, degraded)
 
-    pid_list_str = ",".join(str(pid) for pid in excluded_pids)
+    # On disk and in the journal before anything is ended: if the next call ends
+    # this process, this is the record that says so.
+    if report_path is not None:
+        try:
+            write_plan(plan, report_path)
+        except Exception as exc:
+            logger.warning(f"kill plan not written ({type(exc).__name__}): {exc}")
+    if journal is not None:
+        journal("kill_plan", plan.summary(), plan=plan.to_dict())
+    logger.info(f"Runner sweep plan: {plan.summary()}")
 
-    # 1. Kill noisy background prompts (excluding our own process hierarchy)
-    try:
-        # Notepad/Calculator are swept because Store apps are single-instance: an
-        # instance leaked by an earlier test makes the next launch open a tab in the
-        # old window instead of a new top-level window, breaking window discovery.
-        #
-        # Terminal hosts are swept only when this process has no console of its
-        # own. A console-subsystem process does not own its console -- a terminal
-        # hosts it -- and on Windows 11 that host is Windows Terminal, which is
-        # on this list by name. Killing it destroys the console and every process
-        # attached to it, this one included, and excluding it by pid is not
-        # possible: it is not an ancestor, and it is not the owner of
-        # GetConsoleWindow() either, which belongs to a brokered OpenConsole.exe
-        # whose parent chain runs to services.exe. Measured on Windows 11 -- with
-        # WindowsTerminal excluded the caller survived the whole sweep; killing
-        # it alone ended the caller before its next heartbeat, a second later.
-        attached = has_console()
-        # Logged, because this decision has been wrong once and was invisible
-        # when it was: the sweep swept a terminal host, that host was this
-        # process's own, and the process ended a moment later somewhere
-        # unrelated-looking.
-        logger.info(
-            f"Runner sweep: attached to a console = {attached}; "
-            f"terminal hosts {'spared' if attached else 'included'}"
+    execute_kill_plan(plan, terminate_pid)
+    if journal is not None and not dry:
+        journal(
+            "kill_result",
+            ", ".join(f"{pid}: {r}" for pid, r in plan.results.items()) or "nothing to kill",
+            results=plan.results,
         )
-        name_list = ",".join(f"'{name}'" for name in sweep_process_names(attached))
-        ps_cmd = f"Get-Process -Name {name_list} -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -notin @({pid_list_str}) }} | Stop-Process -Force -ErrorAction SilentlyContinue"
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=5
-        )
-    except Exception as exc:
-        logger.debug(f"Runner process cleanup skipped ({type(exc).__name__}): {exc}")
+    if report_path is not None and not dry:
+        try:
+            write_plan(plan, report_path)  # now with results
+        except Exception:
+            pass
 
     # 2. Hide noisy background popups
     try:
@@ -172,6 +280,7 @@ def sanitize_ci_runner_environment():
         user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
     except Exception as exc:
         logger.debug(f"Window minimization skipped ({type(exc).__name__}): {exc}")
+    return plan
 
 
 def try_dismiss_oobe_privacy_screen(timeout: float = 15.0) -> bool:
@@ -280,6 +389,8 @@ class Session:
         self.config = config or SessionConfig()
         self.artifact_dir = Path(self.config.artifact_dir)
         self.recorder: ContinuousRecorder | None = None
+        self.preflight: dict[str, Any] = {}
+        self.kill_plan: KillPlan | None = None
         self.initial_census: list[WindowSnapshot] = []
         self.final_census: list[WindowSnapshot] = []
         self.logs: list[dict[str, Any]] = []
@@ -572,6 +683,17 @@ class Session:
                     "- No recording: either `record_video` was off, PyAV is not installed, or the process"
                     " died before the recorder started. `session_events.jsonl` says which."
                 )
+            if "preflight.json" in files:
+                lines.append(
+                    "- `preflight.json` is what this process was before it touched anything: console"
+                    " clients, protected pids, foreground. Its `warnings` are the sentences to read first."
+                )
+            if "kill_plan.json" in files:
+                lines.append(
+                    "- `kill_plan.json` was written **before** the first kill. If `session_events.jsonl`"
+                    " ends at `kill_plan` with no `kill_result`, the sweep ended this process: read the"
+                    " plan's `kills` against `preflight.json`'s console clients."
+                )
             lines += [
                 "",
                 "## What a screenshot cannot show",
@@ -695,6 +817,25 @@ class Session:
         # The journal opens before anything else happens, so that if the next call
         # ends this process the directory is not empty.
         self._open_journal()
+        # Preflight before anything is touched: what this process is, what shares
+        # its console, what is in the foreground. On disk first, so a run that
+        # dies in the next hundred lines still says what it was.
+        self.preflight = collect_preflight()
+        try:
+            (self.artifact_dir / "preflight.json").write_text(
+                json.dumps(self.preflight, indent=2, default=str), encoding="utf-8"
+            )
+        except Exception as exc:
+            logger.debug(f"preflight.json skipped ({type(exc).__name__}): {exc}")
+        self.log_event(
+            "preflight",
+            "; ".join(self.preflight.get("warnings") or ["no warnings"]),
+            console_clients=self.preflight.get("console_clients"),
+            foreground=self.preflight.get("foreground"),
+            probe_errors=self.preflight.get("probe_errors"),
+        )
+        for line in self.preflight.get("warnings") or []:
+            logger.warning(f"preflight: {line}")
         attach_to_input_desktop()
 
         # The recorder starts before the runner is touched. Everything below it
@@ -723,7 +864,10 @@ class Session:
 
         if self.config.should_sanitize_runner:
             self.log_event("sanitize_start", "sanitising the runner")
-            sanitize_ci_runner_environment()
+            self.kill_plan = sanitize_ci_runner_environment(
+                report_path=self.artifact_dir / "kill_plan.json",
+                journal=lambda kind, message, **fields: self.log_event(kind, message, **fields),
+            )
             self.log_event("sanitize_done", "runner sanitised")
 
         if self.config.should_dismiss_oobe:

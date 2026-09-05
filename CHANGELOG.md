@@ -6,6 +6,40 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.6.1] — 2026-09-05
+
+### Added
+
+- **`preflight.json`, written before the session touches anything.** What this
+  process is: pid, ancestors, whether it has a console and `GetConsoleWindow`
+  beside the list of processes attached to that console, the protected set with
+  each relation, the foreground window. Every probe is wrapped on its own; a
+  failing one lands in `probe_errors`. `warnings` says the sentence to read
+  first -- *ending this console ends: pwsh.exe, Runner.Worker.exe* -- and calls
+  out `GetConsoleWindow=0` beside a non-empty client list, which is the entire
+  0.5.13 → 0.5.14 delta, now visible in one artifact instead of costing a release.
+- **`kill_plan.json` and a `kill_plan` journal event, written before the first
+  kill.** `sanitize_ci_runner_environment()` now builds a `KillPlan` from one
+  process snapshot -- every process on the sweep list, each either `kill` or
+  `spare` with the measured relation that spares it -- writes and fsyncs it,
+  journals it, and only then ends anything, per pid with `TerminateProcess`,
+  recording what each kill returned (`kill_result`). A journal that ends at
+  `kill_plan` with no `kill_result` says the sweep ended its own caller, and the
+  plan says which entry did it. Never `taskkill /F /PID`: the handle opened at
+  kill time is what pins the identity the plan was written against.
+- **`dry_run`.** `sanitize_ci_runner_environment(dry_run=True)`, or
+  `WINTEGRATE_SANITIZE_DRY_RUN=1`, builds and writes the plan and ends nothing.
+  The way to find out what a sweep would do to a machine before letting it,
+  packaged as a flag; the step completes, so the artifact upload runs.
+- `Session.preflight` and `Session.kill_plan` hold both for the caller;
+  `READ_THIS_FIRST.md` explains the two files when they are present.
+
+### Changed
+
+- `sanitize_ci_runner_environment()` returns the `KillPlan` (it returned None).
+  Its protection falls back to self-and-ancestors when `protected_pids()`
+  cannot be measured, and the plan records that it did (`protection_degraded`).
+
 ## [0.6.0] — 2026-09-05
 
 ### Added

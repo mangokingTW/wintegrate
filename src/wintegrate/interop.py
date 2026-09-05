@@ -1945,6 +1945,65 @@ def get_parent_pid_map() -> dict[int, int]:
         kernel32.CloseHandle(snapshot)
 
 
+def get_process_table() -> dict[int, tuple[int, str]]:
+    """Returns {pid: (parent_pid, image_name_lower)} for every process, one snapshot.
+
+    The name is the Toolhelp `szExeFile` (e.g. `notepad.exe`), lower-cased. One
+    snapshot for both facts, so a kill plan's names and parent links describe the
+    same instant.
+    """
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == INVALID_HANDLE_VALUE:
+        raise OSError(f"CreateToolhelp32Snapshot failed (GetLastError={ctypes.get_last_error()})")
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        table: dict[int, tuple[int, str]] = {}
+        if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            raise OSError(f"Process32FirstW failed (GetLastError={ctypes.get_last_error()})")
+        while True:
+            table[entry.th32ProcessID] = (entry.th32ParentProcessID, entry.szExeFile.lower())
+            if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                break
+        return table
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
+PROCESS_TERMINATE = 0x0001
+kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+kernel32.TerminateProcess.restype = wintypes.BOOL
+
+
+def terminate_pid(pid: int) -> str:
+    """Ends one process by pid and says what happened, in a word.
+
+    `OpenProcess` at kill time rather than `taskkill /F /PID`: the handle is the
+    only thing that pins the identity a plan was written against, and a pid that
+    has been recycled since the snapshot opens as a different process or not at
+    all -- both of which this reports instead of killing whatever is there now.
+    Returns "terminated", "gone" (no such process), "access denied", or
+    "failed (<errno>)". Never raises.
+    """
+    try:
+        handle = kernel32.OpenProcess(
+            PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+        )
+        if not handle:
+            err = ctypes.get_last_error()
+            return (
+                "gone" if err == 87 else ("access denied" if err == 5 else f"failed (open, {err})")
+            )
+        try:
+            if kernel32.TerminateProcess(handle, 1):
+                return "terminated"
+            return f"failed ({ctypes.get_last_error()})"
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception as exc:
+        return f"failed ({type(exc).__name__})"
+
+
 def find_pids_by_image_name(names: tuple[str, ...] | list[str]) -> set[int]:
     """PIDs of every running process whose image name is in `names`, case-insensitive.
 
