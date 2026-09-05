@@ -11,7 +11,12 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from wintegrate.diagnostics import WindowCensus, WindowSnapshot, capture_window_image
+from wintegrate.diagnostics import (
+    WindowCensus,
+    WindowSnapshot,
+    capture_window_image,
+    launch_output_paths,
+)
 from wintegrate.element import UiaElement
 from wintegrate.exceptions import (
     ActionVerificationError,
@@ -152,6 +157,34 @@ def _alias_note(exe: str, resolved: str | None, packages: list[tuple[str, str, s
     if len(packages) > 1:
         tail += " More than one version is present: an update is staged or was being applied."
     return head + why + tail
+
+
+def _child_output_note(paths: tuple[Path, Path] | None, limit: int = 8) -> str:
+    """What the launched process printed, if anything, for the timeout message.
+
+    A child that wrote an error and exited is the usual reason no window
+    appeared, and until now that text went to the step's console, unlabelled,
+    or nowhere. Empty files add nothing.
+    """
+    if not paths:
+        return ""
+    parts = []
+    for label, path in (("stdout", paths[0]), ("stderr", paths[1])):
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        shown = "\n".join("      " + ln[:200] for ln in lines[:limit])
+        more = (
+            f"\n      ... {len(lines) - limit} more line(s) in {Path(path).name}"
+            if len(lines) > limit
+            else ""
+        )
+        parts.append(f"\n  The process's {label} ({Path(path).name}):\n{shown}{more}")
+    return "".join(parts)
 
 
 def _launch_target_note(cmd: list[str] | str) -> str:
@@ -1145,14 +1178,47 @@ class Window:
         app. Measured against Files 4.2.9 with its .NET runtime missing — discovery
         returned a dialog in 1.2s where the real window takes ~19s, and every
         element lookup afterwards failed against a window that looked fine.
+
+        The child's stdin is DEVNULL and its stdout/stderr never inherit this
+        process's: inside a `Session` they go to `launched_NN.out` / `.err` in the
+        artifact directory (and a discovery timeout quotes them), outside one to
+        DEVNULL. Inherited handles kept a CI step alive after its process died.
         """
         attach_to_input_desktop()
         before = WindowCensus.capture()
 
-        if isinstance(cmd, str):
-            proc = subprocess.Popen(cmd, shell=True)
-        else:
-            proc = subprocess.Popen(cmd)
+        # The child never inherits this process's stdio. Inherited, its handles
+        # keep the CI step's stdout/stderr pipes open for as long as the child
+        # (or anything it spawned) lives -- which is how a step stayed
+        # `in_progress` after the process that started it had died. Inside a
+        # Session the output goes to launched_NN.out/.err in the artifact
+        # directory, where a child that printed an error and exited can be
+        # read; outside one, to DEVNULL.
+        paths = launch_output_paths()
+        out_file = err_file = None
+        stdout: object = subprocess.DEVNULL
+        stderr: object = subprocess.DEVNULL
+        if paths is not None:
+            try:
+                out_file = open(paths[0], "ab")
+                err_file = open(paths[1], "ab")
+                stdout, stderr = out_file, err_file
+            except OSError:
+                out_file = err_file = None
+                stdout = stderr = subprocess.DEVNULL
+        try:
+            if isinstance(cmd, str):
+                proc = subprocess.Popen(
+                    cmd, shell=True, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr
+                )
+            else:
+                proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
+        finally:
+            # The child holds its own copies; ours would only keep the files busy.
+            for fh in (out_file, err_file):
+                if fh is not None:
+                    fh.close()
+        child_output = paths
 
         try:
             window = cls.wait_for_new(
@@ -1177,7 +1243,7 @@ class Window:
             # execution alias fails to appear for a reason the desktop listing
             # cannot show.
             raise WindowDiscoveryTimeoutError(
-                f"{exc}{_launch_target_note(cmd)}", **exc.facts
+                f"{exc}{_launch_target_note(cmd)}{_child_output_note(child_output)}", **exc.facts
             ) from exc
         return proc, window
 
