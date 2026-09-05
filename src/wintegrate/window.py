@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from wintegrate.diagnostics import WindowCensus, capture_window_image
+from wintegrate.diagnostics import WindowCensus, WindowSnapshot, capture_window_image
 from wintegrate.element import UiaElement
 from wintegrate.exceptions import (
     ActionVerificationError,
@@ -164,6 +164,77 @@ def _describe_desktop_now(before: list, limit: int = 12) -> str:
     if not fresh:
         lines.append("\n    (nothing new appeared at all - the launch produced no window)")
     return "".join(lines)
+
+
+def _is_ignorable_helper(snap) -> bool:
+    """Windows that belong to a process without being its window."""
+    title = snap.title.lower()
+    cls_name = snap.class_name.lower()
+    if "gdi+ window" in title or "gdi+ hook window class" in cls_name:
+        return True
+    if "msctfime ui" in title or "msctfime ui" in cls_name:
+        return True
+    if "default ime" in title or "ime" == cls_name:
+        return True
+    return False
+
+
+def _is_ready(snap) -> bool:
+    """Whether a matching window has finished coming up.
+
+    A top-level window becomes visible before it is populated: the class already
+    matches while the title is still empty and the content child does not exist
+    yet. Handing that shell back looks like success and then fails 20 seconds
+    later inside find_text_input, on a window whose title prints as ''. Treat an
+    untitled match as "not yet" and keep polling; the real window is usually
+    milliseconds away.
+    """
+    return bool(snap.title.strip())
+
+
+def _select_new_window(
+    before: list,
+    after: list,
+    excluded: set[int] = frozenset(),
+    classes: set[str] | None = None,
+    proc_names: set[str] | None = None,
+    title_re=None,
+    require_all: bool = False,
+):
+    """The first window in `after` that is new, wanted and ready.
+
+    Returns `(snapshot, saw_unready)`. `saw_unready` says a window matched but
+    had not finished coming up, which is the difference between "nothing like
+    that appeared" and "it appeared and was still empty" in a timeout message.
+
+    Separate from the waiting so that the matching -- every rule in it learned
+    from a run that went wrong -- is testable without a desktop.
+    """
+    has_criteria = bool(title_re or proc_names or classes)
+    saw_unready = False
+
+    def matches(snap) -> bool:
+        checks = []
+        if classes:
+            checks.append(snap.class_name in classes)
+        if proc_names:
+            checks.append(get_process_image_name(snap.pid) in proc_names)
+        if title_re:
+            checks.append(bool(title_re.search(snap.title)))
+        if not checks:
+            return False
+        return all(checks) if require_all else any(checks)
+
+    for snap in WindowCensus.diff(before, after).added:
+        if not snap.is_visible or snap.hwnd in excluded or _is_ignorable_helper(snap):
+            continue
+        if has_criteria and not matches(snap):
+            continue
+        if not _is_ready(snap):
+            saw_unready = True
+            continue
+        return snap, saw_unready
+    return None, saw_unready
 
 
 class Window:
@@ -990,98 +1061,96 @@ class Window:
         """
         attach_to_input_desktop()
         before = WindowCensus.capture()
-        excluded = exclude_hwnds or set()
 
         if isinstance(cmd, str):
             proc = subprocess.Popen(cmd, shell=True)
         else:
             proc = subprocess.Popen(cmd)
 
-        deadline = time.monotonic() + timeout
+        try:
+            window = cls.wait_for_new(
+                before,
+                timeout=timeout,
+                title_pattern=title_pattern,
+                exclude_hwnds=exclude_hwnds,
+                process_names=process_names,
+                window_classes=window_classes,
+                require_all=require_all,
+                context=f"cmd={cmd}",
+            )
+        except WindowDiscoveryTimeoutError:
+            # Best-effort: don't leak the launcher on timeout (a late-arriving
+            # window can still outlive this -- session sanitization sweeps those
+            # up).
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise
+        return proc, window
+
+    @classmethod
+    def wait_for_new(
+        cls,
+        before: list[WindowSnapshot],
+        timeout: float = 10.0,
+        title_pattern: str | None = None,
+        exclude_hwnds: set[int] | None = None,
+        process_names: tuple[str, ...] | list[str] | None = None,
+        window_classes: tuple[str, ...] | list[str] | None = None,
+        require_all: bool = False,
+        context: str = "",
+    ) -> Window:
+        """Waits for a window that was not in `before` to appear, and returns it.
+
+        The waiting half of `launch_and_discover`, for the windows something
+        other than a launch opens. A Qt menu is the case this was split out for:
+        the popup is a top-level `Qt<ver>QWindowPopup` rather than a UIA
+        descendant of the item that opened it, so `MenuItem.sub_items()` comes
+        back empty and the popup has to be found on the desktop instead.
+
+        Callers were writing this themselves as snapshot, act, sleep for a
+        guess, snapshot, take the first added window -- which skips everything
+        below, and fails as a `StopIteration` on a line that cannot say what did
+        not appear when the guess was short.
+
+        Matching, `require_all` and readiness are exactly as in
+        `launch_and_discover`, because they are now the same code.
+        """
+        excluded = exclude_hwnds or set()
         compiled_re = re.compile(title_pattern, re.IGNORECASE) if title_pattern else None
         proc_names = {p.lower() for p in process_names} if process_names else None
         classes = set(window_classes) if window_classes else None
-        has_criteria = bool(compiled_re or proc_names or classes)
 
-        def matches(snap) -> bool:
-            checks = []
-            if classes:
-                checks.append(snap.class_name in classes)
-            if proc_names:
-                checks.append(get_process_image_name(snap.pid) in proc_names)
-            if compiled_re:
-                checks.append(bool(compiled_re.search(snap.title)))
-            if not checks:
-                return False
-            return all(checks) if require_all else any(checks)
-
-        def is_ignorable_helper(snap) -> bool:
-            title = snap.title.lower()
-            cls_name = snap.class_name.lower()
-            if "gdi+ window" in title or "gdi+ hook window class" in cls_name:
-                return True
-            if "msctfime ui" in title or "msctfime ui" in cls_name:
-                return True
-            if "default ime" in title or "ime" == cls_name:
-                return True
-            return False
-
-        def is_ready(snap) -> bool:
-            """Whether a matching window has finished coming up.
-
-            A top-level window becomes visible before it is populated: the class
-            already matches while the title is still empty and the content child
-            does not exist yet. Handing that shell back looks like success and
-            then fails 20 seconds later inside find_text_input, on a window whose
-            title prints as ''. Treat an untitled match as "not yet" and keep
-            polling; the real window is usually milliseconds away.
-            """
-            return bool(snap.title.strip())
-
+        deadline = time.monotonic() + timeout
         saw_unready = False
-        while time.monotonic() < deadline:
-            after = WindowCensus.capture()
-            diff = WindowCensus.diff(before, after)
-
-            # Look for newly added visible top-level windows
-            for snap in diff.added:
-                if snap.is_visible and snap.hwnd not in excluded and not is_ignorable_helper(snap):
-                    if has_criteria and not matches(snap):
-                        continue
-                    if not is_ready(snap):
-                        saw_unready = True
-                        continue
-                    return proc, cls(snap.hwnd, snap.pid)
-
-            # Fallback: check all currently visible windows matching criteria
-            for snap in after:
-                if (
-                    snap.is_visible
-                    and snap.hwnd not in excluded
-                    and snap.hwnd not in {b.hwnd for b in before}
-                    and not is_ignorable_helper(snap)
-                ):
-                    if has_criteria and matches(snap):
-                        if not is_ready(snap):
-                            saw_unready = True
-                            continue
-                        return proc, cls(snap.hwnd, snap.pid)
-
+        while True:
+            snap, unready = _select_new_window(
+                before,
+                WindowCensus.capture(),
+                excluded=excluded,
+                classes=classes,
+                proc_names=proc_names,
+                title_re=compiled_re,
+                require_all=require_all,
+            )
+            saw_unready = saw_unready or unready
+            if snap is not None:
+                return cls(snap.hwnd, snap.pid)
+            if time.monotonic() >= deadline:
+                break
             time.sleep(0.1)
 
-        # Best-effort: don't leak the launcher on timeout (a late-arriving window
-        # can still outlive this — session sanitization sweeps those up).
-        try:
-            proc.kill()
-        except Exception:
-            pass
         detail = (
             " A matching window existed but never gained a title, so it was still "
             "coming up when the wait ran out."
             if saw_unready
             else ""
         )
+        where = f" ({context})" if context else ""
         raise WindowDiscoveryTimeoutError(
-            f"Window failed to appear within {timeout}s (cmd={cmd}, pattern={title_pattern}).{detail}"
+            f"No new window appeared within {timeout}s{where} "
+            f"(pattern={title_pattern}, classes={window_classes}, "
+            f"process_names={process_names}).{detail}"
             f"{_describe_desktop_now(before)}"
         )

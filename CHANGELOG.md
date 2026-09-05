@@ -6,6 +6,43 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.12] — 2026-09-05
+
+### Added
+
+- **`Window.wait_for_new()`.** The waiting half of `launch_and_discover`, for
+  the windows something other than a launch opens. It was already written --
+  inside `launch_and_discover`, where nothing else could reach it -- so callers
+  who needed it wrote their own: snapshot, act, sleep for a guess, snapshot,
+  take the first added window.
+
+  That version skips every rule this one has learned. It hands back GDI+ and IME
+  helper windows, and windows that are visible but still untitled and therefore
+  not yet usable; it cannot say `require_all`; and when the guess is short it
+  fails as a `StopIteration` on a line that cannot report what did not appear,
+  rather than as a `WindowDiscoveryTimeoutError` naming the criteria and what
+  was on the desktop instead.
+
+  The case it was extracted for is a Qt menu: the popup is a top-level
+  `Qt<ver>QWindowPopup` rather than a UIA descendant of the item that opened it,
+  so `MenuItem.sub_items()` comes back empty and the popup has to be found on
+  the desktop.
+
+  ```python
+  before = WindowCensus.capture()
+  menu.items[4].expand()
+  popup = Window.wait_for_new(before, window_classes=("Qt681QWindowPopup",))
+  ```
+
+### Changed
+
+- **`launch_and_discover` is now launch plus `wait_for_new`**, so the two cannot
+  drift. Behaviour is unchanged, with one dead branch dropped: it scanned the
+  new windows twice, and the second pass was the same set under a stricter
+  condition, so it could never match anything the first had not already
+  rejected. Its timeout message keeps the command that failed, passed in as
+  `context`.
+
 ## [0.5.11] — 2026-09-04
 
 ### Added
