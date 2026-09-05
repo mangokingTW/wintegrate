@@ -17,15 +17,15 @@
 
 ## What a CI run actually looks like
 
-Every CI run records itself. Below is the **complete test suite** on both architectures — not a highlight reel, not a staged demo: the entire run, unedited, at 8× speed. Nothing was cropped or cleaned up, so you are also seeing the runner's own console spam and whatever Windows decided to pop up that morning. That is the point.
+Every CI run records itself. Below is the **complete test suite** on both architectures — not a highlight reel, not a staged demo: the entire run, unedited, at 8× speed. The camera starts before the desktop is prepared, so on ARM64 the first second still shows the out-of-box privacy page the runner boots into, and then shows it being cleared, on camera, before the first test. That is the point: nothing here is assumed to be clean; it is measured, and then made so.
 
 Each frame names the test that produced it, in the bottom-left corner, so a moment worth looking at can be traced back to the test that caused it.
 
-| `windows-latest` (x64) — 115s | `windows-11-arm` (ARM64) — 139s |
+| `windows-latest` (x64) — 138s | `windows-11-arm` (ARM64) — 169s |
 |---|---|
 | ![Full test suite on x64](assets/full-suite-x64.gif) | ![Full test suite on ARM64](assets/full-suite-arm64.gif) |
 
-Watch the same scenario on both. In these two runs Notepad became discoverable in 0.10s on x64 and 0.36s on ARM64 — but the same measurement on a cold ARM64 runner has come back at **17.18s**, against 0.10s on x64. That spread is the point: a discovery timeout tuned on the left-hand machine fails intermittently on the right-hand one, and the failure reads like a flaky test rather than a cold start. This is the class of problem `wintegrate` exists to make visible, and the reason the timings are written to `session_events.json` on every run rather than quoted once in a README.
+Watch the same scenario on both. In these two runs Notepad became discoverable in 0.11s on x64 and 1.15s on ARM64 — and the same measurement on a cold ARM64 runner has come back at **17.18s**, against 0.10s on x64. That spread is the point: a discovery timeout tuned on the left-hand machine fails intermittently on the right-hand one, and the failure reads like a flaky test rather than a cold start. This is the class of problem `wintegrate` exists to make visible, and the reason the timings are written to `session_events.json` on every run rather than quoted once in a README.
 
 The full-resolution recordings are `recording-artifacts/full-suite-<arch>.mp4`, attached to the artifacts of [every CI run](https://github.com/mangokingTW/wintegrate/actions/workflows/ci.yml), along with the window census, the event timeline, and the failure screenshots.
 
