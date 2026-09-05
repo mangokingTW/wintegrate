@@ -119,6 +119,73 @@ CONTENT_ISLAND_CLASS_SUBSTRINGS = (
 DIALOG_WINDOW_CLASSES = frozenset({"#32770", "MessageBoxWindow", "Notepad++Dialog"})
 
 
+def _alias_note(exe: str, resolved: str | None, packages: list[tuple[str, str, str]] | None) -> str:
+    """The sentence to add when the command that showed no window is a packaged app.
+
+    Pure. `resolved` is what the shell ran for `exe`; `packages` the
+    (name, version, status) of installed packages whose name contains the
+    command's stem, or None if that could not be read. Two shapes of the same
+    fact: the command was an app execution alias under `WindowsApps`, or --
+    the Windows 11 case for notepad.exe -- an ordinary System32 executable that
+    hands off to the package. Empty when there is nothing to say.
+    """
+    is_alias = bool(resolved) and "\\microsoft\\windowsapps\\" in (resolved or "").lower()
+    if not is_alias and not packages:
+        return ""
+    if is_alias:
+        head = f"\n{exe} is an app execution alias ({resolved}): it starts a packaged (Store) app."
+    else:
+        head = (
+            f"\n{exe} resolved to {resolved}, and a packaged (Store) app of that name is "
+            "installed; on Windows 11 the executable hands off to the package."
+        )
+    why = (
+        " The Store applies a pending update the moment the app closes, and a launch "
+        "during that swap produces no window."
+    )
+    if packages is None:
+        return head + why + " Package state could not be read."
+    if not packages:
+        return head + why + " No installed package matched the alias name."
+    listed = ", ".join(f"{n} {v} [{st}]" for n, v, st in packages)
+    tail = f" Installed: {listed}."
+    if len(packages) > 1:
+        tail += " More than one version is present: an update is staged or was being applied."
+    return head + why + tail
+
+
+def _launch_target_note(cmd: list[str] | str) -> str:
+    """Runtime side of `_alias_note`: resolve the command and read its package."""
+    try:
+        import shutil
+
+        exe = cmd[0] if isinstance(cmd, list) else str(cmd).split()[0]
+        resolved = shutil.which(exe)
+        stem = Path(exe).stem.lower()
+        if not stem:
+            return ""
+        script = (
+            f"Get-AppxPackage -Name '*{stem}*' | "
+            'ForEach-Object { "$($_.Name)|$($_.Version)|$($_.Status)" }'
+        )
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True,
+                text=True,
+                timeout=15.0,
+                creationflags=0x08000000,
+            ).stdout
+            packages = [
+                tuple(line.split("|", 2)) for line in out.splitlines() if line.count("|") == 2
+            ]
+        except Exception:
+            packages = None
+        return _alias_note(exe, resolved, packages)  # type: ignore[arg-type]
+    except Exception:
+        return ""
+
+
 def _describe_desktop_now(before: list, limit: int = 12) -> str:
     """What was on the desktop when discovery gave up, for the exception message.
 
@@ -1078,7 +1145,7 @@ class Window:
                 require_all=require_all,
                 context=f"cmd={cmd}",
             )
-        except WindowDiscoveryTimeoutError:
+        except WindowDiscoveryTimeoutError as exc:
             # Best-effort: don't leak the launcher on timeout (a late-arriving
             # window can still outlive this -- session sanitization sweeps those
             # up).
@@ -1086,7 +1153,10 @@ class Window:
                 proc.kill()
             except Exception:
                 pass
-            raise
+            # Same error, plus what the command was: a Store app behind an
+            # execution alias fails to appear for a reason the desktop listing
+            # cannot show.
+            raise WindowDiscoveryTimeoutError(f"{exc}{_launch_target_note(cmd)}") from exc
         return proc, window
 
     @classmethod
