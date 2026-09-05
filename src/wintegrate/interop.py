@@ -679,6 +679,8 @@ kernel32.GetModuleHandleW.restype = ctypes.c_void_p
 user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 user32.AttachThreadInput.restype = wintypes.BOOL
 
+kernel32.GetConsoleWindow.argtypes = []
+kernel32.GetConsoleWindow.restype = wintypes.HWND
 user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 
@@ -1990,6 +1992,24 @@ def get_ancestor_pids(pid: int | None = None) -> set[int]:
         chain.add(parent)
         current = parent
     return chain
+
+
+def has_console() -> bool:
+    """Whether this process is attached to a console.
+
+    Which decides whether a sweep may kill terminal hosts. It cannot work out
+    *which* terminal is hosting it: with Windows Terminal as the default host,
+    `GetConsoleWindow()` belongs to an `OpenConsole.exe` started through a
+    broker, so its parent chain runs to `services.exe` and never reaches the
+    terminal. Measured on Windows 11: console owner `OpenConsole.exe`,
+    ancestors `svchost -> wininit -> services`, while the `WindowsTerminal`
+    that owned the window was a different process entirely.
+
+    So the question worth asking is the answerable one -- is there a console at
+    all -- and the answer is no for the ordinary case of a test runner started
+    by a service or a GUI.
+    """
+    return bool(kernel32.GetConsoleWindow())
 
 
 def get_foreground_window() -> int:
