@@ -6,7 +6,12 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
-## [Unreleased]
+## [0.6.2] — 2026-09-05
+
+Closes the remaining items of #93 (C5, C6, C8, C10, C11): a failure now says
+which failure it is, a death names its cause, the sweep's hides are accounted for
+and undone, launched children cannot hold the step's pipes, and a failed session
+leaves the frames at the moment it failed.
 
 ### Added
 
@@ -31,6 +36,22 @@ do about it — that callout is the guarantee, not the version number.
 - `step_failed` now carries the same window census delta as `step_ok`: the
   windows that came and went during the failing step were computed and thrown
   away on the only path that matters.
+- **`frames/` at the failure.** A failed session now pulls the recording's frames
+  at the moments the timeline names into `frames/`, each named by video time and
+  event (`t041830ms_step-failed_submit.png`), with `frames/index.json` mapping
+  files to events. The budget is small (8) and the priority explicit: the window
+  around the last `step_failed` first, the tail of the recording second, the rest
+  after -- and marks that do not fit are dropped whole and listed as dropped,
+  because a silently truncated set reads as the whole story. `READ_THIS_FIRST.md`
+  says the directory is there. `extract_frames`, `plan_marks` and `video_ms_for`
+  are public, for pulling frames from any recording with its anchor.
+- **`expect_artifact(path, timeout)`**, replacing a `sleep` after launching
+  something that writes a file: waits for the file to exist, be non-empty and
+  stop growing, and on the deadline raises `ArtifactMissingError` naming what the
+  directory actually held -- the `.tmp` that was left behind, or nothing.
+
+### Changed
+
 - **The sweep's hides are recorded, verified and undone.** `sanitize_ci_runner_environment()`
   used to run three `ShowWindow(SW_HIDE)` calls that recorded nothing, verified nothing
   and restored nothing -- on a library whose charter names focus stealing as the
@@ -48,19 +69,6 @@ do about it — that callout is the guarantee, not the version number.
   directory and a discovery timeout quotes it -- a child that printed an error and
   exited is the usual reason no window appeared. Outside a session, DEVNULL. stdin is
   DEVNULL either way. `READ_THIS_FIRST.md` explains both when the files are present.
-- **`frames/` at the failure.** A failed session now pulls the recording's frames
-  at the moments the timeline names into `frames/`, each named by video time and
-  event (`t041830ms_step-failed_submit.png`), with `frames/index.json` mapping
-  files to events. The budget is small (8) and the priority explicit: the window
-  around the last `step_failed` first, the tail of the recording second, the rest
-  after -- and marks that do not fit are dropped whole and listed as dropped,
-  because a silently truncated set reads as the whole story. `READ_THIS_FIRST.md`
-  says the directory is there. `extract_frames`, `plan_marks` and `video_ms_for`
-  are public, for pulling frames from any recording with its anchor.
-- **`expect_artifact(path, timeout)`**, replacing a `sleep` after launching
-  something that writes a file: waits for the file to exist, be non-empty and
-  stop growing, and on the deadline raises `ArtifactMissingError` naming what the
-  directory actually held -- the `.tmp` that was left behind, or nothing.
 
 ## [0.6.1] — 2026-09-05
 
