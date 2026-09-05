@@ -38,8 +38,13 @@ runs:
     # A test that loses the foreground does not fail with "the foreground was
     # taken" — it fails with an empty field, a keystroke that went nowhere, or a
     # window that never came up.
+    #
+    # Not gated on the architecture: hard-error modals and a runner dialog are
+    # not an ARM property, and a step that is skipped leaves no line in the log
+    # to say what it saw. The script gates itself on GITHUB_ACTIONS and
+    # RUNNER_ENVIRONMENT=github-hosted and says so; on a self-hosted runner it
+    # touches nothing.
     - name: Quiet the runner
-      if: runner.arch == 'ARM64'
       shell: pwsh
       run: ${{ github.action_path }}/quiet-runner.ps1
 
