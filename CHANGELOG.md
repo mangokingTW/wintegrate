@@ -6,6 +6,36 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.15] — 2026-09-05
+
+### Added
+
+- **`protected_pids()` and `console_client_pids()`.** The set of processes this one
+  depends on, each with the measured relation that protects it -- self, ancestors,
+  the processes sharing this console, and their ancestors. Never a list of program
+  names: `WindowsTerminal` ended a run in 0.5.12 because it hosted that run's
+  console, and is an ordinary target in a run that is not attached to it.
+
+  The console peers are the part that is easy to miss. A console is shared:
+  measured on a hosted runner, `GetConsoleProcessList` returned `python.exe`,
+  `pwsh.exe` and `Runner.Worker.exe`, so ending that console ends the agent
+  reporting the job. The host itself cannot be reached from here -- it arrives
+  through a DelegationConsole handoff and is in nobody's parent chain -- so this
+  protects what *shares* the console rather than trying to name what serves it.
+
+### Fixed
+
+- **`AppHandle.close()` no longer force-kills a process it did not start.** It
+  calls `Window.close(force=True)`, which ends the window's process, on every
+  handle -- including one built around a `Window.find()` result, which can be the
+  caller's own window, the shell's, or the terminal hosting this process's console.
+
+  It now downgrades to `WM_CLOSE` alone when the window belongs to a protected
+  process, says which relation stopped it, and fails closed when the relations
+  cannot be measured. The primitive is unchanged: `Window.close(force=True)` still
+  does exactly what it is told. A primitive that silently declines is worse than
+  one that kills, because the caller cannot tell refusal from failure.
+
 ## [0.5.14] — 2026-09-05
 
 ### Fixed
