@@ -23,6 +23,19 @@ do about it — that callout is the guarantee, not the version number.
   for a windowless console. The window check is kept as the first branch, so
   this is strictly more conservative than 0.5.13.
 
+  Measured on a `windows-latest` runner, from the step itself:
+
+  ```
+  GetConsoleWindow      = 0
+  GetConsoleProcessList = 3 [python.exe, pwsh.exe, Runner.Worker.exe]
+  has_console()         = False        <- 0.5.13 answering wrongly
+  ```
+
+  The three processes sharing that console are the point: `Runner.Worker.exe`
+  is on it too, so killing the terminal took the runner's own worker with it.
+  That is why the job reported the step as cancelled eleven seconds in rather
+  than failed.
+
   The decision is now logged as well. It was wrong once and invisible while it
   was, which is most of why it took so long to find.
 
