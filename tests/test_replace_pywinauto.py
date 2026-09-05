@@ -64,7 +64,7 @@ def test_replace_pywinauto_notepad_workflow():
         notepad.close()
 
 
-def test_the_typing_methods_can_focus_without_clicking():
+def test_the_typing_methods_can_focus_without_clicking(monkeypatch):
     """`click=False` reaches set_focus, and defaults stay True.
 
     The click is how these methods guarantee focus, so it has to remain the
@@ -99,6 +99,17 @@ def test_the_typing_methods_can_focus_without_clicking():
         def get_value(self):
             return ""
 
+    # No real input. This used to inject "{ENTER}" twice into whatever held the
+    # foreground -- and the test before it has just killed its Notepad, so that
+    # was the desktop. On the arm64 runner those two Enters opened the Start menu
+    # (run 33960623532: Start back on screen 0.4 s after the kill, every job),
+    # and every foreground test after it failed against the Start menu. A test
+    # about an argument's plumbing has no business typing.
+    sent = []
+    monkeypatch.setattr(
+        "wintegrate.element.send_keys", lambda spec, *a, **k: sent.append(spec) or True
+    )
+
     spy = Spy()
     for kwargs in ({}, {"click": False}):
         calls.clear()
@@ -110,3 +121,6 @@ def test_the_typing_methods_can_focus_without_clicking():
             pass
         assert calls, "send_keys did not call set_focus"
         assert calls[0] is kwargs.get("click", True), f"set_focus got click={calls[0]}"
+    assert sent == ["{ENTER}", "{ENTER}"], (
+        "the spec reached the (stubbed) sender, and nothing else did"
+    )
