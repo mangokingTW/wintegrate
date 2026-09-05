@@ -1996,6 +1996,79 @@ def get_ancestor_pids(pid: int | None = None) -> set[int]:
     return chain
 
 
+def console_client_pids() -> tuple[int, ...]:
+    """Every process attached to this process's console, or () when there is none.
+
+    Sized by asking: with too small a buffer the call returns how many it needed,
+    so the second call is exact. A console is usually two or three processes and
+    occasionally more, and guessing low silently truncates the very list that
+    decides what is safe to kill.
+    """
+    for size in (16, 128):
+        buffer = (wintypes.DWORD * size)()
+        count = kernel32.GetConsoleProcessList(buffer, size)
+        if not count:
+            return ()
+        if count <= size:
+            return tuple(buffer[i] for i in range(count))
+    return ()
+
+
+def _relations(parents: dict, console_peers, self_pid: int) -> dict[int, str]:
+    """The protection set, as a pure function of three measurements.
+
+    Separate from taking them so that the rules -- which are the part that can be
+    wrong -- are testable without a desktop.
+
+    Order is deliberate. A process can qualify twice, and the label that survives
+    is the most direct one: a console peer that is also an ancestor reads as a
+    peer, and this process reads as itself.
+    """
+    protected: dict[int, str] = {}
+
+    def walk(pid: int, relation: str) -> None:
+        current = pid
+        for _ in range(64):  # bounded: pids are recycled, so a chain can cycle
+            if current in protected:
+                break
+            protected[current] = relation
+            parent = parents.get(current)
+            if not parent:
+                break
+            current = parent
+
+    for peer in console_peers:
+        walk(peer, "ancestor of a process sharing this console")
+    for peer in console_peers:
+        protected[peer] = "shares this process's console"
+    walk(self_pid, "ancestor of this process")
+    protected[self_pid] = "self"
+    return protected
+
+
+def protected_pids() -> dict[int, str]:
+    """Processes this one depends on, each with the measured relation protecting it.
+
+    For deciding what a sweep or a forced close must not touch. Every entry is a
+    fact about *this* process, established now -- not a list of program names. A
+    name-based rule is the shape of the bug it exists to prevent: `WindowsTerminal`
+    was lethal in one run because it hosted the console this process was attached
+    to, and would have been perfectly safe to kill in a run that was not.
+
+    The console peers matter as much as the ancestors, and their ancestors with
+    them. A console is shared: measured on a hosted runner, `GetConsoleProcessList`
+    returned this process, the shell above it and `Runner.Worker.exe`, so ending
+    that console ends the agent that reports the job. The host itself is not
+    reachable from here -- it arrives through a DelegationConsole handoff, so it is
+    in nobody's parent chain -- which is why this protects what *shares* the
+    console rather than trying to name what serves it.
+
+    Raises rather than returning a partial set: a caller uses this to decide what
+    it may destroy, and a silently short answer is worse than no answer.
+    """
+    return _relations(get_parent_pid_map(), console_client_pids(), os.getpid())
+
+
 def has_console() -> bool:
     """Whether this process is attached to a console.
 
@@ -2019,8 +2092,7 @@ def has_console() -> bool:
     # for a process that was attached to a console all along, the sweep went
     # ahead, and it killed the terminal hosting the step. GetConsoleProcessList
     # asks the question that was meant, and answers it for a windowless console.
-    buffer = (wintypes.DWORD * 1)()
-    return kernel32.GetConsoleProcessList(buffer, 1) > 0
+    return bool(console_client_pids())
 
 
 def get_foreground_window() -> int:

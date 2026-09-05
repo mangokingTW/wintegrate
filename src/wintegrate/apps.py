@@ -26,7 +26,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from wintegrate.element import UiaElement
-from wintegrate.interop import find_pids_by_image_name, get_process_image_name
+from wintegrate.interop import (
+    find_pids_by_image_name,
+    get_process_image_name,
+    protected_pids,
+)
 from wintegrate.window import Window
 
 logger = logging.getLogger(__name__)
@@ -158,8 +162,35 @@ class AppHandle:
         return self.window.find_combobox(automation_id=automation_id, name=name, timeout=timeout)
 
     def close(self) -> None:
+        """Closes the window, forcing it only when the process is not one we need.
+
+        `Window.close(force=True)` ends the window's process, and this runs on
+        every AppHandle -- including one built around a Window that came from
+        `Window.find()` rather than from a launch here. That window can belong to
+        the caller, or to the shell, or to the terminal hosting this process's
+        console; ending the last of those ends this process, and on CI the agent
+        reporting the job with it.
+
+        The check is by measured relation rather than by name, and it downgrades
+        rather than refusing: WM_CLOSE is still sent, which is the right request
+        for a window this code did not open.
+        """
+        forceable, why = True, ""
         try:
-            self.window.close(force=True)
+            protected = protected_pids()
+            if self.window.pid in protected:
+                forceable, why = False, protected[self.window.pid]
+        except Exception as exc:
+            # Fail closed: unable to tell whether this is safe is not a licence.
+            forceable, why = False, f"could not be established ({type(exc).__name__}: {exc})"
+
+        if why:
+            logger.info(
+                f"AppHandle.close: not forcing pid {self.window.pid} -- {why}; "
+                "sending WM_CLOSE only"
+            )
+        try:
+            self.window.close(force=forceable)
         except Exception as exc:
             logger.debug(f"AppHandle window close failed ({type(exc).__name__}): {exc}")
         if self.proc:
