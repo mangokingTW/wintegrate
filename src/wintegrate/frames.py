@@ -174,6 +174,13 @@ def extract_frames(
     try:
         with av.open(str(video)) as container:
             stream = container.streams.video[0]
+            # Frame times relative to the stream's own start. A fragmented
+            # recording (the recorder's `frag_keyframe+empty_moov`) carries an
+            # edit-list offset -- measured: the frame stamped pts 0 decodes at
+            # t=0.2 s -- and without this every frame would land 200 ms late.
+            start_s = 0.0
+            if stream.start_time is not None and stream.time_base is not None:
+                start_s = float(stream.start_time * stream.time_base)
             tail_ms = None
             if stream.duration is not None and stream.time_base is not None:
                 tail_ms = int(float(stream.duration * stream.time_base) * 1000)
@@ -214,7 +221,7 @@ def extract_frames(
             for frame in container.decode(stream):
                 if frame.time is None:
                     continue
-                ms = int(round(frame.time * 1000))
+                ms = int(round((frame.time - start_s) * 1000))
                 while i < len(targets) and ms >= targets[i].video_ms:
                     mark = targets[i]
                     if previous is not None and abs(previous[0] - mark.video_ms) < abs(

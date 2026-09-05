@@ -84,12 +84,15 @@ def test_plan_without_a_failure_still_gives_the_tail_and_the_rest():
     assert [(m.kind, m.video_ms) for m in kept] == [("tail", 9000), ("a", 5000)]
 
 
-def _write_synthetic_video(path, frames=30, fps=10):
+RECORDER_MOVFLAGS = {"movflags": "frag_keyframe+empty_moov+default_base_moof", "flush_packets": "1"}
+
+
+def _write_synthetic_video(path, frames=30, fps=10, options=None):
     """A video whose frame n is a solid gray of level n*8, stamped like the recorder does (pts in ms)."""
     av = pytest.importorskip("av")
     from PIL import Image
 
-    with av.open(str(path), mode="w") as container:
+    with av.open(str(path), mode="w", options=options or {}) as container:
         stream = container.add_stream("libx264", rate=fps)
         stream.width, stream.height = 64, 48
         stream.pix_fmt = "yuv420p"
@@ -138,6 +141,22 @@ def test_extract_picks_the_nearest_frame_and_writes_an_index(tmp_path):
     assert [f["file"] for f in on_disk["frames"]] == [f["file"] for f in index["frames"]]
     assert on_disk["dropped"] == []
     assert sorted(p.name for p in (tmp_path / "frames").glob("*.png")) == sorted(files)
+
+
+def test_extract_places_frames_correctly_in_a_fragmented_recording(tmp_path):
+    """The recorder writes fragmented mp4, which decodes with a start offset (measured: 200 ms)."""
+    video = tmp_path / "session_recording.mp4"
+    _write_synthetic_video(video, frames=25, options=RECORDER_MOVFLAGS)
+    events = [ev("step_failed", 1001.23, "submit")]
+    index = extract_frames(video, ANCHOR, events, tmp_path / "frames", max_frames=8)
+    picked = {f["file"]: f for f in index["frames"]}["t001230ms_step-failed_submit.png"]
+    assert picked["frame_ms"] in (1200, 1300), picked
+    # Gray level 8 * frame index: the frame at 1200 ms is frame 12, not frame 10 shifted by the offset.
+    assert (
+        abs(_gray_of(tmp_path / "frames" / picked["file"]) - 8 * (picked["frame_ms"] // 100)) <= 6
+    )
+    tail = [f for f in index["frames"] if f["kind"] == "tail"][0]
+    assert abs(_gray_of(tmp_path / "frames" / tail["file"]) - 8 * 24) <= 6
 
 
 def test_extract_respects_the_budget_and_records_what_it_dropped(tmp_path):

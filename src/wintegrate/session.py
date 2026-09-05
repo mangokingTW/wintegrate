@@ -538,6 +538,7 @@ class Session:
         self.preflight: dict[str, Any] = {}
         self._phase: str | None = None
         self._phase_since: float | None = None
+        self._recording_anchor: dict[str, Any] | None = None
         self.kill_plan: KillPlan | None = None
         self.initial_census: list[WindowSnapshot] = []
         self.final_census: list[WindowSnapshot] = []
@@ -1079,6 +1080,9 @@ class Session:
             if self.recorder.start():
                 self.log_event("video_recording_started", f"Streaming to {video_path}")
                 anchor = self.recorder.anchor()
+                # Kept: the recorder answers None once stopped, and the frames
+                # are pulled after it has stopped.
+                self._recording_anchor = anchor
                 if anchor:
                     try:
                         (self.artifact_dir / "recording_anchor.json").write_text(
@@ -1343,17 +1347,28 @@ class Session:
         it never raises, and it says in the timeline whether it ran and how many
         frames it kept and dropped.
         """
-        if not self.recorder or not self.recorder.backend:
-            return
         video = self.artifact_dir / "session_recording.mp4"
         if not video.is_file():
+            return
+        anchor = self._recording_anchor
+        if anchor is None:
+            try:
+                anchor = json.loads(
+                    (self.artifact_dir / "recording_anchor.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                anchor = None
+        if anchor is None:
+            self.log_event(
+                "frames_skipped", "no recording anchor: the frames cannot be placed in time"
+            )
             return
         try:
             from wintegrate.frames import extract_frames
 
             index = extract_frames(
                 video,
-                self.recorder.anchor(),
+                anchor,
                 list(self.logs),
                 self.artifact_dir / "frames",
                 max_frames=max_frames,

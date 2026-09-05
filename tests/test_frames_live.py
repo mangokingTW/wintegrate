@@ -38,9 +38,17 @@ def test_a_failed_session_extracts_frames_around_the_failure(tmp_path):
                 raise RuntimeError("deliberate")
     if not (art / "session_recording.mp4").is_file():
         pytest.skip("no recording on this runner (PyAV encoder unavailable)")
+    events = [
+        json.loads(line)
+        for line in (art / "session_events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     frames = art / "frames"
     pngs = sorted(p.name for p in frames.glob("*.png"))
-    assert pngs, "a failed session with a recording must leave frames/"
+    # The journal says why when there are none: frames_skipped carries the reason.
+    assert pngs, "a failed session with a recording must leave frames/; journal says: " + str(
+        [e for e in events if e["type"].startswith("frames_")]
+    )
     assert any("step-failed" in n for n in pngs) and any("tail" in n for n in pngs)
     index = json.loads((frames / "index.json").read_text(encoding="utf-8"))
     assert [f["file"] for f in index["frames"]] == sorted(
@@ -51,9 +59,4 @@ def test_a_failed_session_extracts_frames_around_the_failure(tmp_path):
     assert (
         "frames/" in json.loads((art / "artifact_index.json").read_text(encoding="utf-8"))["files"]
     )
-    events = [
-        json.loads(line)
-        for line in (art / "session_events.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
     assert any(e["type"] == "frames_extracted" for e in events)
