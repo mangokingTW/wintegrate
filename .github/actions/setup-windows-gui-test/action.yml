@@ -35,6 +35,10 @@ runs:
     # spawns a terminal popup every 30 seconds until WSL is there, and Edge's
     # first-run page appears the first time anything launches a URL.
     #
+    - name: Quiet the runner and report its health
+      shell: pwsh
+      run: ${{ github.action_path }}/quiet-runner.ps1
+
     # A test that loses the foreground does not fail with "the foreground was
     # taken" — it fails with an empty field, a keystroke that went nowhere, or a
     # window that never came up.

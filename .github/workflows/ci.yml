@@ -46,6 +46,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Quiet the runner and report its health
+        shell: pwsh
+        run: .github/actions/setup-windows-gui-test/quiet-runner.ps1
+
         with:
           persist-credentials: false
 
@@ -103,6 +107,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Quiet the runner and report its health
+        shell: pwsh
+        run: .github/actions/setup-windows-gui-test/quiet-runner.ps1
+
         with:
           persist-credentials: false
 
@@ -330,6 +338,10 @@ jobs:
     name: test-target-app (${{ matrix.app }} / ${{ matrix.arch }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - name: Quiet the runner and report its health
+        shell: pwsh
+        run: .github/actions/setup-windows-gui-test/quiet-runner.ps1
+
         with:
           persist-credentials: false
 
