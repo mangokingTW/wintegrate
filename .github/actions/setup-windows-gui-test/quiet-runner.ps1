@@ -74,8 +74,11 @@ $cb = [Win.Dlg+EnumWindowsProc]{
         $txt = New-Object System.Text.StringBuilder 512
         [void][Win.Dlg]::GetWindowText($hWnd, $txt, 512)
         # Class and title together. This runs on a live desktop, and closing a
-        # dialog the tests put up would be worse than the noise.
-        if ($cls.ToString() -eq '#32770' -and $txt.ToString() -match 'System Properties') {
+        # dialog the tests put up would be worse than the noise. Performance
+        # Options is the page the paging-file error opens next (Advanced ->
+        # Virtual memory); it outlived the System Properties close and sat
+        # top-left of every arm64 recording on 2026-09-05.
+        if ($cls.ToString() -eq '#32770' -and $txt.ToString() -match 'System Properties|Performance Options') {
             $script:found += $txt.ToString()
             # WM_CLOSE with a timeout, because a modal dialog runs its own message
             # loop and a plain PostMessage can go unanswered.
@@ -183,6 +186,18 @@ $u32 = Add-Type -Namespace Quiet -Name User32 -PassThru -MemberDefinition '[DllI
 Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
     Where-Object { $_.MainWindowHandle -ne 0 } |
     ForEach-Object { [void]$u32::ShowWindow($_.MainWindowHandle, 0) }
+
+# The hosted agent's own console -- conhost, class ConsoleWindowClass, titled
+# with the agent's path -- fills the arm64 desktop and was the background of
+# every recording. Same treatment, same reason: the window is what steals the
+# foreground; the process is the agent reporting this job, and this step's
+# console may well be it. ShowWindow hides a console window without touching
+# the processes attached to it.
+$hidden = 0
+Get-Process -Name 'conhost' -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowHandle -ne 0 } |
+    ForEach-Object { [void]$u32::ShowWindow($_.MainWindowHandle, 0); $hidden++ }
+Write-Host "Console windows hidden: $hidden"
 
 # wsl.exe exits non-zero when WSL is absent, and this whole file is best-effort.
 $global:LASTEXITCODE = 0
