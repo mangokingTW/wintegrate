@@ -6,6 +6,33 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.13] — 2026-09-05
+
+### Fixed
+
+- **The CI sweep no longer kills the terminal hosting the process that called
+  it.** `sanitize_ci_runner_environment()` kills `WindowsTerminal` by name to
+  clear leftover windows. On Windows 11 that is also the default console host,
+  so a console-subsystem caller is attached to it -- and killing it destroyed
+  the console and the caller with it, about a second after the call returned.
+
+  Excluding it by pid is not possible. It is not an ancestor of the caller, and
+  it is not the owner of `GetConsoleWindow()` either: with Windows Terminal as
+  the host that window belongs to a brokered `OpenConsole.exe` whose parent
+  chain runs `svchost -> wininit -> services`, with the terminal nowhere in it.
+
+  So the answerable question is asked instead -- does this process have a
+  console at all -- and terminal hosts are swept only when it does not, which
+  is the ordinary case for a runner started by a service or a GUI.
+
+  Measured on Windows 11 ARM64: killing the rest of the list left the caller
+  running for a full 8-second watch; killing `WindowsTerminal` alone ended it
+  before its next heartbeat. With this change the same run completes.
+
+  Found from a GitHub Actions job that stopped mid-`import av` and could then
+  only be cleared with Force cancel -- which destroys the runner VM, taking the
+  logs and artifacts with it, so three rounds produced no evidence at all.
+
 ## [0.5.12] — 2026-09-05
 
 ### Added
