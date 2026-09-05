@@ -132,6 +132,76 @@ def full_suite_recording():
             logger.warning(f"Full-suite recording failed to stop ({type(exc).__name__}): {exc}")
 
 
+def _clear_runner_desktop() -> list[dict]:
+    """Closes the runner's own dialogs, hides its console and the Start menu; says what it did.
+
+    Windows only; every step wrapped. Returns one record per window acted on with
+    what was intended and what was observed a moment later, because a hide that
+    did not take is a different fact from one that did.
+    """
+    import ctypes
+    import time
+    from ctypes import wintypes
+
+    from wintegrate.interop import SW_HIDE, WNDENUMPROC, get_window_class, get_window_title, user32
+
+    WM_CLOSE = 0x0010
+    SMTO_ABORTIFHUNG = 0x0002
+    try:
+        user32.SendMessageTimeoutW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+            wintypes.UINT,
+            wintypes.UINT,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+    except Exception:
+        pass
+
+    actions: list[dict] = []
+
+    def enum_proc(hwnd, _):
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            cls = get_window_class(hwnd)
+            title = get_window_title(hwnd)
+            if cls == "#32770" and ("System Properties" in title or "Performance Options" in title):
+                result = ctypes.c_size_t()
+                user32.SendMessageTimeoutW(
+                    hwnd, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 3000, ctypes.byref(result)
+                )
+                actions.append({"action": "close", "hwnd": hwnd, "class": cls, "title": title})
+            elif cls == "ConsoleWindowClass":
+                user32.ShowWindow(hwnd, SW_HIDE)
+                actions.append({"action": "hide", "hwnd": hwnd, "class": cls, "title": title[:80]})
+            elif cls == "Windows.UI.Core.CoreWindow" and title in ("Search", "Start"):
+                user32.ShowWindow(hwnd, SW_HIDE)
+                actions.append({"action": "hide", "hwnd": hwnd, "class": cls, "title": title})
+        except Exception as exc:
+            actions.append(
+                {"action": "error", "hwnd": hwnd, "error": f"{type(exc).__name__}: {exc}"}
+            )
+        return True
+
+    try:
+        user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
+    except Exception as exc:
+        actions.append({"action": "error", "error": f"EnumWindows: {type(exc).__name__}: {exc}"})
+    time.sleep(0.5)
+    for a in actions:
+        if "hwnd" in a and a["action"] in ("close", "hide"):
+            try:
+                a["visible_after"] = bool(user32.IsWindowVisible(a["hwnd"])) and bool(
+                    user32.IsWindow(a["hwnd"])
+                )
+            except Exception:
+                a["visible_after"] = None
+    return actions
+
+
 @pytest.fixture(scope="session", autouse=True)
 def desktop_prepared(full_suite_recording):
     """Clears the OOBE privacy screen before the first test, not inside the first Session.
@@ -167,6 +237,14 @@ def desktop_prepared(full_suite_recording):
     except Exception as exc:
         record["oobe_dismissed"] = False
         record["error"] = f"{type(exc).__name__}: {exc}"
+    # What the recording of run 33959364275 showed after the OOBE dismissal: the
+    # dismissal ended in the Start menu ("Search" CoreWindow) and it stayed in the
+    # foreground; the paging-file error's "Performance Options" dialog sat top-left
+    # for the whole run (it appears after quiet-runner.ps1 has already looked); and
+    # the hosted agent's console window filled the desktop behind everything. The
+    # same three moves the Session sweep makes, done once here, on camera, with
+    # each one recorded and re-measured rather than assumed.
+    record["actions"] = _clear_runner_desktop()
     record["seconds"] = round(time.time() - record["started"], 2)
     record["foreground_after"] = foreground()
     try:
