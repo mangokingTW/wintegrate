@@ -334,14 +334,30 @@ def foreground_log(desktop_prepared):
     import threading
     import time
 
+    from wintegrate import interop
     from wintegrate.interop import (
         get_foreground_window,
-        get_process_table,
         get_window_class,
         get_window_pid,
         get_window_title,
         user32,
     )
+
+    # get_process_table arrives with #102; until it lands, name a pid the older way.
+    _table = getattr(interop, "get_process_table", None)
+    _name_of = getattr(interop, "get_process_image_name", None)
+
+    def process_name(pid: int, cache: dict[int, str]) -> str:
+        if pid in cache:
+            return cache[pid]
+        try:
+            if _table is not None:
+                cache.update({p: img for p, (_pp, img) in _table().items()})
+            elif _name_of is not None:
+                cache[pid] = _name_of(pid) or "?"
+        except Exception:
+            pass
+        return cache.get(pid, "?")
 
     stop = threading.Event()
     out = Path("recording-artifacts")
@@ -357,11 +373,8 @@ def foreground_log(desktop_prepared):
                     hwnd = get_foreground_window()
                     if hwnd != last:
                         pid = get_window_pid(hwnd) if hwnd else 0
-                        if pid and pid not in names:
-                            try:
-                                names = {p: img for p, (_pp, img) in get_process_table().items()}
-                            except Exception:
-                                pass
+                        if pid:
+                            process_name(pid, names)
                         fh.write(
                             json.dumps(
                                 {
