@@ -87,8 +87,14 @@ runs:
         New-Item -Path $oobe -Force -ErrorAction SilentlyContinue | Out-Null
         Set-ItemProperty -Path $oobe -Name 'DisablePrivacyExperience' -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
 
-        Get-Process -Name 'wsl','wslhost','WindowsTerminal','msedge','msedgewebview2' `
+        Get-Process -Name 'wsl','wslhost','msedge','msedgewebview2' `
           -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # WindowsTerminal is hidden, not killed. On Windows 11 it is also the default
+        # console host, so Stop-Process ends every console it hosts -- this step's
+        # included, and on a hosted runner the agent reporting the job with it. What
+        # steals the foreground is its window; hiding that leaves the process alone.
+        $u32 = Add-Type -Namespace Quiet -Name User32 -PassThru -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);'
+        Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$u32::ShowWindow($_.MainWindowHandle, 0) }
         # wsl.exe exits non-zero when WSL is absent, and this step is best-effort.
         $global:LASTEXITCODE = 0
 
