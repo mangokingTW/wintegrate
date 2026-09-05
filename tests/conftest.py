@@ -202,6 +202,48 @@ def _clear_runner_desktop() -> list[dict]:
     return actions
 
 
+def _hide_start_menu_when_it_arrives(foreground, seconds: float) -> list[dict]:
+    """Polls the foreground for a Start/Search CoreWindow and hides it; records what happened."""
+    import time
+
+    from wintegrate.interop import SW_HIDE, user32
+
+    actions: list[dict] = []
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        fg = foreground()
+        if fg.get("class") == "Windows.UI.Core.CoreWindow" and fg.get("title") in (
+            "Search",
+            "Start",
+        ):
+            try:
+                user32.ShowWindow(fg["hwnd"], SW_HIDE)
+                time.sleep(0.5)
+                after = foreground()
+                actions.append(
+                    {
+                        "action": "hide",
+                        "hwnd": fg["hwnd"],
+                        "class": fg["class"],
+                        "title": fg["title"],
+                        "foreground_after": after,
+                    }
+                )
+                if after.get("hwnd") != fg["hwnd"]:
+                    return actions
+            except Exception as exc:
+                actions.append(
+                    {
+                        "action": "error",
+                        "hwnd": fg.get("hwnd"),
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                return actions
+        time.sleep(0.25)
+    return actions
+
+
 @pytest.fixture(scope="session", autouse=True)
 def desktop_prepared(full_suite_recording):
     """Clears the OOBE privacy screen before the first test, not inside the first Session.
@@ -245,6 +287,12 @@ def desktop_prepared(full_suite_recording):
     # same three moves the Session sweep makes, done once here, on camera, with
     # each one recorded and re-measured rather than assumed.
     record["actions"] = _clear_runner_desktop()
+    # The dismissal ends by opening Start, a beat *after* the pass above has run:
+    # in run 33959944188 every arm64 job's desktop_prep.json ended with the
+    # foreground on the "Search" CoreWindow, and test_foreground_gives_the_window_back
+    # failed in all four with that very hwnd as the foreground it could not take
+    # back. So: wait for it, and hide it the way the Session sweep does.
+    record["actions"] += _hide_start_menu_when_it_arrives(foreground, seconds=6.0)
     record["seconds"] = round(time.time() - record["started"], 2)
     record["foreground_after"] = foreground()
     try:
