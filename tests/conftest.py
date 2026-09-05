@@ -314,3 +314,82 @@ def desktop_prepared(full_suite_recording):
         logger.warning(f"desktop_prep.json not written ({type(exc).__name__}): {exc}")
     logger.info(f"desktop prepared: {record}")
     yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def foreground_log(desktop_prepared):
+    """Records every change of the foreground window for the whole run.
+
+    A probe, so the next question has an answer on disk: in run 33960623532 the
+    Start menu was back on screen ~0.4 s after a Notepad was killed, four jobs
+    out of four, and neither the job log nor the recording says what activated
+    it or what the foreground was in between. One line per change, with the
+    owning process, into `recording-artifacts/foreground_log.jsonl`. Polls at
+    10 Hz; a probe must not cost the suite anything noticeable.
+    """
+    if not env.is_windows:
+        yield
+        return
+    import json
+    import threading
+    import time
+
+    from wintegrate.interop import (
+        get_foreground_window,
+        get_process_table,
+        get_window_class,
+        get_window_pid,
+        get_window_title,
+        user32,
+    )
+
+    stop = threading.Event()
+    out = Path("recording-artifacts")
+    out.mkdir(exist_ok=True)
+    path = out / "foreground_log.jsonl"
+
+    def run() -> None:
+        last = None
+        names: dict[int, str] = {}
+        with open(path, "a", encoding="utf-8", buffering=1) as fh:
+            while not stop.is_set():
+                try:
+                    hwnd = get_foreground_window()
+                    if hwnd != last:
+                        pid = get_window_pid(hwnd) if hwnd else 0
+                        if pid and pid not in names:
+                            try:
+                                names = {p: img for p, (_pp, img) in get_process_table().items()}
+                            except Exception:
+                                pass
+                        fh.write(
+                            json.dumps(
+                                {
+                                    "wall": time.time(),
+                                    "monotonic": round(time.monotonic(), 3),
+                                    "hwnd": hwnd,
+                                    "class": get_window_class(hwnd) if hwnd else "",
+                                    "title": (get_window_title(hwnd) if hwnd else "")[:80],
+                                    "pid": pid,
+                                    "process": names.get(pid, "?"),
+                                    "visible": bool(user32.IsWindowVisible(hwnd)) if hwnd else None,
+                                },
+                                default=str,
+                            )
+                            + "\n"
+                        )
+                        last = hwnd
+                except Exception as exc:  # the probe never takes the suite down
+                    fh.write(
+                        json.dumps({"wall": time.time(), "error": f"{type(exc).__name__}: {exc}"})
+                        + "\n"
+                    )
+                stop.wait(0.1)
+
+    thread = threading.Thread(target=run, name="foreground-log", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=2.0)
