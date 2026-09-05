@@ -197,9 +197,11 @@ def _select_new_window(
     after: list,
     excluded: set[int] = frozenset(),
     classes: set[str] | None = None,
+    class_substrings: tuple[str, ...] | None = None,
     proc_names: set[str] | None = None,
     title_re=None,
     require_all: bool = False,
+    require_title: bool = True,
 ):
     """The first window in `after` that is new, wanted and ready.
 
@@ -210,13 +212,15 @@ def _select_new_window(
     Separate from the waiting so that the matching -- every rule in it learned
     from a run that went wrong -- is testable without a desktop.
     """
-    has_criteria = bool(title_re or proc_names or classes)
+    has_criteria = bool(title_re or proc_names or classes or class_substrings)
     saw_unready = False
 
     def matches(snap) -> bool:
         checks = []
         if classes:
             checks.append(snap.class_name in classes)
+        if class_substrings:
+            checks.append(any(sub in (snap.class_name or "") for sub in class_substrings))
         if proc_names:
             checks.append(get_process_image_name(snap.pid) in proc_names)
         if title_re:
@@ -230,7 +234,7 @@ def _select_new_window(
             continue
         if has_criteria and not matches(snap):
             continue
-        if not _is_ready(snap):
+        if require_title and not _is_ready(snap):
             saw_unready = True
             continue
         return snap, saw_unready
@@ -1098,7 +1102,9 @@ class Window:
         exclude_hwnds: set[int] | None = None,
         process_names: tuple[str, ...] | list[str] | None = None,
         window_classes: tuple[str, ...] | list[str] | None = None,
+        class_name_contains: str | tuple[str, ...] | None = None,
         require_all: bool = False,
+        require_title: bool = True,
         context: str = "",
     ) -> Window:
         """Waits for a window that was not in `before` to appear, and returns it.
@@ -1114,13 +1120,31 @@ class Window:
         below, and fails as a `StopIteration` on a line that cannot say what did
         not appear when the guess was short.
 
-        Matching, `require_all` and readiness are exactly as in
-        `launch_and_discover`, because they are now the same code.
+        Two of its defaults do not survive the trip, and both have to be asked
+        for rather than assumed:
+
+        `class_name_contains`, because `window_classes` matches exactly and a
+        toolkit puts its version and its decorations in the class name --
+        Qt's menu popup is `Qt681QWindowPopupDropShadowSaveBits`, which no
+        caller can spell without pinning a Qt version.
+
+        `require_title=False`, because "visible but still untitled means it is
+        still coming up" is true of an application window and false of
+        everything that never has a title. A menu popup does not get one, so
+        the default rejects it until the wait runs out.
+
+        Otherwise matching, `require_all` and readiness are exactly as in
+        `launch_and_discover`, because they are the same code.
         """
         excluded = exclude_hwnds or set()
         compiled_re = re.compile(title_pattern, re.IGNORECASE) if title_pattern else None
         proc_names = {p.lower() for p in process_names} if process_names else None
         classes = set(window_classes) if window_classes else None
+        substrings = (
+            (class_name_contains,)
+            if isinstance(class_name_contains, str)
+            else tuple(class_name_contains or ())
+        )
 
         deadline = time.monotonic() + timeout
         saw_unready = False
@@ -1130,9 +1154,11 @@ class Window:
                 WindowCensus.capture(),
                 excluded=excluded,
                 classes=classes,
+                class_substrings=substrings,
                 proc_names=proc_names,
                 title_re=compiled_re,
                 require_all=require_all,
+                require_title=require_title,
             )
             saw_unready = saw_unready or unready
             if snap is not None:
@@ -1151,6 +1177,7 @@ class Window:
         raise WindowDiscoveryTimeoutError(
             f"No new window appeared within {timeout}s{where} "
             f"(pattern={title_pattern}, classes={window_classes}, "
+            f"class_name_contains={class_name_contains}, "
             f"process_names={process_names}).{detail}"
             f"{_describe_desktop_now(before)}"
         )

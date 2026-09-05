@@ -86,3 +86,34 @@ def test_select_new_window_require_all_rejects_a_partial_match():
         before, after, classes={"Notepad"}, title_re=re.compile("Notepad"), require_all=True
     )
     assert all_of[0] is None
+
+
+def test_select_new_window_matches_a_class_by_substring():
+    """A toolkit puts its version and its decorations in the class name.
+
+    Qt's menu popup is Qt681QWindowPopupDropShadowSaveBits: an exact match
+    cannot be written without pinning a Qt version, and the suffix is not
+    something a caller should have to know either.
+    """
+    before = []
+    after = [_snap(1, title="", class_name="Qt681QWindowPopupDropShadowSaveBits")]
+
+    assert _select_new_window(before, after, classes={"Qt681QWindowPopup"})[0] is None
+    found, _ = _select_new_window(
+        before, after, class_substrings=("QWindowPopup",), require_title=False
+    )
+    assert found is not None and found.hwnd == 1
+
+
+def test_select_new_window_require_title_is_the_launch_default():
+    """ "Untitled means still coming up" is true of an app window and of nothing else."""
+    before = []
+    after = [_snap(1, title="", class_name="Qt681QWindowPopupDropShadowSaveBits")]
+
+    found, unready = _select_new_window(before, after, class_substrings=("QWindowPopup",))
+    assert found is None and unready is True
+
+    found, unready = _select_new_window(
+        before, after, class_substrings=("QWindowPopup",), require_title=False
+    )
+    assert found is not None and unready is False

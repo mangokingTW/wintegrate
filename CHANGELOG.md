@@ -6,6 +6,33 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [0.5.13] — 2026-09-05
+
+### Added
+
+- **`Window.wait_for_new(class_name_contains=..., require_title=False)`.** 0.5.12
+  exposed the wait but kept two of `launch_and_discover`'s assumptions, and both
+  are wrong for the case it was extracted for -- so it could not do it.
+
+  `window_classes` matches exactly, and a toolkit puts its version and its
+  decorations in the class name: Qt's menu popup is
+  `Qt681QWindowPopupDropShadowSaveBits`, which no caller can spell without
+  pinning a Qt version. `class_name_contains` matches a substring instead.
+
+  And "visible but still untitled means it is still coming up" is true of an
+  application window and false of everything that never has a title. A menu
+  popup does not get one, so the wait rejected it until it ran out. Readiness is
+  still required by default, because `launch_and_discover` depends on it;
+  `require_title=False` turns it off.
+
+  ```python
+  before = WindowCensus.capture()
+  menu.items[4].expand()
+  popup = Window.wait_for_new(
+      before, class_name_contains="QWindowPopup", require_title=False
+  )
+  ```
+
 ## [0.5.12] — 2026-09-05
 
 ### Added
