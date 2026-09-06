@@ -58,29 +58,11 @@ runs:
       shell: pwsh
       run: pip install "wintegrate[video]${{ inputs.wintegrate-version }}" pytest
 
-    # A first-run popup owning the foreground is not something the test can
-    # recover from politely, and on these images it is usually a CoreWindow
-    # ("Microsoft account", "Search") rather than anything the test launched.
-    - name: Close anything holding the foreground
+    # What is on the desktop before the test starts is the test's problem: the
+    # OOBE privacy page holds the foreground, the paging-file dialogs sit on
+    # top, the agent's console fills the screen. prepare_desktop.py handles the
+    # three, re-measures each, and prints what it did; the JSON goes next to the
+    # job's other diagnostics.
+    - name: Prepare the desktop
       shell: pwsh
-      run: |
-        python -c "
-        import time
-        from wintegrate.interop import (
-            get_foreground_window, get_window_class, get_window_title, user32,
-        )
-        WM_CLOSE = 0x0010
-        for attempt in range(2):
-            hwnd = get_foreground_window()
-            if not hwnd:
-                continue
-            cls, title = get_window_class(hwnd), get_window_title(hwnd)
-            print(f'pass {attempt}: foreground is class={cls!r} title={title!r}')
-            if cls == 'Windows.UI.Core.CoreWindow':
-                user32.SendMessageW(hwnd, WM_CLOSE, 0, 0)
-                print('  sent WM_CLOSE')
-                time.sleep(3)
-        hwnd = get_foreground_window()
-        print(f'foreground now: {get_window_class(hwnd)!r} {get_window_title(hwnd)!r}')
-        "
-
+      run: python "${{ github.action_path }}/prepare_desktop.py" --out "$env:RUNNER_TEMP/desktop_prep.json"
