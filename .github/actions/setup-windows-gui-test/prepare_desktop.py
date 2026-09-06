@@ -91,7 +91,9 @@ def _clear_pass() -> list[dict]:
                     {"action": action, "hwnd": hwnd, "class": cls, "title": (title or "")[:80]}
                 )
         except Exception as exc:  # noqa: BLE001
-            actions.append({"action": "error", "hwnd": hwnd, "error": f"{type(exc).__name__}: {exc}"})
+            actions.append(
+                {"action": "error", "hwnd": hwnd, "error": f"{type(exc).__name__}: {exc}"}
+            )
         return True
 
     user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
@@ -177,11 +179,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     record = prepare_desktop()
     for a in record["actions"]:
-        print(f"  {a.get('action')}: {a.get('class')!r} {a.get('title')!r} -> "
-              f"visible_after={a.get('visible_after', a.get('foreground_after'))}")
+        print(
+            f"  {a.get('action')}: {a.get('class')!r} {a.get('title')!r} -> "
+            f"visible_after={a.get('visible_after', a.get('foreground_after'))}"
+        )
     fg = record["foreground_after"]
-    print(f"oobe_dismissed={record['oobe_dismissed']} actions={len(record['actions'])} "
-          f"foreground now: {fg.get('class')!r} {fg.get('title')!r} ({record['seconds']} s)")
+    print(
+        f"oobe_dismissed={record['oobe_dismissed']} actions={len(record['actions'])} "
+        f"foreground now: {fg.get('class')!r} {fg.get('title')!r} ({record['seconds']} s)"
+    )
     if fg.get("class") == "Windows.UI.Core.CoreWindow":
         print(f"::warning::a shell CoreWindow still holds the foreground: {fg.get('title')!r}")
     if args.out:

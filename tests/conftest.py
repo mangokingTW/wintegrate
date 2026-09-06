@@ -137,7 +137,10 @@ def _prepare_desktop_module():
     for the action and for this suite."""
     import importlib.util
 
-    path = Path(__file__).resolve().parents[1] / ".github/actions/setup-windows-gui-test/prepare_desktop.py"
+    path = (
+        Path(__file__).resolve().parents[1]
+        / ".github/actions/setup-windows-gui-test/prepare_desktop.py"
+    )
     spec = importlib.util.spec_from_file_location("prepare_desktop", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -161,7 +164,6 @@ def desktop_prepared(full_suite_recording):
         yield
         return
     import json
-    import time
 
     # The three moves (OOBE page, runner dialogs, agent console, then the Start
     # menu the dismissal leaves open) live in the composite action's
