@@ -187,17 +187,10 @@ Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue |
     Where-Object { $_.MainWindowHandle -ne 0 } |
     ForEach-Object { [void]$u32::ShowWindow($_.MainWindowHandle, 0) }
 
-# The hosted agent's own console -- conhost, class ConsoleWindowClass, titled
-# with the agent's path -- fills the arm64 desktop and was the background of
-# every recording. Same treatment, same reason: the window is what steals the
-# foreground; the process is the agent reporting this job, and this step's
-# console may well be it. ShowWindow hides a console window without touching
-# the processes attached to it.
-$hidden = 0
-Get-Process -Name 'conhost' -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowHandle -ne 0 } |
-    ForEach-Object { [void]$u32::ShowWindow($_.MainWindowHandle, 0); $hidden++ }
-Write-Host "Console windows hidden: $hidden"
+# The hosted agent's own console (class ConsoleWindowClass, titled with the
+# agent's path) fills the arm64 desktop. Hidden by prepare_desktop.py, which
+# runs after wintegrate is installed and enumerates windows: the previous
+# `Get-Process conhost | Where MainWindowHandle -ne 0` found none in any run.
 
 # wsl.exe exits non-zero when WSL is absent, and this whole file is best-effort.
 $global:LASTEXITCODE = 0

@@ -132,125 +132,16 @@ def full_suite_recording():
             logger.warning(f"Full-suite recording failed to stop ({type(exc).__name__}): {exc}")
 
 
-def _clear_runner_desktop() -> list[dict]:
-    """Closes the runner's own dialogs, hides its console and the Start menu; says what it did.
+def _prepare_desktop_module():
+    """The action's prepare_desktop.py, loaded from the checkout: one copy of the rule
+    for the action and for this suite."""
+    import importlib.util
 
-    Windows only; every step wrapped. Returns one record per window acted on with
-    what was intended and what was observed a moment later, because a hide that
-    did not take is a different fact from one that did.
-    """
-    import ctypes
-    import time
-    from ctypes import wintypes
-
-    from wintegrate.interop import SW_HIDE, WNDENUMPROC, get_window_class, get_window_title, user32
-
-    WM_CLOSE = 0x0010
-    SMTO_ABORTIFHUNG = 0x0002
-    try:
-        user32.SendMessageTimeoutW.argtypes = [
-            wintypes.HWND,
-            wintypes.UINT,
-            wintypes.WPARAM,
-            wintypes.LPARAM,
-            wintypes.UINT,
-            wintypes.UINT,
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-    except Exception:
-        pass
-
-    actions: list[dict] = []
-
-    def enum_proc(hwnd, _):
-        try:
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            cls = get_window_class(hwnd)
-            title = get_window_title(hwnd)
-            if cls == "#32770" and ("System Properties" in title or "Performance Options" in title):
-                result = ctypes.c_size_t()
-                user32.SendMessageTimeoutW(
-                    hwnd, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 3000, ctypes.byref(result)
-                )
-                actions.append({"action": "close", "hwnd": hwnd, "class": cls, "title": title})
-            elif cls == "ConsoleWindowClass":
-                user32.ShowWindow(hwnd, SW_HIDE)
-                actions.append({"action": "hide", "hwnd": hwnd, "class": cls, "title": title[:80]})
-            elif cls == "Windows.UI.Core.CoreWindow" and title in ("Search", "Start"):
-                user32.ShowWindow(hwnd, SW_HIDE)
-                actions.append({"action": "hide", "hwnd": hwnd, "class": cls, "title": title})
-        except Exception as exc:
-            actions.append(
-                {"action": "error", "hwnd": hwnd, "error": f"{type(exc).__name__}: {exc}"}
-            )
-        return True
-
-    try:
-        user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
-    except Exception as exc:
-        actions.append({"action": "error", "error": f"EnumWindows: {type(exc).__name__}: {exc}"})
-    time.sleep(0.5)
-    for a in actions:
-        if "hwnd" in a and a["action"] in ("close", "hide"):
-            try:
-                a["visible_after"] = bool(user32.IsWindowVisible(a["hwnd"])) and bool(
-                    user32.IsWindow(a["hwnd"])
-                )
-            except Exception:
-                a["visible_after"] = None
-    return actions
-
-
-def _hide_start_menu_when_it_arrives(foreground, seconds: float) -> list[dict]:
-    """Waits for the Start menu the dismissal leaves open and closes it the way a person would: Esc.
-
-    `ShowWindow(SW_HIDE)` on the "Search" CoreWindow does not take -- run
-    33960259368 recorded eight hides with the foreground unchanged each time --
-    so this presses Escape while it holds the foreground and re-measures. What a
-    person does in the first second, done by the process, and recorded.
-    """
-    import time
-
-    from wintegrate.interop import send_vk_input
-
-    VK_ESCAPE = 0x1B
-    actions: list[dict] = []
-    deadline = time.monotonic() + seconds
-    presses = 0
-    while time.monotonic() < deadline and presses < 3:
-        fg = foreground()
-        if fg.get("class") == "Windows.UI.Core.CoreWindow" and fg.get("title") in (
-            "Search",
-            "Start",
-        ):
-            try:
-                send_vk_input(VK_ESCAPE)
-                presses += 1
-                time.sleep(0.7)
-                after = foreground()
-                actions.append(
-                    {
-                        "action": "escape",
-                        "hwnd": fg["hwnd"],
-                        "class": fg["class"],
-                        "title": fg["title"],
-                        "foreground_after": after,
-                    }
-                )
-                if after.get("hwnd") != fg["hwnd"]:
-                    return actions
-            except Exception as exc:
-                actions.append(
-                    {
-                        "action": "error",
-                        "hwnd": fg.get("hwnd"),
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-                return actions
-        time.sleep(0.25)
-    return actions
+    path = Path(__file__).resolve().parents[1] / ".github/actions/setup-windows-gui-test/prepare_desktop.py"
+    spec = importlib.util.spec_from_file_location("prepare_desktop", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -272,38 +163,11 @@ def desktop_prepared(full_suite_recording):
     import json
     import time
 
-    from wintegrate.interop import get_foreground_window, get_window_class, get_window_title
-    from wintegrate.session import try_dismiss_oobe_privacy_screen
-
-    def foreground() -> dict:
-        try:
-            hwnd = get_foreground_window()
-            return {"hwnd": hwnd, "class": get_window_class(hwnd), "title": get_window_title(hwnd)}
-        except Exception as exc:  # a diagnostic never blocks the suite
-            return {"error": f"{type(exc).__name__}: {exc}"}
-
-    record = {"foreground_before": foreground(), "started": time.time()}
-    try:
-        record["oobe_dismissed"] = bool(try_dismiss_oobe_privacy_screen(timeout=15.0))
-    except Exception as exc:
-        record["oobe_dismissed"] = False
-        record["error"] = f"{type(exc).__name__}: {exc}"
-    # What the recording of run 33959364275 showed after the OOBE dismissal: the
-    # dismissal ended in the Start menu ("Search" CoreWindow) and it stayed in the
-    # foreground; the paging-file error's "Performance Options" dialog sat top-left
-    # for the whole run (it appears after quiet-runner.ps1 has already looked); and
-    # the hosted agent's console window filled the desktop behind everything. The
-    # same three moves the Session sweep makes, done once here, on camera, with
-    # each one recorded and re-measured rather than assumed.
-    record["actions"] = _clear_runner_desktop()
-    # The dismissal ends by opening Start, a beat *after* the pass above has run:
-    # in run 33959944188 every arm64 job's desktop_prep.json ended with the
-    # foreground on the "Search" CoreWindow, and test_foreground_gives_the_window_back
-    # failed in all four with that very hwnd as the foreground it could not take
-    # back. So: wait for it, and close it the way a person does -- Esc.
-    record["actions"] += _hide_start_menu_when_it_arrives(foreground, seconds=6.0)
-    record["seconds"] = round(time.time() - record["started"], 2)
-    record["foreground_after"] = foreground()
+    # The three moves (OOBE page, runner dialogs, agent console, then the Start
+    # menu the dismissal leaves open) live in the composite action's
+    # prepare_desktop.py so a harness that never runs pytest gets them too; this
+    # suite is one more caller, on camera.
+    record = _prepare_desktop_module().prepare_desktop()
     try:
         out = Path("recording-artifacts")
         out.mkdir(exist_ok=True)
