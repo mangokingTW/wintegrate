@@ -41,6 +41,15 @@
 #     entire symptom is a *sound*. The two builds are pixel-identical, so even a
 #     screen recording cannot show it — but the return value of one message can.
 #
+#   Windows Terminal #20593 — Esc closes the pane's context menu but keyboard
+#     focus stays on the menu button that had it, so Enter invokes the dismissed
+#     item (a split from the submenu, a re-opened submenu from the top level).
+#     The issue is open, so this case asserts the behaviour it asks for under
+#     xfail(strict=True): green while the bug is there, red the day it is fixed.
+#     The tab header's menu does it right and is the control. What makes it worth
+#     demonstrating: the symptom is *where focus is*, which UIA answers directly
+#     and a screenshot cannot show — the menu looks closed either way.
+#
 name: Upstream bug demo
 
 on:
@@ -54,7 +63,7 @@ on:
       case:
         description: Which upstream bug to reproduce
         type: choice
-        options: [all, notepad++, winmerge, sqlitebrowser, files]
+        options: [all, notepad++, winmerge, sqlitebrowser, files, terminal]
         default: all
 
 permissions:
@@ -106,6 +115,9 @@ jobs:
                 arches: ["x64", "arm64"] },
               { case: "files", issue: "18815",
                 tests: "tests/test_regression_files_18815.py",
+                arches: ["x64", "arm64"] },
+              { case: "terminal", issue: "20593",
+                tests: "tests/test_regression_terminal_20593.py",
                 arches: ["x64", "arm64"] }
             ]
             | map(select($case == "all" or .case == $case))
@@ -325,6 +337,61 @@ jobs:
             }
             Write-Host ("{0}: {1} (Qt5)" -f $b.Version, (Get-Item $exe).VersionInfo.FileVersion)
           }
+
+      # One build, not two: the issue is open and there is no fixed build to
+      # compare against, so the test carries the expectation as xfail(strict)
+      # instead. Portable rather than installed because the runner images ship
+      # no Terminal (Server 2025) or a Store package that cannot be pinned
+      # (Windows 11); a `.portable` marker beside the exe keeps its settings
+      # local. The zip is unsigned, so the hash is checked here and the
+      # Authenticode signature is checked on the exe it contains.
+      - name: Fetch Windows Terminal 1.24.11911.0 (portable) from the fixture mirror
+        if: matrix.case == 'terminal'
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WT_ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '1.24.11911.0'
+          $root = 'C:\wt'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+          # Both produced twice, from independent downloads.
+          $sha = @{ x64 = '7691EFEB71C8DD0B95536C84E366FA4CF809A42C534912F9CEFA1056534383BD'
+                    arm64 = 'D794A881D4B4E151D79366FAC85D1CBE7E21E90FA69F4157796377C13F1EA844' }
+
+          $asset = "Microsoft.WindowsTerminal_${version}_$env:WT_ARCH.zip"
+          gh release download "terminal-$version" `
+            --repo mangokingTW/wintegrate-test-fixtures `
+            --pattern $asset --dir $root
+          if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $asset ($LASTEXITCODE)" }
+
+          $zip = Join-Path $root $asset
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($hash -ne $sha[$env:WT_ARCH]) { throw "SHA-256 mismatch for ${asset}: got $hash, expected $($sha[$env:WT_ARCH])" }
+          Write-Host "sha256 ok: $asset"
+
+          $dir = Join-Path $root $version
+          Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+          $home_ = Join-Path $dir "terminal-$version"
+          $exe = Join-Path $home_ 'WindowsTerminal.exe'
+          if (-not (Test-Path $exe)) { throw "no WindowsTerminal.exe in $home_" }
+          New-Item -ItemType File -Force -Path (Join-Path $home_ '.portable') | Out-Null
+
+          $sig = Get-AuthenticodeSignature $exe
+          Write-Host "signature: $($sig.Status) / $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "signature is $($sig.Status), not Valid" }
+          if ($sig.SignerCertificate.Subject -ne 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US') {
+            throw "unexpected signer: $($sig.SignerCertificate.Subject)"
+          }
+          # The package is 1.24.11911.0; the exe inside carries the build's own
+          # file version, so that is what is pinned here.
+          $fileVersion = '1.24.2607.10001'
+          $got = (Get-Item $exe).VersionInfo.FileVersion
+          if ($got -ne $fileVersion) { throw "$exe is $got, expected $fileVersion" }
+          Write-Host ("{0}: {1}" -f $home_, $got)
 
       # Files is an MSIX package, so the two builds cannot be installed at once —
       # unlike the other three cases, which unpack side by side. Each build is
