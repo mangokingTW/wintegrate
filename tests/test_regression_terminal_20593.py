@@ -33,8 +33,7 @@ import pytest
 from waits import settled
 
 from wintegrate import Mouse, UiaElement, Window, WindowCensus
-from wintegrate.apps import sweep_processes_verified
-from wintegrate.interop import send_keys
+from wintegrate.interop import get_process_image_name, send_keys
 
 # Not part of the release gate; see tests/test_regression_notepadpp_16326.py.
 pytestmark = [
@@ -113,18 +112,47 @@ def _walk_down_to(name_part: str, steps: int = 14) -> UiaElement:
     return focused
 
 
+def _terminal_windows() -> list:
+    return [w for w in WindowCensus.capture() if w.class_name == WINDOW_CLASS]
+
+
+def _is_ours(pid: int, exe: Path) -> bool:
+    """Only the Terminal we extracted. On windows-latest the runner's own console
+    lives inside a Windows Terminal window (class CASCADIA_HOSTING_WINDOW_CLASS,
+    titled with the hosted-compute-agent path); killing WindowsTerminal.exe by name
+    there cancels the job. Image path is what tells the two apart."""
+    image = get_process_image_name(pid) or ""
+    return Path(image).parent.resolve() == exe.parent.resolve()
+
+
+def _sweep_ours(exe: Path) -> None:
+    pids = {w.pid for w in _terminal_windows() if _is_ours(w.pid, exe)}
+    for pid in pids:
+        subprocess.run(["taskkill", "/f", "/pid", str(pid)], capture_output=True, check=False)
+    left = settled(
+        lambda: [w for w in _terminal_windows() if w.pid in pids], lambda ws: not ws, timeout=10.0
+    )
+    assert not left, f"our Terminal windows survived the sweep: {left}"
+
+
 @pytest.fixture
 def terminal():
     """A fresh Terminal window per test: every scenario here changes menu state."""
     exe = _wt_exe()
-    sweep_processes_verified((PROCESS,), (WINDOW_CLASS,))
+    _sweep_ours(exe)
+    others = {w.hwnd for w in _terminal_windows()}
     proc, win = Window.launch_and_discover(
         [str(exe), "-w", "new"],
         timeout=90.0,
         process_names=(PROCESS,),
         window_classes=(WINDOW_CLASS,),
+        exclude_hwnds=others,
     )
     try:
+        assert _is_ours(win.pid, exe), (
+            f"discovered {win!r}, whose image is {get_process_image_name(win.pid)!r}, "
+            f"not the Terminal under {exe.parent}"
+        )
         assert win.set_foreground(timeout=10.0), f"{win!r} never became the foreground window"
         focused = _focus_settles(_is_terminal, timeout=15.0)
         assert _is_terminal(focused), f"focus is on {focused.describe()}, not the terminal"
@@ -133,7 +161,7 @@ def terminal():
     finally:
         win.close(force=True)
         proc.terminate()
-        sweep_processes_verified((PROCESS,), (WINDOW_CLASS,))
+        _sweep_ours(exe)
 
 
 def _open_pane_menu(win: Window) -> UiaElement:
