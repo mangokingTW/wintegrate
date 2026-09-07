@@ -16,24 +16,31 @@ Measured on 1.24.11911.0 (Windows 11 ARM64 VM), UIA focused element after Esc:
     pane menu, top level       <menu item 'Split pane'>                  12x12 px
     tab menu                   <terminal 'Windows PowerShell'>
 
-The issue is open, so the assertions state the behaviour it asks for and are
-`xfail(strict=True)`: green while the bug is there, red (XPASS) the day a build
-behaves — which is the signal to drop the marker and keep the test.
+The issue is open, so the assertions below state the defect as measured today,
+the same way the other regression tests assert that the old build is still
+broken. The day one of them fails, a build has started handing focus back and
+the test turns into the regression guard for it.
+
+Not `xfail(strict=True)`, deliberately: pytest records a test whose *fixture*
+failed as XFAIL when the test carries that marker, and strict only catches XPASS.
+A broken fixture would then read exactly like "the bug is still there".
 """
 
 from __future__ import annotations
 
+import ctypes
 import os
 import subprocess
 import sys
 import time
+from ctypes import wintypes
 from pathlib import Path
 
 import pytest
 from waits import settled
 
 from wintegrate import Mouse, UiaElement, Window, WindowCensus
-from wintegrate.interop import get_process_image_name, send_keys
+from wintegrate.interop import PROCESS_QUERY_LIMITED_INFORMATION, kernel32, send_keys
 
 # Not part of the release gate; see tests/test_regression_notepadpp_16326.py.
 pytestmark = [
@@ -54,11 +61,6 @@ PROCESS = "WindowsTerminal.exe"
 WINDOW_CLASS = "CASCADIA_HOSTING_WINDOW_CLASS"
 POPUP_CLASS = "Xaml_WindowedPopupClass"
 UIA_TAB_ITEM = 50019
-
-OPEN_ISSUE = pytest.mark.xfail(
-    strict=True,
-    reason="microsoft/terminal#20593 is open: Esc leaves focus on the dismissed menu item",
-)
 
 
 def _wt_exe() -> Path:
@@ -116,30 +118,51 @@ def _terminal_windows() -> list:
     return [w for w in WindowCensus.capture() if w.class_name == WINDOW_CLASS]
 
 
+def _image_path(pid: int) -> str:
+    """The full image path of a process; wintegrate's helper returns the basename."""
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(buf))
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return buf.value
+        return ""
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _is_ours(pid: int, exe: Path) -> bool:
     """Only the Terminal we extracted. On windows-latest the runner's own console
     lives inside a Windows Terminal window (class CASCADIA_HOSTING_WINDOW_CLASS,
     titled with the hosted-compute-agent path); killing WindowsTerminal.exe by name
     there cancels the job. Image path is what tells the two apart."""
-    image = get_process_image_name(pid) or ""
-    return Path(image).parent.resolve() == exe.parent.resolve()
+    image = _image_path(pid)
+    return bool(image) and Path(image).parent.resolve() == exe.parent.resolve()
 
 
-def _sweep_ours(exe: Path) -> None:
-    pids = {w.pid for w in _terminal_windows() if _is_ours(w.pid, exe)}
-    for pid in pids:
+# Only processes this module launched are ever killed. Sweeping by name would
+# also hit whatever else runs in a Windows Terminal, the runner's own console
+# included (see _is_ours).
+_LAUNCHED: set[int] = set()
+
+
+def _kill_launched() -> None:
+    alive = {w.pid for w in _terminal_windows() if w.pid in _LAUNCHED}
+    for pid in alive:
         subprocess.run(["taskkill", "/f", "/pid", str(pid)], capture_output=True, check=False)
     left = settled(
-        lambda: [w for w in _terminal_windows() if w.pid in pids], lambda ws: not ws, timeout=10.0
+        lambda: [w for w in _terminal_windows() if w.pid in alive], lambda ws: not ws, timeout=10.0
     )
-    assert not left, f"our Terminal windows survived the sweep: {left}"
+    assert not left, f"Terminal windows we launched survived the sweep: {left}"
 
 
 @pytest.fixture
 def terminal():
     """A fresh Terminal window per test: every scenario here changes menu state."""
     exe = _wt_exe()
-    _sweep_ours(exe)
+    _kill_launched()
     others = {w.hwnd for w in _terminal_windows()}
     proc, win = Window.launch_and_discover(
         [str(exe), "-w", "new"],
@@ -148,9 +171,12 @@ def terminal():
         window_classes=(WINDOW_CLASS,),
         exclude_hwnds=others,
     )
+    _LAUNCHED.add(win.pid)
     try:
-        assert _is_ours(win.pid, exe), (
-            f"discovered {win!r}, whose image is {get_process_image_name(win.pid)!r}, "
+        # An App Execution Alias (the local override) does not live beside the
+        # exe it starts, so the path check is for the portable layout only.
+        assert os.environ.get("WINTEGRATE_TERMINAL_EXE") or _is_ours(win.pid, exe), (
+            f"discovered {win!r}, whose image is {_image_path(win.pid)!r}, "
             f"not the Terminal under {exe.parent}"
         )
         assert win.set_foreground(timeout=10.0), f"{win!r} never became the foreground window"
@@ -161,7 +187,7 @@ def terminal():
     finally:
         win.close(force=True)
         proc.terminate()
-        _sweep_ours(exe)
+        _kill_launched()
 
 
 def _open_pane_menu(win: Window) -> UiaElement:
@@ -204,20 +230,22 @@ def test_the_measurement_can_see_a_split(terminal):
     assert panes == 2, f"Enter on 'Duplicate ...' produced {panes} pane(s), expected a split"
 
 
-@OPEN_ISSUE
-def test_esc_from_the_submenu_hands_focus_back_to_the_terminal(terminal):
+def test_esc_from_the_submenu_leaves_focus_on_the_hidden_item(terminal):
+    """The defect as reported. Fails the day Esc hands focus back to the terminal."""
     item = _open_split_submenu(terminal)
     opened = len(_popups(terminal))
     _press_esc_and_wait_for_the_flyout(terminal, opened)
     focused = _focus_settles(_is_terminal, timeout=3.0)
-    assert _is_terminal(focused), (
-        f"after Esc, focus is on {focused.describe()} rect={focused.bounding_rectangle} "
-        f"(the item that had it was {item.name!r}), not on the terminal"
+    assert not _is_terminal(focused), "focus returned to the terminal after Esc: fixed upstream?"
+    assert focused.name == item.name and not focused.is_visible(), (
+        f"after Esc, focus is on {focused.describe()} rect={focused.bounding_rectangle}; "
+        f"expected the dismissed {item.name!r} with an empty rectangle"
     )
 
 
-@OPEN_ISSUE
-def test_enter_after_esc_reaches_the_shell_not_the_dismissed_item(terminal):
+def test_enter_after_esc_invokes_the_dismissed_item(terminal):
+    """The consequence: Enter runs 'Duplicate ...' from a menu that is no longer
+    on screen, and the pane splits. Fails the day Enter reaches the shell instead."""
     _open_split_submenu(terminal)
     opened = len(_popups(terminal))
     _press_esc_and_wait_for_the_flyout(terminal, opened)
@@ -225,30 +253,32 @@ def test_enter_after_esc_reaches_the_shell_not_the_dismissed_item(terminal):
     # Waits for the split to finish, not for the count to move: the tree reads 0
     # panes for a moment while the new one is being built.
     panes = settled(lambda: len(_panes(terminal)), lambda n: n == 2, timeout=5.0)
-    assert panes == 1, (
-        f"Enter after Esc split the pane ({panes} panes now): the dismissed "
-        "'Duplicate ...' item was still the keyboard focus and got invoked"
+    time.sleep(1.0)  # hold the result for the recording
+    assert panes == 2, (
+        f"Enter after Esc left {panes} pane(s); the dismissed 'Duplicate ...' item was "
+        "expected to be invoked and split the pane — fixed upstream?"
     )
 
 
-@OPEN_ISSUE
-def test_esc_from_the_top_level_hands_focus_back_to_the_terminal(terminal):
-    """Same defect without the submenu: Esc closes the menu, focus stays on the
-    'Split pane' button, and Enter re-opens its submenu at the screen origin."""
+def test_esc_from_the_top_level_leaves_focus_on_split_pane(terminal):
+    """Same defect without the submenu, not in the report: Esc closes the whole
+    menu, focus stays on the 'Split pane' button, and Enter re-opens its submenu
+    anchored to a button that is no longer on screen."""
     _open_pane_menu(terminal)
     entry = _walk_down_to("Split pane")
     assert "split pane" in entry.name.casefold(), f"never reached Split pane: {entry.describe()}"
     opened = len(_popups(terminal))
     _press_esc_and_wait_for_the_flyout(terminal, opened)
-    assert not _popups(terminal), "Esc at the top level should close the whole menu"
+    assert not _popups(terminal), "Esc at the top level did not close the menu"
     focused = _focus_settles(_is_terminal, timeout=3.0)
-    if not _is_terminal(focused):
-        send_keys("{ENTER}")
-        reopened = settled(lambda: len(_popups(terminal)), lambda n: n > 0, timeout=3.0)
-        pytest.fail(
-            f"after Esc, focus is on {focused.describe()} rect={focused.bounding_rectangle}; "
-            f"Enter then opened {reopened} popup(s) from the dismissed menu"
-        )
+    assert not _is_terminal(focused), "focus returned to the terminal after Esc: fixed upstream?"
+    assert focused.name == entry.name, (
+        f"after Esc, focus is on {focused.describe()}; expected the dismissed {entry.name!r}"
+    )
+    send_keys("{ENTER}")
+    reopened = settled(lambda: len(_popups(terminal)), lambda n: n > 0, timeout=3.0)
+    time.sleep(1.0)  # hold the result for the recording
+    assert reopened > 0, "Enter after Esc opened nothing; the dismissed button was not invoked"
 
 
 def test_the_tab_menu_hands_focus_back_on_esc(terminal):

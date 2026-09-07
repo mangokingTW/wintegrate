@@ -44,8 +44,9 @@
 #   Windows Terminal #20593 — Esc closes the pane's context menu but keyboard
 #     focus stays on the menu button that had it, so Enter invokes the dismissed
 #     item (a split from the submenu, a re-opened submenu from the top level).
-#     The issue is open, so this case asserts the behaviour it asks for under
-#     xfail(strict=True): green while the bug is there, red the day it is fixed.
+#     The issue is open, so this case asserts the defect as measured today and
+#     turns red the day a build hands focus back. (Not xfail: pytest records a
+#     test whose fixture failed as XFAIL, which reads like the bug being there.)
 #     The tab header's menu does it right and is the control. What makes it worth
 #     demonstrating: the symptom is *where focus is*, which UIA answers directly
 #     and a screenshot cannot show — the menu looks closed either way.
