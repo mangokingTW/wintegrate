@@ -47,3 +47,13 @@ accordingly.
 Nothing to register. Open sessions with `Session(...)` inside the test, wrap
 work in `session.step("...")` so the table has rows, and pass `--html`. Several
 sessions in one test each get their own block.
+
+## GitHub Actions Step Summary
+
+When running inside GitHub Actions, `wintegrate` automatically writes session
+diagnostics directly to `$GITHUB_STEP_SUMMARY`:
+
+- **High-priority failure callout (`> [!CAUTION]`)**: failed sessions prominently display the failure error and the step where the failure occurred at the top of the section.
+- **Collapsible passed sessions (`<details>`)**: successfully completed sessions are collapsed by default with their step counts and durations, keeping the Actions job summary clean.
+- **Window leak warnings (`> [!WARNING]`)**: warns if unclosed window handles remained open at session exit based on `window_census.json`.
+- **Suite-level overview table**: pytest test suites conclude with an aggregated overview table summarizing total sessions, passed/failed counts, and direct pointers to failure artifact directories.
