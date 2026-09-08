@@ -59,10 +59,10 @@ html = [
     "pytest-html>=4.1.0",
 ]
 all = [
-    "wintegrate[video,desktop]",
+    "wintegrate[video,desktop,html]",
 ]
 dev = [
-    "wintegrate[all,html]",
+    "wintegrate[all]",
     "hypothesis>=6.140.3",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
