@@ -68,3 +68,21 @@ def test_a_failed_session_extracts_frames_around_the_failure(tmp_path):
         "frames/" in json.loads((art / "artifact_index.json").read_text(encoding="utf-8"))["files"]
     )
     assert any(e["type"] == "frames_extracted" for e in events)
+
+
+def test_simulated_failure_for_report_verification(tmp_path):
+    """Demonstrates a real failing test with a failure screenshot in pytest-html report.
+
+    Only runs when WINTEGRATE_SIMULATE_FAILURE is set, so standard CI runs remain green.
+    """
+    import os
+
+    if os.environ.get("WINTEGRATE_SIMULATE_FAILURE") != "1":
+        pytest.skip("Skipped unless WINTEGRATE_SIMULATE_FAILURE=1 is set")
+    art = tmp_path / "artifacts"
+    with Session(SessionConfig(artifact_dir=art, record_video=True)) as session:
+        with session.step("prepare test"):
+            time.sleep(0.5)
+        with session.step("deliberate failure to display screenshot in report"):
+            time.sleep(0.5)
+            raise AssertionError("Demonstrating failure screenshot in pytest-html report")

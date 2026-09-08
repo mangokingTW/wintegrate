@@ -124,3 +124,14 @@ def test_render_steps_thumbnails_have_zoom_link():
     assert '<a class="wt-thumb-link"' in out
     assert 'href="data:image/png;base64,AAAA"' in out
     assert 'target="_blank"' in out
+
+
+def test_render_session_attaches_screenshot_when_failed(tmp_path):
+    from wintegrate.pytest_plugin import render_session
+
+    (tmp_path / "failure_screenshot.png").write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
+    )
+    block, media = render_session(tmp_path, failed=True, error="AssertionError: deliberate")
+    assert len(media) == 1
+    assert "AssertionError: deliberate" in block

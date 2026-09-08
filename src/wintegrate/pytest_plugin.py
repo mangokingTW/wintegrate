@@ -406,7 +406,11 @@ def pytest_runtest_makereport(item, call):
         else None
     )
     for record in sessions:
-        block, media = render_session(Path(record["artifact_dir"]), report.failed, error)
+        session_failed = report.failed or record.get("failed", False)
+        session_error = error or (
+            f"Session failed: {record.get('error')}" if record.get("failed") else None
+        )
+        block, media = render_session(Path(record["artifact_dir"]), session_failed, session_error)
         attached.extend(media)  # screenshot first: it is what a reader wants to see
         attached.append(extras.html(block))
     report.extras = getattr(report, "extras", []) + attached

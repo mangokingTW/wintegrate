@@ -7,6 +7,12 @@ on:
   # another feature branch would otherwise get no CI at all, and could only be
   # verified after its base was merged.
   pull_request:
+  workflow_dispatch:
+    inputs:
+      simulate_failure:
+        description: "Simulate a test failure to verify failure screenshot in report"
+        type: boolean
+        default: false
 
 # The workflow only reads the repository; nothing here needs a writable token.
 permissions:
@@ -71,6 +77,7 @@ jobs:
         # dialog that breaks a late test usually appeared during an early one.
         env:
           WINTEGRATE_RECORD_SUITE: "1"
+          WINTEGRATE_SIMULATE_FAILURE: ${{ inputs.simulate_failure && '1' || '0' }}
         run: |
           # Tee'd and then searched for a native crash, because pytest's exit
           # code does not report one. 0.5.9 shipped an access violation inside
@@ -142,6 +149,7 @@ jobs:
         # dialog that breaks a late test usually appeared during an early one.
         env:
           WINTEGRATE_RECORD_SUITE: "1"
+          WINTEGRATE_SIMULATE_FAILURE: ${{ inputs.simulate_failure && '1' || '0' }}
         run: |
           # Tee'd and then searched for a native crash, because pytest's exit
           # code does not report one. 0.5.9 shipped an access violation inside
