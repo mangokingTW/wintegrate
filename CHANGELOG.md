@@ -6,7 +6,7 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
-## [Unreleased]
+## [0.6.3] — 2026-09-08
 
 ### Added
 
@@ -22,6 +22,8 @@ do about it — that callout is the guarantee, not the version number.
   into `<details>`, and a run-level overview aggregates all sessions executed in the suite.
   `Session` now appends a record to `wintegrate.session.RECENT_SESSIONS`
   when it closes, which is what the plugin reads.
+- **Unified desktop preparation script.** Consolidated desktop prep logic in GitHub Actions
+  setup into a standalone `prepare_desktop.py` script for pytest and non-pytest callers alike.
 
 ## [0.6.2] — 2026-09-05
 
