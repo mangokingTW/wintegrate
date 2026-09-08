@@ -720,33 +720,73 @@ class Session:
                 if e.get("type") == "step_start":
                     starts[e["message"]] = e.get("monotonic", 0.0)
                 elif e.get("type") in ("step_ok", "step_failed"):
-                    rows.append(
-                        (
-                            e["message"],
-                            "ok"
-                            if e["type"] == "step_ok"
-                            else f"**failed** ({e.get('error', '?')})",
-                            e.get("seconds", ""),
-                        )
-                    )
-            verdict = "failed" if exc_type is not None else "completed"
-            lines = [
-                "",
-                f"### wintegrate session -- {verdict}",
-                "",
-                f"artifacts: `{self.artifact_dir}` -- start with `READ_THIS_FIRST.md`; `session_events.jsonl` is the authority.",
-                "",
-            ]
+                    is_ok = e["type"] == "step_ok"
+                    outcome_icon = "✅" if is_ok else "❌"
+                    outcome_text = "ok" if is_ok else f"**failed** ({e.get('error', '?')})"
+                    dur = f"{e.get('seconds', ''):.2f}s" if isinstance(e.get("seconds"), (int, float)) else str(e.get("seconds", ""))
+                    rows.append((e["message"], f"{outcome_icon} {outcome_text}", dur))
+
+            failed = exc_type is not None
+            verdict = "failed" if failed else "completed"
+            title_icon = "❌" if failed else "✅"
+
+            # Check window census diff for leaks
+            added_windows = []
+            census_file = self.artifact_dir / "window_census.json"
+            if census_file.exists():
+                try:
+                    cdata = json.loads(census_file.read_text(encoding="utf-8"))
+                    added_windows = cdata.get("added", [])
+                except Exception:
+                    added_windows = []
+
+            step_count_label = f"{len(rows)} step(s)" if rows else "no steps"
+
+            lines = [""]
+            if not failed:
+                lines.append(f"<details><summary><b>{title_icon} wintegrate session -- {verdict}</b> ({step_count_label})</summary>")
+                lines.append("")
+            else:
+                lines.append(f"### {title_icon} wintegrate session -- {verdict}")
+                lines.append("")
+
+            # For failed sessions, place a high-priority GitHub alert right at the top
+            if failed:
+                errors = [e for e in self.logs if e.get("type") == "session_error"]
+                err_msg = ""
+                if errors:
+                    first_err = errors[0]
+                    err_msg = f"`{first_err.get('signature') or exc_type.__name__}`: {str(first_err.get('message'))[:200]}"
+                    if first_err.get("step"):
+                        err_msg += f" (in step `{first_err.get('step')}`)"
+                else:
+                    err_msg = f"`{exc_type.__name__}`"
+                lines.append(f"> [!CAUTION]\n> **Session failed**: {err_msg}\n")
+
+            # Leak warning if windows persisted
+            if added_windows:
+                sample_titles = [w.get("name") or w.get("class_name") or "Window" for w in added_windows[:3]]
+                summary_sample = ", ".join(f"`{t}`" for t in sample_titles)
+                if len(added_windows) > 3:
+                    summary_sample += f" and {len(added_windows) - 3} more"
+                lines.append(f"> [!WARNING]\n> **Window leak detected**: {len(added_windows)} window(s) remained open at exit ({summary_sample}).\n")
+
+            lines.append(f"artifacts: `{self.artifact_dir}` -- start with `READ_THIS_FIRST.md`; `session_events.jsonl` is the authority.")
+            lines.append("")
+
             if rows:
-                lines += ["| step | outcome | seconds |", "| --- | --- | ---: |"]
+                lines += ["| step | outcome | duration |", "| :--- | :--- | ---: |"]
                 lines += [f"| {name} | {outcome} | {secs} |" for name, outcome, secs in rows]
                 lines.append("")
-            errors = [e for e in self.logs if e.get("type") == "session_error"]
+
+            if not failed:
+                errors = [e for e in self.logs if e.get("type") == "session_error"]
             for e in errors:
                 lines.append(
                     f"- error `{e.get('signature') or '?'}`: {str(e.get('message'))[:300]}"
                     + (f" in step `{e.get('step')}`" if e.get("step") else "")
                 )
+
             files = (
                 sorted(p.name for p in self.artifact_dir.iterdir() if p.is_file())
                 if self.artifact_dir.exists()
@@ -754,6 +794,11 @@ class Session:
             )
             if files:
                 lines.append("- files: " + ", ".join(f"`{f}`" for f in files))
+
+            if not failed:
+                lines.append("")
+                lines.append("</details>")
+
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write("\n".join(lines) + "\n")
         except Exception as exc:

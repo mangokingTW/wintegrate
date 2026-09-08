@@ -102,3 +102,25 @@ def test_the_newest_failure_screenshot_wins(tmp_path):
     os.utime(tmp_path / "failure_screenshot.png", (now - 10, now - 10))
     os.utime(tmp_path / "failure-When-I-type.png", (now, now))
     assert last_failure_screenshot(tmp_path).name == "failure-When-I-type.png"
+
+
+def test_render_session_shows_window_leaks(tmp_path):
+    from wintegrate.pytest_plugin import render_session
+
+    census_file = tmp_path / "window_census.json"
+    census_file.write_text(
+        json.dumps({"added": [{"name": "Dialog Leaked", "class_name": "#32770"}]}),
+        encoding="utf-8",
+    )
+    block, _ = render_session(tmp_path, failed=False, error=None)
+    assert "Window leak detected" in block
+    assert "Dialog Leaked" in block
+
+
+def test_render_steps_thumbnails_have_zoom_link():
+    tree = build_step_tree(EVENTS)
+    anchor = {"monotonic_start": 100.0}
+    out = render_steps(tree, thumbs={1000: ("data:image/png;base64,AAAA", 240, 180)}, anchor=anchor)
+    assert '<a class="wt-thumb-link"' in out
+    assert 'href="data:image/png;base64,AAAA"' in out
+    assert 'target="_blank"' in out

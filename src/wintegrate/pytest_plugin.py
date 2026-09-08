@@ -199,15 +199,19 @@ _CSS = """
 .wt-report{font:13px/1.4 system-ui,Segoe UI,sans-serif;margin:6px 0 10px}
 .wt-report .wt-head{margin:6px 0 4px;font-weight:600}
 .wt-report .wt-err{white-space:pre-wrap;background:#fff3f3;border-left:3px solid #d33;padding:6px 8px;margin:4px 0}
+.wt-report .wt-warn{background:#fff8e6;border-left:3px solid #e3a008;padding:6px 8px;margin:4px 0;color:#723b00}
 .wt-report table.wt-steps{border-collapse:collapse;width:100%}
 .wt-report table.wt-steps td{vertical-align:top;padding:4px 6px;border-top:1px solid #e5e5e5}
 .wt-report .wt-ok{color:#1a7f37;font-weight:700}
 .wt-report .wt-fail{color:#c00;font-weight:700}
 .wt-report .wt-open{color:#b58900;font-weight:700}
+.wt-report .wt-tree-guide{color:#aaa;font-family:monospace;user-select:none;margin-right:4px}
 .wt-report .wt-dur{color:#666;white-space:nowrap}
 .wt-report details summary{cursor:pointer;color:#444}
 .wt-report .wt-ev{font:12px/1.35 ui-monospace,Consolas,monospace;color:#333;margin:2px 0 0 12px;white-space:pre-wrap}
-.wt-report .wt-thumb{display:block;border:1px solid #ccc;background:#000 center/contain no-repeat}
+.wt-report .wt-thumb-link{display:inline-block;cursor:zoom-in;text-decoration:none}
+.wt-report .wt-thumb{display:block;border:1px solid #ccc;background:#000 center/contain no-repeat;transition:transform 0.15s ease}
+.wt-report .wt-thumb-link:hover .wt-thumb{box-shadow:0 2px 8px rgba(0,0,0,0.25);border-color:#888}
 .wt-report .wt-meta{color:#666;margin-top:6px}
 </style>
 """
@@ -227,11 +231,17 @@ def render_steps(
     depth: int = 0,
 ) -> str:
     rows = []
-    for node in tree:
-        indent = "&nbsp;" * (4 * depth)
+    total = len(tree)
+    for idx, node in enumerate(tree):
+        is_last = idx == total - 1
+        tree_prefix = ""
+        if depth > 0:
+            indent = "&nbsp;&nbsp;&nbsp;&nbsp;" * (depth - 1)
+            branch = "&#9492;&#9472;&nbsp;" if is_last else "&#9500;&#9472;&nbsp;"
+            tree_prefix = f'<span class="wt-tree-guide">{indent}{branch}</span>'
         dur = f"{node['seconds']:.2f}s" if isinstance(node.get("seconds"), (int, float)) else ""
         ms = video_ms_for(node.get("start_event") or {}, anchor)
-        # A div with a background, not an <img>: pytest-html's script collects
+        # A div with a background wrapped in an anchor: pytest-html's script collects
         # the <img> elements inside a result's extras for its media viewer and
         # rewrites the first one it finds, which turned the first thumbnail into
         # the failure screenshot and left the viewer empty.
@@ -239,8 +249,9 @@ def render_steps(
         if ms in thumbs:
             uri, w, h = thumbs[ms]
             thumb = (
+                f'<a class="wt-thumb-link" href="{uri}" target="_blank" title="Click to view full image in new tab">'
                 f'<div class="wt-thumb" role="img" aria-label="frame at {ms} ms" '
-                f'style="width:{w}px;height:{h}px;background-image:url({uri})"></div>'
+                f'style="width:{w}px;height:{h}px;background-image:url({uri})"></div></a>'
             )
         err = ""
         if node["status"] == "failed":
@@ -255,7 +266,7 @@ def render_steps(
             inner = f'<details><summary>{len(node["events"])} event(s)</summary><div class="wt-ev">{lines}</div></details>'
         rows.append(
             f"<tr><td>{_status_mark(node['status'])}</td>"
-            f"<td>{indent}{html.escape(node['name'])}{err}{inner}</td>"
+            f"<td>{tree_prefix}{html.escape(node['name'])}{err}{inner}</td>"
             f'<td class="wt-dur">{dur}</td><td>{thumb}</td></tr>'
         )
         if node["children"]:
@@ -310,6 +321,25 @@ def render_session(artifact_dir: Path, failed: bool, error: str | None) -> tuple
             )
         if error:
             parts.append(f'<div class="wt-err">{html.escape(error)}</div>')
+
+    # Check window census diff for leaks
+    census_file = artifact_dir / "window_census.json"
+    if census_file.exists():
+        try:
+            cdata = json.loads(census_file.read_text(encoding="utf-8"))
+            added = cdata.get("added", [])
+            if added:
+                sample_titles = [w.get("name") or w.get("class_name") or "Window" for w in added[:3]]
+                sample_str = ", ".join(f"<code>{html.escape(t)}</code>" for t in sample_titles)
+                if len(added) > 3:
+                    sample_str += f" and {len(added) - 3} more"
+                parts.append(
+                    f'<div class="wt-warn">&#9888; <strong>Window leak detected:</strong> '
+                    f'{len(added)} window(s) remained open at exit ({sample_str}).</div>'
+                )
+        except Exception:
+            pass
+
     if tree:
         parts.append('<div class="wt-head">Steps</div>')
         parts.append(f'<table class="wt-steps">{render_steps(tree, thumbs, anchor)}</table>')
@@ -350,12 +380,21 @@ def pytest_runtest_setup(item):
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
-    if not _html_active(item.config) or report.when != "call":
+    if report.when != "call":
         return
     start = getattr(item, "_wintegrate_sessions_before", len(_session_module.RECENT_SESSIONS))
     sessions = _session_module.RECENT_SESSIONS[start:]
     if not sessions:
         return
+
+    # Attach test nodeid to session records for reporting / summaries
+    for record in sessions:
+        if "test_id" not in record:
+            record["test_id"] = item.nodeid
+
+    if not _html_active(item.config):
+        return
+
     from pytest_html import extras
 
     attached = []
@@ -385,3 +424,50 @@ def pytest_html_results_summary(prefix, summary, postfix, session):
         "A failed test's row opens on its last screenshot, then the error, then the steps "
         "with the frame the recording holds at each one.</p>"
     )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Writes a consolidated wintegrate suite overview table to $GITHUB_STEP_SUMMARY."""
+    import os
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+
+    sessions = _session_module.RECENT_SESSIONS
+    if not sessions:
+        return
+
+    total = len(sessions)
+    failed_sessions = [s for s in sessions if s.get("failed")]
+    passed_sessions = total - len(failed_sessions)
+
+    lines = [
+        "",
+        "## 🖥️ wintegrate Test Run Overview",
+        "",
+        f"- **Total Sessions**: {total} | **Passed**: {passed_sessions} | **Failed**: {len(failed_sessions)}",
+        "",
+    ]
+
+    if failed_sessions:
+        lines += [
+            "### ❌ Failed Sessions",
+            "",
+            "| Test | Error | Artifacts |",
+            "| :--- | :--- | :--- |",
+        ]
+        for s in failed_sessions:
+            test_name = s.get("test_id") or "unknown"
+            err = s.get("error") or "Failed"
+            art = s.get("artifact_dir") or ""
+            lines.append(f"| `{test_name}` | `{err}` | `{art}` |")
+        lines.append("")
+
+    try:
+        with open(summary_path, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except Exception:
+        pass
+

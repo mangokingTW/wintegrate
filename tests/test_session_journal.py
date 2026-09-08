@@ -143,8 +143,9 @@ def test_job_summary_is_written_when_the_runner_asks(tmp_path, monkeypatch):
         session._close_journal()
     text = summary.read_text(encoding="utf-8")
     assert "wintegrate session -- failed" in text
-    assert "| open the thing | ok |" in text
-    assert "break the thing" in text and "**failed** (ValueError)" in text
+    assert "> [!CAUTION]" in text
+    assert "| open the thing | ✅ ok |" in text
+    assert "break the thing" in text and "❌ **failed** (ValueError)" in text
     assert "READ_THIS_FIRST.md" in text and "session_events.jsonl" in text
 
 
@@ -153,3 +154,43 @@ def test_job_summary_is_silent_off_ci(tmp_path, monkeypatch):
     session = Session(SessionConfig(artifact_dir=tmp_path / "a", record_video=False))
     session._write_step_summary(None)  # must not raise, must write nothing
     assert not (tmp_path / "summary.md").exists()
+
+
+def test_job_summary_passed_session_is_collapsible(tmp_path, monkeypatch):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    session = Session(SessionConfig(artifact_dir=tmp_path / "a", record_video=False))
+    session._open_journal()
+    try:
+        with session.step("all good"):
+            pass
+        session._write_step_summary(None)
+    finally:
+        session._close_journal()
+    text = summary.read_text(encoding="utf-8")
+    assert "<details><summary>" in text
+    assert "✅ wintegrate session -- completed" in text
+    assert "</details>" in text
+
+
+def test_job_summary_reports_window_leaks(tmp_path, monkeypatch):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    session = Session(SessionConfig(artifact_dir=tmp_path / "a", record_video=False))
+    session._open_journal()
+    # Simulate window_census.json with added window
+    import json
+    census_file = tmp_path / "a" / "window_census.json"
+    census_file.parent.mkdir(parents=True, exist_ok=True)
+    census_file.write_text(
+        json.dumps({"added": [{"name": "Leaked Notepad", "class_name": "Notepad"}]}),
+        encoding="utf-8",
+    )
+    try:
+        session._write_step_summary(None)
+    finally:
+        session._close_journal()
+    text = summary.read_text(encoding="utf-8")
+    assert "> [!WARNING]" in text
+    assert "Window leak detected" in text
+    assert "Leaked Notepad" in text
