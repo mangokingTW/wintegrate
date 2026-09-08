@@ -222,6 +222,7 @@ heavier pieces only if you use them:
 ```bash
 pip install 'wintegrate[video]'    # screen recording + failure screenshots (Pillow, PyAV)
 pip install 'wintegrate[desktop]'  # virtual desktop clean-room isolation (pyvda)
+pip install 'wintegrate[html]'     # pytest --html rows with the session's screenshot, steps and recording
 pip install 'wintegrate[all]'
 ```
 

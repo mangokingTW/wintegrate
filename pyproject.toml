@@ -53,8 +53,13 @@ video = [
 desktop = [
     "pyvda>=0.6.0",
 ]
+# pytest-html report rows carrying each test's session evidence (see
+# wintegrate.pytest_plugin; loaded through the pytest11 entry point below).
+html = [
+    "pytest-html>=4.1.0",
+]
 all = [
-    "wintegrate[video,desktop]",
+    "wintegrate[video,desktop,html]",
 ]
 dev = [
     "wintegrate[all]",
@@ -70,6 +75,9 @@ Documentation = "https://mangokingtw.github.io/wintegrate/"
 Repository = "https://github.com/mangokingTW/wintegrate"
 Issues = "https://github.com/mangokingTW/wintegrate/issues"
 Changelog = "https://github.com/mangokingTW/wintegrate/releases"
+
+[project.entry-points.pytest11]
+wintegrate = "wintegrate.pytest_plugin"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wintegrate"]

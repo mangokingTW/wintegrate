@@ -6,6 +6,23 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [Unreleased]
+
+### Added
+
+- **pytest-html rows and GitHub Step Summary carry the session's evidence.** With `wintegrate[html]`
+  and `pytest --html=report.html`, a test that opened a `Session` gets, in its
+  row: the last failure screenshot first, the error, then one row per
+  `session.step` with tick or cross, duration, failure signature, the frame the
+  recording holds at that moment, click-to-zoom thumbnails, tree-guided nesting,
+  and the events logged inside it; and the recording as a playable video. Leaked
+  windows detected by census diff are warned in both the report and the GitHub
+  Job Summary. On GitHub Actions (`$GITHUB_STEP_SUMMARY`), failed sessions now
+  stand out with high-priority alert callouts, passed sessions are neatly collapsed
+  into `<details>`, and a run-level overview aggregates all sessions executed in the suite.
+  `Session` now appends a record to `wintegrate.session.RECENT_SESSIONS`
+  when it closes, which is what the plugin reads.
+
 ## [0.6.2] — 2026-09-05
 
 Closes the remaining items of #93 (C5, C6, C8, C10, C11): a failure now says
