@@ -100,6 +100,11 @@ class SessionConfig:
 # Store apps are single-instance: an instance leaked by an earlier test makes
 # the next launch open a tab in the old window instead of a new top-level
 # window, which breaks window discovery.
+# Every session that closed in this process, newest last: artifact_dir, whether
+# it closed on an exception, and the exception type. The pytest-html plugin
+# reads this to put a test's sessions into its report row.
+RECENT_SESSIONS: list[dict] = []
+
 SWEEP_PROCESS_NAMES = (
     "wsl",
     "wslhost",
@@ -1279,6 +1284,13 @@ class Session:
         self._write_index("closed")
         self._write_step_summary(exc_type)
         self._close_journal()
+        RECENT_SESSIONS.append(
+            {
+                "artifact_dir": str(self.artifact_dir),
+                "failed": exc_type is not None,
+                "error": exc_type.__name__ if exc_type is not None else None,
+            }
+        )
 
         return False  # Do not suppress exceptions
 

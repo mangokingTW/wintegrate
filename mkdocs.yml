@@ -32,6 +32,7 @@ nav:
   - What breaks in CI: pitfalls.md
   - Use cases: use-cases.md
   - The application mirror: test-fixtures.md
+  - HTML report: html-report.md
   - API reference: api.md
   - Changelog: changelog.md
 
