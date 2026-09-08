@@ -222,6 +222,7 @@ heavier pieces only if you use them:
 ```bash
 pip install 'wintegrate[video]'    # screen recording + failure screenshots (Pillow, PyAV)
 pip install 'wintegrate[desktop]'  # virtual desktop clean-room isolation (pyvda)
+pip install 'wintegrate[robot]'    # Robot Framework keyword library (wintegrate.robot.WintegrateLibrary)
 pip install 'wintegrate[all]'
 ```
 

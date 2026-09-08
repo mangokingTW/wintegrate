@@ -89,6 +89,12 @@ jobs:
           }
           if ($failed -ne 0) { exit $failed }
 
+      # The Robot Framework library, end to end: the suite launches Notepad,
+      # types, and reads focus through the same verified operations. log.html
+      # with the embedded screenshots and recording is uploaded below.
+      - name: Run the Robot Framework example
+        run: robot --outputdir robot-artifacts --loglevel DEBUG examples/robot/notepad.robot
+
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
@@ -97,6 +103,7 @@ jobs:
           path: |
             recording-artifacts/
             artifacts/
+            robot-artifacts/
           if-no-files-found: ignore
 
   test-arm64:
@@ -160,6 +167,12 @@ jobs:
           }
           if ($failed -ne 0) { exit $failed }
 
+      # The Robot Framework library, end to end: the suite launches Notepad,
+      # types, and reads focus through the same verified operations. log.html
+      # with the embedded screenshots and recording is uploaded below.
+      - name: Run the Robot Framework example
+        run: robot --outputdir robot-artifacts --loglevel DEBUG examples/robot/notepad.robot
+
       - name: Upload Recording Artifacts & Diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v6
@@ -168,6 +181,7 @@ jobs:
           path: |
             recording-artifacts/
             artifacts/
+            robot-artifacts/
           if-no-files-found: ignore
 
   # Four third-party applications, one per generation of Windows UI technology.
@@ -535,4 +549,5 @@ jobs:
           path: |
             recording-artifacts/
             artifacts/
+            robot-artifacts/
           if-no-files-found: ignore

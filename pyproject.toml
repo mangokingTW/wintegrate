@@ -53,8 +53,12 @@ video = [
 desktop = [
     "pyvda>=0.6.0",
 ]
+# Robot Framework keyword library (`wintegrate.robot.WintegrateLibrary`).
+robot = [
+    "robotframework>=7.0",
+]
 all = [
-    "wintegrate[video,desktop]",
+    "wintegrate[video,desktop,robot]",
 ]
 dev = [
     "wintegrate[all]",

@@ -6,6 +6,20 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [Unreleased]
+
+### Added
+
+- **Robot Framework keyword library.** `wintegrate.robot.WintegrateLibrary`
+  (`pip install "wintegrate[robot]"`) exposes the verified operations as keywords
+  — `Launch App`, `Find Text Input`, `Type Verified`, `Get Value`, `Send Keys`,
+  `Get Focused Element`, `Focused Element Class Should Be`, `Capture Screenshot`
+  — each a one-line call into the Python API, none of them catching. The library
+  is its own listener: the running test names the recording's caption, a failing
+  test embeds a full-desktop screenshot in `log.html`, and the session recording
+  is embedded at suite end. `examples/robot/notepad.robot` runs in CI on x64 and
+  arm64; see the Robot Framework page in the docs.
+
 ## [0.6.2] — 2026-09-05
 
 Closes the remaining items of #93 (C5, C6, C8, C10, C11): a failure now says
