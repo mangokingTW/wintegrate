@@ -35,9 +35,12 @@ def test_anything_else_is_a_command_line():
 
 
 def test_the_library_is_its_own_listener():
+    """`@library(listener="SELF")` registers the class attribute as the string
+    "SELF"; Robot resolves it to the instance when the library is imported."""
     lib = WintegrateLibrary(record_video=False)
     assert lib.ROBOT_LISTENER_API_VERSION == 3
-    assert lib.ROBOT_LIBRARY_LISTENER is lib
+    assert lib.ROBOT_LIBRARY_LISTENER == "SELF"
+    assert lib.ROBOT_LIBRARY_SCOPE == "SUITE"
 
 
 def test_every_keyword_the_example_uses_exists():
