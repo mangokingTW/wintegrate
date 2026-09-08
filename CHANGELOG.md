@@ -11,13 +11,14 @@ do about it — that callout is the guarantee, not the version number.
 ### Added
 
 - **Robot Framework keyword library.** `wintegrate.robot.WintegrateLibrary`
-  (`pip install "wintegrate[robot]"`) exposes the verified operations as keywords
-  — `Launch App`, `Find Text Input`, `Type Verified`, `Get Value`, `Send Keys`,
-  `Get Focused Element`, `Focused Element Class Should Be`, `Capture Screenshot`
-  — each a one-line call into the Python API, none of them catching. The library
-  is its own listener: the running test names the recording's caption, a failing
-  test embeds a full-desktop screenshot in `log.html`, and the session recording
-  is embedded at suite end. `examples/robot/notepad.robot` runs in CI on x64 and
+  (`pip install "wintegrate[robot]"`) exposes the verified operations as some
+  forty keywords -- launching and discovery, locators, the verified element
+  actions, keys, focus, window state and the window census -- each a one-line
+  call into the Python API, none of them catching. The library is its own
+  listener: the running test names the recording's caption, every keyword a
+  suite defines becomes a `Session.step` in the artifact index, a failing test
+  embeds a full-desktop screenshot in `log.html`, and the session recording is
+  embedded at suite end. `examples/robot/notepad.robot` runs in CI on x64 and
   arm64; see the Robot Framework page in the docs.
 
 ## [0.6.2] — 2026-09-05

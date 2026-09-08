@@ -60,23 +60,25 @@ Everything the Python `Session` writes — event journal, window census, kill pl
 
 ## Keywords
 
-| Keyword | Calls |
-| --- | --- |
-| `Start Session` / `Stop Session` | `Session.__enter__` / `__exit__` |
-| `Launch App  name-or-command  fresh=auto` | `Session.app(...)`; `notepad`, `calculator`, or a command line |
-| `Close App  ${app}` | `AppHandle.close()` |
-| `Find Text Input  ${app}` | `AppHandle.find_text_input()` |
-| `Locate  ${app}  selector` / `Get By Role  ${app}  role  name` | Playwright-style locators |
-| `Type Verified  ${element}  text  expected_line_count_delta=  verify_contains=` | `UiaElement.type_verified()` |
-| `Get Value  ${element}` | `UiaElement.get_value()` |
-| `Click  ${target}` | `Locator.click()` / `UiaElement.click()` — raises with no rectangle to aim at |
-| `Send Keys  spec` | `wintegrate.interop.send_keys` |
-| `Get Focused Element` / `Describe Element` / `Focused Element Class Should Be` | UIA `GetFocusedElement` |
-| `Capture Screenshot  name` | `Session.capture_screenshot()`, embedded in the log |
-| `Log Event  type  message` | `Session.log_event()` |
+| Area | Keywords | Calls |
+| --- | --- | --- |
+| Session | `Start Session`, `Stop Session`, `Log Event`, `Capture Screenshot` | `Session.__enter__/__exit__`, `log_event`, `capture_screenshot` (embedded in the log) |
+| Applications | `Launch App  name-or-command  fresh=auto`, `Close App` | `Session.app(...)`; `notepad`, `calculator`, or a command line |
+| Finding | `Find Text Input`, `Locate  selector`, `Get By Role`, `Get By Text`, `Get By Automation Id`, `Get By Class`, `Wait For  state`, `Get Text Content`, `Should Be Visible` | `AppHandle.find_text_input`, Playwright-style `Locator` |
+| Acting | `Type Verified`, `Fill`, `Get Value`, `Click`, `Right Click`, `Double Click`, `Hover`, `Drag To`, `Check`, `Uncheck`, `Should Be Checked`, `Select Item`, `Set Focus` | the verified element and locator operations |
+| Keys | `Send Keys  spec`, `Send Physical Keys  text`, `Send Hotkey  spec` | `interop.send_keys` / `send_physical_keys` / `send_hotkey` (the Win key) |
+| Focus | `Get Focused Element`, `Describe Element`, `Focused Element Class Should Be` | UIA `GetFocusedElement` |
+| Windows | `Set Foreground`, `Maximize`, `Restore Window`, `Get Window Title`, `Count Windows  class_name=  title_contains=`, `Window Should Exist` | `Window` operations and `WindowCensus` |
 
 Arguments are converted from the suite's strings by Robot using the keyword
 type hints; `${None}` passes a Python `None`.
+
+## Steps in the artifact index
+
+Every keyword a suite defines — `Given Notepad Is Running`, `When I Type`, the
+setup and teardown — becomes a `Session.step`, so `session_events.jsonl` and
+`READ_THIS_FIRST.md` name the scenario step that failed, not only the library
+call. Library keywords are not wrapped: they are the calls the step is made of.
 
 ## What does not change
 

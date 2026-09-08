@@ -14,7 +14,10 @@ from pathlib import Path
 
 from wintegrate import CALCULATOR, NOTEPAD, AppSpec, Session, SessionConfig, UiaElement
 from wintegrate.apps import AppHandle
+from wintegrate.diagnostics import WindowCensus
+from wintegrate.interop import send_hotkey as _send_hotkey
 from wintegrate.interop import send_keys as _send_keys
+from wintegrate.interop import send_physical_keys as _send_physical_keys
 from wintegrate.locators import Locator
 
 try:
@@ -84,6 +87,9 @@ class WintegrateLibrary:
         )
         self._session: Session | None = None
         self._apps: list[AppHandle] = []
+        # One session step per running user keyword (Given/When/Then and the
+        # keywords a suite defines), so the artifact index says which step failed.
+        self._steps: list = []
 
     # --- listener -----------------------------------------------------------
 
@@ -109,6 +115,39 @@ class WintegrateLibrary:
         recorder = self._session.recorder
         if recorder is not None:
             recorder.caption, recorder.caption_subtitle = "", ""
+
+    def _start_keyword(self, data, result) -> None:
+        if self._session is None or not self._is_user_keyword(result):
+            return
+        try:
+            ctx = self._session.step(result.name)
+            ctx.__enter__()
+            self._steps.append(ctx)
+        except Exception as exc:  # noqa: BLE001 - the journal must not break the run
+            self._log(f"step journal: {type(exc).__name__}: {exc}")
+
+    def _end_keyword(self, data, result) -> None:
+        if not self._steps or not self._is_user_keyword(result):
+            return
+        ctx = self._steps.pop()
+        try:
+            if result.failed:
+                error = AssertionError(result.message or result.status)
+                ctx.__exit__(AssertionError, error, None)
+            else:
+                ctx.__exit__(None, None, None)
+        except Exception as exc:  # noqa: BLE001 - see above
+            self._log(f"step journal: {type(exc).__name__}: {exc}")
+
+    @staticmethod
+    def _is_user_keyword(result) -> bool:
+        # Library keywords carry the library's import name (here the dotted
+        # module path); a suite's own keywords carry the resource or suite they
+        # were defined in. Setup/teardown are keywords too, so `type` is checked.
+        if getattr(result, "type", "KEYWORD") != "KEYWORD":
+            return False
+        libname = getattr(result, "libname", None) or ""
+        return not (libname.endswith("WintegrateLibrary") or libname == "BuiltIn")
 
     def _end_suite(self, data, result) -> None:
         if self._session is not None:
@@ -192,6 +231,79 @@ class WintegrateLibrary:
     def get_by_role(self, app: AppHandle, role: str, name: str | None = None) -> Locator:
         return app.get_by_role(role, name=name)
 
+    @keyword("Get By Text")
+    def get_by_text(self, app: AppHandle, text: str, exact: bool = False) -> Locator:
+        return app.get_by_text(text, exact=exact)
+
+    @keyword("Get By Automation Id")
+    def get_by_automation_id(self, app: AppHandle, auto_id: str) -> Locator:
+        return app.get_by_automation_id(auto_id)
+
+    @keyword("Get By Class")
+    def get_by_class(self, app: AppHandle, class_name: str) -> Locator:
+        return app.get_by_class(class_name)
+
+    @keyword("Wait For")
+    def wait_for(self, locator: Locator, state: str = "visible", timeout: float = 10.0) -> None:
+        """Waits until the locator is `visible`, `attached` or `hidden`."""
+        locator.wait_for(state, timeout=timeout)
+
+    @keyword("Get Text Content")
+    def get_text_content(self, locator: Locator, timeout: float = 5.0) -> str:
+        return locator.text_content(timeout=timeout)
+
+    @keyword("Should Be Visible")
+    def should_be_visible(self, locator: Locator, timeout: float = 5.0) -> None:
+        if not locator.is_visible(timeout=timeout):
+            raise AssertionError(f"{locator!r} is not visible")
+
+    # --- windows ------------------------------------------------------------
+
+    @keyword("Set Foreground")
+    def set_foreground(self, app: AppHandle, timeout: float = 5.0) -> None:
+        """Brings the app's window to the foreground and verifies it got there."""
+        if not app.window.set_foreground(timeout=timeout):
+            raise AssertionError(f"{app.window!r} did not become the foreground window")
+
+    @keyword("Maximize")
+    def maximize(self, app: AppHandle) -> None:
+        if not app.window.maximize():
+            raise AssertionError(f"{app.window!r} did not maximize")
+
+    @keyword("Restore Window")
+    def restore_window(self, app: AppHandle) -> None:
+        app.window.restore()
+
+    @keyword("Get Window Title")
+    def get_window_title(self, app: AppHandle) -> str:
+        return app.window.title
+
+    @keyword("Count Windows")
+    def count_windows(
+        self, class_name: str | None = None, title_contains: str | None = None
+    ) -> int:
+        """Visible top-level windows matching the class and/or title substring."""
+        return len(self._matching_windows(class_name, title_contains))
+
+    @keyword("Window Should Exist")
+    def window_should_exist(
+        self, class_name: str | None = None, title_contains: str | None = None
+    ) -> None:
+        if not self._matching_windows(class_name, title_contains):
+            raise AssertionError(
+                f"no visible window with class={class_name!r} title~={title_contains!r}"
+            )
+
+    @staticmethod
+    def _matching_windows(class_name: str | None, title_contains: str | None) -> list:
+        return [
+            w
+            for w in WindowCensus.capture()
+            if w.is_visible
+            and (class_name is None or w.class_name == class_name)
+            and (title_contains is None or title_contains in w.title)
+        ]
+
     # --- actions ------------------------------------------------------------
 
     @keyword("Type Verified")
@@ -219,10 +331,67 @@ class WintegrateLibrary:
         """Clicks a locator or element; raises if there is no rectangle to aim at."""
         target.click()
 
+    @keyword("Right Click")
+    def right_click(self, locator: Locator, timeout: float = 10.0) -> None:
+        locator.right_click(timeout=timeout)
+
+    @keyword("Double Click")
+    def double_click(self, locator: Locator, timeout: float = 10.0) -> None:
+        locator.double_click(timeout=timeout)
+
+    @keyword("Hover")
+    def hover(self, locator: Locator) -> None:
+        locator.hover()
+
+    @keyword("Drag To")
+    def drag_to(self, source: Locator, target: Locator) -> None:
+        source.drag_to(target)
+
+    @keyword("Fill")
+    def fill(self, locator: Locator, text: str, timeout: float = 10.0) -> None:
+        """Replaces the control's text and verifies the result."""
+        locator.fill(text, timeout=timeout)
+
+    @keyword("Check")
+    def check(self, locator: Locator, timeout: float = 10.0) -> None:
+        locator.check(timeout=timeout)
+
+    @keyword("Uncheck")
+    def uncheck(self, locator: Locator, timeout: float = 10.0) -> None:
+        locator.uncheck(timeout=timeout)
+
+    @keyword("Should Be Checked")
+    def should_be_checked(self, locator: Locator, expected: bool = True) -> None:
+        actual = locator.is_checked()
+        if actual != expected:
+            raise AssertionError(f"{locator!r} checked={actual}, expected {expected}")
+
+    @keyword("Select Item")
+    def select_item(self, locator: Locator, item_name: str, timeout: float = 10.0) -> None:
+        """Selects an item in a list, combo box or tab control, verified."""
+        locator.select_item(item_name, timeout=timeout)
+
+    @keyword("Set Focus")
+    def set_focus(self, element: UiaElement) -> None:
+        if not element.set_focus():
+            raise AssertionError(f"{element.describe()} did not take focus")
+
     @keyword("Send Keys")
     def send_keys(self, spec: str) -> None:
         """A SendKeys-style spec to whatever has focus: `{ESC}`, `^a`, `hello{ENTER}`."""
         if not _send_keys(spec):
+            raise AssertionError(f"the system refused to inject {spec!r}")
+
+    @keyword("Send Physical Keys")
+    def send_physical_keys(self, text: str) -> None:
+        """Types through scan codes, so an IME and a recording see real keystrokes."""
+        if not _send_physical_keys(text):
+            raise AssertionError(f"the system refused to inject {text!r}")
+
+    @keyword("Send Hotkey")
+    def send_hotkey(self, spec: str) -> None:
+        """A chord such as `win+r` or `ctrl+shift+esc`; the only way to send the Win key."""
+        if not _send_hotkey(spec):
             raise AssertionError(f"the system refused to inject {spec!r}")
 
     # --- focus ----------------------------------------------------------------
