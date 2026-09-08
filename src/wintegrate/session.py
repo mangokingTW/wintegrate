@@ -723,7 +723,11 @@ class Session:
                     is_ok = e["type"] == "step_ok"
                     outcome_icon = "✅" if is_ok else "❌"
                     outcome_text = "ok" if is_ok else f"**failed** ({e.get('error', '?')})"
-                    dur = f"{e.get('seconds', ''):.2f}s" if isinstance(e.get("seconds"), (int, float)) else str(e.get("seconds", ""))
+                    dur = (
+                        f"{e.get('seconds', ''):.2f}s"
+                        if isinstance(e.get("seconds"), (int, float))
+                        else str(e.get("seconds", ""))
+                    )
                     rows.append((e["message"], f"{outcome_icon} {outcome_text}", dur))
 
             failed = exc_type is not None
@@ -744,7 +748,9 @@ class Session:
 
             lines = [""]
             if not failed:
-                lines.append(f"<details><summary><b>{title_icon} wintegrate session -- {verdict}</b> ({step_count_label})</summary>")
+                lines.append(
+                    f"<details><summary><b>{title_icon} wintegrate session -- {verdict}</b> ({step_count_label})</summary>"
+                )
                 lines.append("")
             else:
                 lines.append(f"### {title_icon} wintegrate session -- {verdict}")
@@ -765,13 +771,19 @@ class Session:
 
             # Leak warning if windows persisted
             if added_windows:
-                sample_titles = [w.get("name") or w.get("class_name") or "Window" for w in added_windows[:3]]
+                sample_titles = [
+                    w.get("name") or w.get("class_name") or "Window" for w in added_windows[:3]
+                ]
                 summary_sample = ", ".join(f"`{t}`" for t in sample_titles)
                 if len(added_windows) > 3:
                     summary_sample += f" and {len(added_windows) - 3} more"
-                lines.append(f"> [!WARNING]\n> **Window leak detected**: {len(added_windows)} window(s) remained open at exit ({summary_sample}).\n")
+                lines.append(
+                    f"> [!WARNING]\n> **Window leak detected**: {len(added_windows)} window(s) remained open at exit ({summary_sample}).\n"
+                )
 
-            lines.append(f"artifacts: `{self.artifact_dir}` -- start with `READ_THIS_FIRST.md`; `session_events.jsonl` is the authority.")
+            lines.append(
+                f"artifacts: `{self.artifact_dir}` -- start with `READ_THIS_FIRST.md`; `session_events.jsonl` is the authority."
+            )
             lines.append("")
 
             if rows:

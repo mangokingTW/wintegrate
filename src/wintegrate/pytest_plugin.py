@@ -329,13 +329,15 @@ def render_session(artifact_dir: Path, failed: bool, error: str | None) -> tuple
             cdata = json.loads(census_file.read_text(encoding="utf-8"))
             added = cdata.get("added", [])
             if added:
-                sample_titles = [w.get("name") or w.get("class_name") or "Window" for w in added[:3]]
+                sample_titles = [
+                    w.get("name") or w.get("class_name") or "Window" for w in added[:3]
+                ]
                 sample_str = ", ".join(f"<code>{html.escape(t)}</code>" for t in sample_titles)
                 if len(added) > 3:
                     sample_str += f" and {len(added) - 3} more"
                 parts.append(
                     f'<div class="wt-warn">&#9888; <strong>Window leak detected:</strong> '
-                    f'{len(added)} window(s) remained open at exit ({sample_str}).</div>'
+                    f"{len(added)} window(s) remained open at exit ({sample_str}).</div>"
                 )
         except Exception:
             pass
@@ -470,4 +472,3 @@ def pytest_sessionfinish(session, exitstatus):
             fh.write("\n".join(lines) + "\n")
     except Exception:
         pass
-

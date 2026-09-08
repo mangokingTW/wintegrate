@@ -180,6 +180,7 @@ def test_job_summary_reports_window_leaks(tmp_path, monkeypatch):
     session._open_journal()
     # Simulate window_census.json with added window
     import json
+
     census_file = tmp_path / "a" / "window_census.json"
     census_file.parent.mkdir(parents=True, exist_ok=True)
     census_file.write_text(
