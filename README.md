@@ -85,6 +85,7 @@ Supports dynamic virtual desktop isolation. When `isolated_virtual_desktop=True`
 - **Low-Memory Streaming Recorder**: `ContinuousRecorder` encodes in-process through PyAV, which bundles FFmpeg and is the only distribution on PyPI with a `win_arm64` wheel — so recording works out of the box on Windows ARM64 instead of asking the user to install a binary. There is deliberately no external-ffmpeg fallback: it would look like a safety net while making recording depend on something ARM64 users are unlikely to have. Frames carry wall-clock timestamps, so a capture loop that falls behind the nominal frame rate still plays back at real speed.
 - **Automatic Failure Artifacts**: Automatically dumps full-screen screenshots and pre/post `window_census.json` diffs on assertion failure.
 - **Event Timeline Logging**: Logs action timestamps and targets to human-readable `.log` and structured `.json`.
+- **Interactive HTML Test Reports (`pytest --html`)**: Test report rows in `pytest-html` embed failure desktop screenshots first, error traces, tree-branch guided step sequences with click-to-zoom frame thumbnails, and video recordings.
 
 ### 7. Managed App Lifecycle & Locale-Independent Discovery (`session.app`)
 Modern Windows apps break naive launch-and-poll automation in specific, repeatable ways.
@@ -151,6 +152,7 @@ When a test run completes or encounters an assertion failure in GitHub Actions o
 2. **Window Census Diff (`window_census.json`)**: Pre- and post-test snapshots of all desktop HWNDs, titles, process IDs, and visibility states — immediately revealing rogue popups, leaked instances, or focus-stealing dialogs.
 3. **Structured Event Timeline (`session_events.json` / `.log`)**: Millisecond-accurate trace of every window launch, focus transition, and verified keystroke.
 4. **Failure Screenshots (`.png`)**: Instant high-resolution captures of the desktop and target window at the exact moment of failure.
+5. **Interactive pytest-html Report (`report.html`)**: Self-contained visual report combining failure screenshots, nested step trees with zoomable thumbnails, window leak callouts, and playable video recordings.
 
 ### GitHub Actions Workflow Example
 
@@ -186,7 +188,7 @@ jobs:
 
       - name: Run Windows Integration Tests
         run: |
-          pytest tests/ -v
+          pytest tests/ -v --html=artifacts/report.html
 
       - name: Upload Diagnostic Artifacts (Videos & Census)
         if: always()
@@ -216,7 +218,7 @@ pip install wintegrate          # core: window/element automation, verified inpu
 uv add wintegrate
 ```
 
-The core install depends on `comtypes` alone. Two optional extras pull in the
+The core install depends on `comtypes` alone. Three optional extras pull in the
 heavier pieces only if you use them:
 
 ```bash

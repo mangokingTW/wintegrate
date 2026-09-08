@@ -12,6 +12,7 @@ The core install depends on `comtypes` alone. The heavier pieces are optional:
 ```bash
 pip install 'wintegrate[video]'    # screen recording + failure screenshots
 pip install 'wintegrate[desktop]'  # virtual desktop clean-room isolation
+pip install 'wintegrate[html]'     # pytest --html report with session screenshots, steps and video
 pip install 'wintegrate[all]'
 ```
 

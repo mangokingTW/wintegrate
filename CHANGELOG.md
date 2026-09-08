@@ -6,6 +6,8 @@ the version is below 1.0, **any release may change the API**, patch releases
 included. Every such change is called out under `### Changed` and says what to
 do about it — that callout is the guarantee, not the version number.
 
+## [Unreleased]
+
 ## [0.6.3] — 2026-09-08
 
 ### Added

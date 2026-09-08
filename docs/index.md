@@ -55,12 +55,13 @@ Releases are published through PyPI Trusted Publishing with
 provenance:
 
 ```bash
-gh attestation verify wintegrate-0.1.2-py3-none-any.whl --repo mangokingTW/wintegrate
+gh attestation verify wintegrate-<version>-py3-none-any.whl --repo mangokingTW/wintegrate
 ```
 
 ## Where to go next
 
 - [Getting started](getting-started.md) — install, extras, first script
+- [HTML report](html-report.md) — pytest-html rows and GitHub Step Summary with session evidence
 - [What breaks in CI](pitfalls.md) — the failures this library was built against
 - [Use cases & real-world guides](use-cases.md) — patterns for Tauri, Qt, .NET, WinUI, and system utilities
 - [API reference](api.md) — generated from the source
