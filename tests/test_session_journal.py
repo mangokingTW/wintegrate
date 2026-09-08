@@ -142,7 +142,7 @@ def test_job_summary_is_written_when_the_runner_asks(tmp_path, monkeypatch):
     finally:
         session._close_journal()
     text = summary.read_text(encoding="utf-8")
-    assert "wintegrate session -- failed" in text
+    assert "-- failed" in text
     assert "> [!CAUTION]" in text
     assert "| open the thing | ✅ ok |" in text
     assert "break the thing" in text and "❌ **failed** (ValueError)" in text
@@ -169,7 +169,7 @@ def test_job_summary_passed_session_is_collapsible(tmp_path, monkeypatch):
         session._close_journal()
     text = summary.read_text(encoding="utf-8")
     assert "<details><summary>" in text
-    assert "✅ wintegrate session -- completed" in text
+    assert "-- completed" in text
     assert "</details>" in text
 
 

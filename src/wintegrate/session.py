@@ -746,14 +746,21 @@ class Session:
 
             step_count_label = f"{len(rows)} step(s)" if rows else "no steps"
 
+            # Derive a meaningful session name (from pytest test ID if running under pytest, else artifact folder name)
+            test_id = os.environ.get("PYTEST_CURRENT_TEST", "").split(" (")[0]
+            if test_id:
+                session_name = test_id
+            else:
+                session_name = f"session {self.artifact_dir.name}"
+
             lines = [""]
             if not failed:
                 lines.append(
-                    f"<details><summary><b>{title_icon} wintegrate session -- {verdict}</b> ({step_count_label})</summary>"
+                    f"<details><summary><b>{title_icon} {session_name} -- {verdict}</b> ({step_count_label})</summary>"
                 )
                 lines.append("")
             else:
-                lines.append(f"### {title_icon} wintegrate session -- {verdict}")
+                lines.append(f"### {title_icon} {session_name} -- {verdict}")
                 lines.append("")
 
             # For failed sessions, place a high-priority GitHub alert right at the top
