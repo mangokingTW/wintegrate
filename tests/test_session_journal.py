@@ -193,5 +193,5 @@ def test_job_summary_reports_window_leaks(tmp_path, monkeypatch):
         session._close_journal()
     text = summary.read_text(encoding="utf-8")
     assert "> [!WARNING]" in text
-    assert "Window leak detected" in text
+    assert "1 window(s) still open at exit" in text
     assert "Leaked Notepad" in text
