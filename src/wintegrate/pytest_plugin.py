@@ -7,10 +7,10 @@ report's row for that test then carries:
 - the last failure screenshot first, then the error, then the steps -- a
   failure should be readable without expanding anything else (Playwright's
   report does this and it is the reason people like it);
-- one row per `Session.step`, tick or cross, duration, and the frame the
-  recording holds at that moment (Maestro);
-- steps nested the way they ran, each expandable to the events it contained
-  with their arguments (Allure's step tree, Robot's keyword log);
+- one row per `Session.step`, tick or cross, duration, where it sits in the
+  video, and the frame the recording holds at the end of the step (Maestro);
+- steps nested the way they ran, each with the events inside it as readable
+  lines and the raw lines on demand (Allure's step tree, Robot's keyword log);
 - the recording itself, as a video the report plays.
 
 Everything is read from the artifacts the session already writes
@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,94 +31,48 @@ from typing import Any
 import pytest
 
 from wintegrate import session as _session_module
-from wintegrate.frames import video_ms_for
+from wintegrate.evidence import (
+    build_step_tree,
+    flatten_steps,
+    format_video_time,
+    frame_mark_for,
+    leaked_windows,
+    one_line,
+    read_journal,
+    summarize_event,
+)
 
-THUMB_WIDTH = 240
+__all__ = [
+    "build_step_tree",
+    "flatten_steps",
+    "frames_at",
+    "last_failure_screenshot",
+    "read_journal",
+    "render_session",
+    "render_steps",
+]
+
+FRAME_WIDTH = 720  # decoded once; shown at half width until the frame is clicked open
 MAX_STEP_FRAMES = 24
-
-
-# --- pure: reading and shaping the journal -------------------------------------
-
-
-def read_journal(artifact_dir: Path) -> list[dict[str, Any]]:
-    """Events in order, from the jsonl (authoritative) or the json written at exit."""
-    jsonl = artifact_dir / "session_events.jsonl"
-    if jsonl.exists():
-        events = []
-        for line in jsonl.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue  # a line cut short by a kill is not evidence of anything
-        return events
-    pretty = artifact_dir / "session_events.json"
-    if pretty.exists():
-        try:
-            data = json.loads(pretty.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else data.get("events", [])
-        except (json.JSONDecodeError, AttributeError):
-            return []
-    return []
-
-
-def build_step_tree(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Nests `step_start` / `step_ok` / `step_failed` events the way they ran.
-
-    Each node: name, status ('ok' | 'failed' | 'open'), start/end monotonic,
-    seconds, error, signature, the events logged directly inside it, and its
-    children. A step left open by a death keeps status 'open' rather than being
-    guessed at.
-    """
-    root: list[dict[str, Any]] = []
-    stack: list[dict[str, Any]] = []
-    for e in events:
-        kind = e.get("type")
-        if kind == "step_start":
-            node = {
-                "name": e.get("message", ""),
-                "status": "open",
-                "start": e.get("monotonic"),
-                "end": None,
-                "seconds": None,
-                "error": None,
-                "signature": None,
-                "events": [],
-                "children": [],
-                "start_event": e,
-            }
-            (stack[-1]["children"] if stack else root).append(node)
-            stack.append(node)
-        elif kind in ("step_ok", "step_failed") and stack:
-            node = stack.pop()
-            node["status"] = "ok" if kind == "step_ok" else "failed"
-            node["end"] = e.get("monotonic")
-            node["seconds"] = e.get("seconds")
-            node["error"] = e.get("error")
-            node["signature"] = e.get("signature")
-            node["end_event"] = e
-        elif stack:
-            stack[-1]["events"].append(e)
-    return root
-
-
-def flatten_steps(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for node in tree:
-        out.append(node)
-        out.extend(flatten_steps(node["children"]))
-    return out
+EVENTS_SHOWN = 4
 
 
 def last_failure_screenshot(artifact_dir: Path) -> Path | None:
-    """The newest `failure*.png`: the step's own, or the session's at exit."""
-    shots = sorted(
-        (p for p in artifact_dir.glob("failure*.png") if p.is_file()),
+    """The step's own `failure-<step>.png` when there is one, else the session's
+    `failure_screenshot.png`.
+
+    The step's is taken the instant the step raised; the session's is taken at
+    exit, after the test's own cleanup has usually closed the window, so it tends
+    to show an empty desktop.
+    """
+    by_step = sorted(
+        (p for p in artifact_dir.glob("failure-*.png") if p.is_file()),
         key=lambda p: p.stat().st_mtime,
     )
-    return shots[-1] if shots else None
+    if by_step:
+        return by_step[-1]
+    at_exit = artifact_dir / "failure_screenshot.png"
+    return at_exit if at_exit.exists() else None
 
 
 def _fmt_args(e: dict[str, Any]) -> str:
@@ -133,11 +88,11 @@ def _fmt_args(e: dict[str, Any]) -> str:
 # --- frames: one per step, from the recording ------------------------------------
 
 
-def frames_at(video: Path, marks_ms: list[int], width: int = THUMB_WIDTH) -> dict[int, bytes]:
+def frames_at(video: Path, marks_ms: list[int], width: int = FRAME_WIDTH) -> dict[int, bytes]:
     """PNG bytes of the frame nearest each mark, one sequential decode.
 
     Returns what it could decode; a missing PyAV or an unreadable video gives an
-    empty dict, and the report then simply has no thumbnails.
+    empty dict, and the report then simply has no frames.
     """
     if not marks_ms:
         return {}
@@ -192,26 +147,42 @@ def _frame_png(frame, width: int) -> bytes:
     return buf.getvalue()
 
 
+def _data_uri(png: bytes) -> str:
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+
+def _png_size(png: bytes) -> tuple[int, int]:
+    """Width and height from the IHDR chunk; no decoder needed."""
+    if len(png) >= 24 and png[:8] == b"\x89PNG\r\n\x1a\n":
+        return int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+    return FRAME_WIDTH, FRAME_WIDTH * 3 // 4
+
+
 # --- rendering -----------------------------------------------------------------
 
 _CSS = """
 <style>
 .wt-report{font:13px/1.4 system-ui,Segoe UI,sans-serif;margin:6px 0 10px}
 .wt-report .wt-head{margin:6px 0 4px;font-weight:600}
-.wt-report .wt-err{white-space:pre-wrap;background:#fff3f3;border-left:3px solid #d33;padding:6px 8px;margin:4px 0}
+.wt-report .wt-err{white-space:pre-wrap;background:#fff3f3;border-left:3px solid #d33;padding:6px 8px;margin:4px 0;font-family:ui-monospace,Consolas,monospace}
 .wt-report .wt-warn{background:#fff8e6;border-left:3px solid #e3a008;padding:6px 8px;margin:4px 0;color:#723b00}
-.wt-report table.wt-steps{border-collapse:collapse;width:100%}
-.wt-report table.wt-steps td{vertical-align:top;padding:4px 6px;border-top:1px solid #e5e5e5}
+.wt-report table.wt-steps{border-collapse:collapse;width:100%;table-layout:fixed}
+.wt-report table.wt-steps th{text-align:left;color:#666;font-weight:600;padding:2px 6px;border-bottom:1px solid #ccc}
+.wt-report table.wt-steps td{vertical-align:top;padding:4px 6px;border-top:1px solid #e5e5e5;overflow-wrap:anywhere}
+.wt-report .wt-c-status{width:26px}.wt-report .wt-c-dur{width:60px}.wt-report .wt-c-at{width:62px}.wt-report .wt-c-frame{width:372px}
 .wt-report .wt-ok{color:#1a7f37;font-weight:700}
 .wt-report .wt-fail{color:#c00;font-weight:700}
 .wt-report .wt-open{color:#b58900;font-weight:700}
 .wt-report .wt-tree-guide{color:#aaa;font-family:monospace;user-select:none;margin-right:4px}
-.wt-report .wt-dur{color:#666;white-space:nowrap}
-.wt-report details summary{cursor:pointer;color:#444}
+.wt-report .wt-dur,.wt-report .wt-at{color:#666;white-space:nowrap;font-variant-numeric:tabular-nums}
+.wt-report .wt-detail{color:#c00;white-space:pre-wrap;margin-top:2px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.wt-report ul.wt-evs{margin:3px 0 0;padding-left:16px;color:#444}
+.wt-report details summary{cursor:pointer;color:#666}
 .wt-report .wt-ev{font:12px/1.35 ui-monospace,Consolas,monospace;color:#333;margin:2px 0 0 12px;white-space:pre-wrap}
-.wt-report .wt-thumb-link{display:inline-block;cursor:zoom-in;text-decoration:none}
-.wt-report .wt-thumb{display:block;border:1px solid #ccc;background:#000 center/contain no-repeat;transition:transform 0.15s ease}
-.wt-report .wt-thumb-link:hover .wt-thumb{box-shadow:0 2px 8px rgba(0,0,0,0.25);border-color:#888}
+.wt-report details.wt-frame summary{list-style:none;display:inline-block}
+.wt-report details.wt-frame summary::-webkit-details-marker{display:none}
+.wt-report .wt-thumb{display:block;width:360px;aspect-ratio:var(--ar,4/3);border:1px solid #ccc;background:#000 center/contain no-repeat;cursor:zoom-in}
+.wt-report details.wt-frame[open] .wt-thumb{width:min(92vw,1440px);cursor:zoom-out}
 .wt-report .wt-meta{color:#666;margin-top:6px}
 </style>
 """
@@ -240,49 +211,71 @@ def render_steps(
             branch = "&#9492;&#9472;&nbsp;" if is_last else "&#9500;&#9472;&nbsp;"
             tree_prefix = f'<span class="wt-tree-guide">{indent}{branch}</span>'
         dur = f"{node['seconds']:.2f}s" if isinstance(node.get("seconds"), (int, float)) else ""
-        ms = video_ms_for(node.get("start_event") or {}, anchor)
-        # A div with a background wrapped in an anchor: pytest-html's script collects
-        # the <img> elements inside a result's extras for its media viewer and
-        # rewrites the first one it finds, which turned the first thumbnail into
-        # the failure screenshot and left the viewer empty.
+        ms = frame_mark_for(node, anchor)
+        at = format_video_time(ms) if anchor else ""
+        # A div with a background inside <details>, not an <img> in an <a>:
+        # pytest-html's script collects the <img> elements inside a result's
+        # extras for its media viewer and rewrites the first one it finds, and
+        # Chromium refuses to navigate a top frame to a data: URL, so a link to
+        # the image opens nothing. Clicking the <details> resizes the same
+        # element through CSS; one copy of the frame, no script.
         thumb = ""
         if ms in thumbs:
             uri, w, h = thumbs[ms]
             thumb = (
-                f'<a class="wt-thumb-link" href="{uri}" target="_blank" title="Click to view full image in new tab">'
-                f'<div class="wt-thumb" role="img" aria-label="frame at {ms} ms" '
-                f'style="width:{w}px;height:{h}px;background-image:url({uri})"></div></a>'
+                f'<details class="wt-frame"><summary><div class="wt-thumb" role="img" '
+                f'aria-label="frame at {html.escape(at) or f"{ms} ms"}" style="--ar:{w}/{h};'
+                f'background-image:url({uri})"></div></summary></details>'
             )
         err = ""
         if node["status"] == "failed":
-            sig = node.get("signature") or node.get("error") or ""
-            err = f'<div class="wt-fail">{html.escape(str(sig))}</div>'
+            text = node.get("detail") or node.get("signature") or node.get("error") or "failed"
+            err = f'<div class="wt-detail">{html.escape(str(text))}</div>'
         inner = ""
         if node["events"]:
-            lines = "\n".join(
+            shown = node["events"][:EVENTS_SHOWN]
+            items = "".join(f"<li>{html.escape(summarize_event(e))}</li>" for e in shown)
+            more = len(node["events"]) - len(shown)
+            tail = f"<li>&hellip; {more} more</li>" if more > 0 else ""
+            raw = "\n".join(
                 html.escape(f"{e.get('type', '')}: {e.get('message', '')} {_fmt_args(e)}".rstrip())
                 for e in node["events"]
             )
-            inner = f'<details><summary>{len(node["events"])} event(s)</summary><div class="wt-ev">{lines}</div></details>'
+            inner = (
+                f'<ul class="wt-evs">{items}{tail}</ul>'
+                f"<details><summary>raw events ({len(node['events'])})</summary>"
+                f'<div class="wt-ev">{raw}</div></details>'
+            )
         rows.append(
             f"<tr><td>{_status_mark(node['status'])}</td>"
             f"<td>{tree_prefix}{html.escape(node['name'])}{err}{inner}</td>"
-            f'<td class="wt-dur">{dur}</td><td>{thumb}</td></tr>'
+            f'<td class="wt-dur">{dur}</td><td class="wt-at">{html.escape(at)}</td>'
+            f"<td>{thumb}</td></tr>"
         )
         if node["children"]:
             rows.append(render_steps(node["children"], thumbs, anchor, depth + 1))
     return "".join(rows)
 
 
-def _data_uri(png: bytes) -> str:
-    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+def render_steps_table(tree, thumbs, anchor) -> str:
+    frame_head = "frame at the end of the step" + (" (click to enlarge)" if thumbs else "")
+    head = (
+        '<colgroup><col class="wt-c-status"><col><col class="wt-c-dur"><col class="wt-c-at">'
+        '<col class="wt-c-frame"></colgroup>'
+        f"<thead><tr><th></th><th>step</th><th>took</th><th>video</th><th>{frame_head}</th></tr></thead>"
+    )
+    return (
+        f'<table class="wt-steps">{head}<tbody>{render_steps(tree, thumbs, anchor)}</tbody></table>'
+    )
 
 
-def _png_size(png: bytes) -> tuple[int, int]:
-    """Width and height from the IHDR chunk; no decoder needed."""
-    if len(png) >= 24 and png[:8] == b"\x89PNG\r\n\x1a\n":
-        return int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
-    return THUMB_WIDTH, THUMB_WIDTH * 3 // 4
+def _artifact_hint(artifact_dir: Path) -> str:
+    """Where the reader can actually find the files: the folder's name, and on a
+    runner the upload it travels in. A runner-local path is a dead end."""
+    name = html.escape(artifact_dir.name)
+    if os.environ.get("GITHUB_ACTIONS"):
+        return f"artifacts: folder <code>{name}</code> in this job's uploaded artifacts"
+    return f"artifacts: <code>{html.escape(str(artifact_dir))}</code>"
 
 
 def render_session(artifact_dir: Path, failed: bool, error: str | None) -> tuple[str, list]:
@@ -303,8 +296,8 @@ def render_session(artifact_dir: Path, failed: bool, error: str | None) -> tuple
     thumbs: dict[int, tuple[str, int, int]] = {}
     if anchor and video.exists():
         marks = []
-        for node in flatten_steps(tree)[:MAX_STEP_FRAMES]:
-            ms = video_ms_for(node.get("start_event") or {}, anchor)
+        for _depth, node in flatten_steps(tree)[:MAX_STEP_FRAMES]:
+            ms = frame_mark_for(node, anchor)
             if ms is not None:
                 marks.append(ms)
         thumbs = {
@@ -322,29 +315,27 @@ def render_session(artifact_dir: Path, failed: bool, error: str | None) -> tuple
         if error:
             parts.append(f'<div class="wt-err">{html.escape(error)}</div>')
 
-    # Check window census diff for leaks
     census_file = artifact_dir / "window_census.json"
     if census_file.exists():
         try:
             cdata = json.loads(census_file.read_text(encoding="utf-8"))
-            added = cdata.get("added", [])
-            if added:
-                sample_titles = [
-                    w.get("name") or w.get("class_name") or "Window" for w in added[:3]
-                ]
-                sample_str = ", ".join(f"<code>{html.escape(t)}</code>" for t in sample_titles)
-                if len(added) > 3:
-                    sample_str += f" and {len(added) - 3} more"
-                parts.append(
-                    f'<div class="wt-warn">&#9888; <strong>Window leak detected:</strong> '
-                    f"{len(added)} window(s) remained open at exit ({sample_str}).</div>"
-                )
-        except Exception:
-            pass
+            leaked = leaked_windows(cdata.get("added", []))
+        except Exception:  # noqa: BLE001 - a census we cannot read is not a leak
+            leaked = []
+        if leaked:
+            sample = ", ".join(
+                f"<code>{html.escape(w.get('title') or w.get('name') or w.get('class_name') or 'window')}</code>"
+                for w in leaked[:3]
+            )
+            if len(leaked) > 3:
+                sample += f" and {len(leaked) - 3} more"
+            parts.append(
+                f'<div class="wt-warn">&#9888; <strong>{len(leaked)} window(s) still open at exit:</strong> {sample}</div>'
+            )
 
     if tree:
         parts.append('<div class="wt-head">Steps</div>')
-        parts.append(f'<table class="wt-steps">{render_steps(tree, thumbs, anchor)}</table>')
+        parts.append(render_steps_table(tree, thumbs, anchor))
     else:
         parts.append(
             '<div class="wt-meta">No steps recorded; wrap work in <code>session.step(...)</code> to see it here.</div>'
@@ -355,9 +346,7 @@ def render_session(artifact_dir: Path, failed: bool, error: str | None) -> tuple
                 base64.b64encode(video.read_bytes()).decode("ascii"), name="session_recording.mp4"
             )
         )
-    parts.append(
-        f'<div class="wt-meta">artifacts: <code>{html.escape(str(artifact_dir))}</code> &middot; {len(events)} events</div>'
-    )
+    parts.append(f'<div class="wt-meta">{_artifact_hint(artifact_dir)}</div>')
     parts.append("</div>")
     return "".join(parts), attached
 
@@ -371,6 +360,18 @@ def _html_active(config) -> bool:
         and config.pluginmanager.hasplugin("html")
         and bool(config.getoption("htmlpath", None))
     )
+
+
+def _failure_message(report) -> str | None:
+    """The exception's own message: what a reader wants before the file:line."""
+    crash = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+    if crash is not None and getattr(crash, "message", None):
+        return str(crash.message).strip()
+    text = (report.longreprtext or "").strip()
+    return text.splitlines()[-1] if text else None
+
+
+_TESTS_WITH_SESSIONS: list[tuple[str, str, int]] = []  # (nodeid, outcome, sessions)
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -389,10 +390,10 @@ def pytest_runtest_makereport(item, call):
     if not sessions:
         return
 
-    # Attach test nodeid to session records for reporting / summaries
     for record in sessions:
-        if "test_id" not in record:
-            record["test_id"] = item.nodeid
+        record.setdefault("test_id", item.nodeid)
+    _TESTS_WITH_SESSIONS.append((item.nodeid, report.outcome, len(sessions)))
+    report._wintegrate_session_count = len(sessions)
 
     if not _html_active(item.config):
         return
@@ -400,15 +401,11 @@ def pytest_runtest_makereport(item, call):
     from pytest_html import extras
 
     attached = []
-    error = (
-        report.longreprtext.strip().splitlines()[-1]
-        if report.failed and report.longreprtext
-        else None
-    )
+    error = _failure_message(report) if report.failed else None
     for record in sessions:
         session_failed = report.failed or record.get("failed", False)
         session_error = error or (
-            f"Session failed: {record.get('error')}" if record.get("failed") else None
+            f"session closed on {record.get('error')}" if record.get("failed") else None
         )
         block, media = render_session(Path(record["artifact_dir"]), session_failed, session_error)
         attached.extend(media)  # screenshot first: it is what a reader wants to see
@@ -422,57 +419,68 @@ def pytest_html_report_title(report):
 
 
 @pytest.hookimpl(optionalhook=True)
+def pytest_html_results_table_row(report, cells):
+    """Marks the rows that carry session evidence, so they can be found in a long
+    table where every passing row is collapsed."""
+    if report.when != "call":
+        return
+    count = getattr(report, "_wintegrate_session_count", 0)
+    if count and len(cells) > 1:
+        badge = (
+            f' <span title="{count} wintegrate session(s) inside: screenshot, steps, recording">'
+            "&#127916;</span></td>"
+        )
+        cells[1] = cells[1].replace("</td>", badge, 1)
+
+
+@pytest.hookimpl(optionalhook=True)
 def pytest_html_results_summary(prefix, summary, postfix, session):
     n = len(_session_module.RECENT_SESSIONS)
     failed = sum(1 for r in _session_module.RECENT_SESSIONS if r.get("failed"))
     prefix.append(
-        f"<p>wintegrate sessions: {n}, of which {failed} closed on an exception. "
-        "A failed test's row opens on its last screenshot, then the error, then the steps "
-        "with the frame the recording holds at each one.</p>"
+        f"<p>{n} wintegrate session(s), {failed} closed on an exception. "
+        "Rows marked &#127916; carry the evidence: screenshot, error, steps, recording.</p>"
     )
+    if _TESTS_WITH_SESSIONS:
+        items = "".join(
+            f'<li><span class="wt-{"fail" if o == "failed" else "ok"}">{html.escape(o)}</span> '
+            f"{html.escape(nodeid)} ({c})</li>"
+            for nodeid, o, c in _TESTS_WITH_SESSIONS
+        )
+        prefix.append(
+            f"<details><summary>{len(_TESTS_WITH_SESSIONS)} test(s) with sessions</summary>"
+            f"<ul>{items}</ul></details>"
+        )
 
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
-    """Writes a consolidated wintegrate suite overview table to $GITHUB_STEP_SUMMARY."""
-    import os
-
+    """A run-level overview at the end of $GITHUB_STEP_SUMMARY."""
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
         return
-
     sessions = _session_module.RECENT_SESSIONS
     if not sessions:
         return
-
-    total = len(sessions)
     failed_sessions = [s for s in sessions if s.get("failed")]
-    passed_sessions = total - len(failed_sessions)
-
     lines = [
         "",
-        "## 🖥️ wintegrate Test Run Overview",
+        "## wintegrate: run overview",
         "",
-        f"- **Total Sessions**: {total} | **Passed**: {passed_sessions} | **Failed**: {len(failed_sessions)}",
+        f"{len(sessions)} session(s), {len(sessions) - len(failed_sessions)} passed, "
+        f"{len(failed_sessions)} failed. Each session's folder is in this job's uploaded artifacts.",
         "",
     ]
-
     if failed_sessions:
-        lines += [
-            "### ❌ Failed Sessions",
-            "",
-            "| Test | Error | Artifacts |",
-            "| :--- | :--- | :--- |",
-        ]
+        lines += ["| test | what failed | folder |", "| :--- | :--- | :--- |"]
         for s in failed_sessions:
             test_name = s.get("test_id") or "unknown"
-            err = s.get("error") or "Failed"
-            art = s.get("artifact_dir") or ""
-            lines.append(f"| `{test_name}` | `{err}` | `{art}` |")
+            what = one_line(s.get("detail") or s.get("error") or "failed", 160)
+            folder = Path(s.get("artifact_dir") or "").name
+            lines.append(f"| `{test_name}` | {what} | `{folder}` |")
         lines.append("")
-
     try:
         with open(summary_path, "a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
-    except Exception:
+    except OSError:
         pass
