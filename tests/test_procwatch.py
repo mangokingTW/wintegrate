@@ -64,7 +64,7 @@ def test_describe_wait_says_idle_and_windowless_in_words():
     assert "CPU 0.3s total (+0.0s over the wait)" in text
     assert "created no top-level window at all" in text
     assert "msmpeng.exe 97.0%" in text
-    assert "Microsoft Defender scanning" in text
+    assert "That is Microsoft Defender scanning." in text
 
 
 def test_describe_wait_lists_hidden_windows_and_an_exit():

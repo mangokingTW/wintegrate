@@ -25,9 +25,9 @@ STILL_ACTIVE = 259
 TH32CS_SNAPPROCESS = 0x00000002
 _INVALID_HANDLE = ctypes.c_void_p(-1).value
 
-# Processes whose presence in the top-CPU list explains a stall on a fresh
-# runner: the antivirus scanning a first-run script, .NET's native-image
-# compiler, and Windows servicing. Named so the message can say so.
+# Processes whose place in the top-CPU list explains a stall on a fresh runner:
+# the antivirus scanning a first-run script, .NET's native-image compiler, and
+# Windows servicing. Named so the message can say so.
 BUSY_BY_NAME = {
     "msmpeng.exe": "Microsoft Defender scanning",
     "mscorsvw.exe": ".NET native image generation",
@@ -243,7 +243,9 @@ def machine_snapshot(interval: float = 0.5, top: int = 6) -> dict[str, Any]:
             for delta, pid in deltas[:top]
             if delta > 0
         ]
-        present = sorted({BUSY_BY_NAME[n] for n in names.values() if n in BUSY_BY_NAME})
+        # Named only when actually consuming CPU: Defender's service exists on
+        # every Windows, so its presence says nothing; its place in the busy list does.
+        present = sorted({BUSY_BY_NAME[b["name"]] for b in busiest if b["name"] in BUSY_BY_NAME})
         return {
             "interval": interval,
             "busiest": busiest,
@@ -291,5 +293,5 @@ def describe_wait(
             )
         known = machine.get("known_busy") or []
         if known:
-            lines.append(" Running: " + "; ".join(known) + ".")
+            lines.append(" That is " + "; ".join(known) + ".")
     return "".join(lines)
