@@ -23,9 +23,9 @@ The last row is the one that used to lie.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -39,8 +39,9 @@ from win32_dialog_app import (
 )
 
 from wintegrate import Window
+from wintegrate.diagnostics import set_launch_output_dir
 from wintegrate.element import UiaElement, ValueReading
-from wintegrate.exceptions import ValueUnavailableError, WindowDiscoveryTimeoutError
+from wintegrate.exceptions import ValueUnavailableError
 
 APP = Path(__file__).parent / "win32_dialog_app.py"
 WPF_APP = Path(__file__).parent / "wpf_grid_app.ps1"
@@ -65,43 +66,37 @@ def dialog():
 
 
 @pytest.fixture(scope="module")
-def wpf_window():
+def wpf_window(tmp_path_factory):
     """A WPF window, for the one thing Win32 cannot provide: a handle-less element.
 
     Every Win32 control has an HWND, so `WM_GETTEXT` always answers and the Name
     source is unreachable. WPF elements below the top-level window have no handle
     of their own, which is what makes the fourth source testable at all.
+
+    Launched through `launch_and_discover`, so the wait is instrumented and the
+    PowerShell stderr lands in `launched_NN.err`; see test_controls.wpf_window.
     """
-    log = Path(tempfile.gettempdir()) / "wpf_value_reading.stderr.log"
-    with log.open("w", encoding="utf-8") as errfile:
-        proc = subprocess.Popen(
+    out_dir = tmp_path_factory.mktemp("wpf-value-launch")
+    set_launch_output_dir(out_dir)
+    try:
+        proc, win = Window.launch_and_discover(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(WPF_APP)],
-            stdout=subprocess.DEVNULL,
-            stderr=errfile,
+            timeout=90.0,
+            title_pattern=rf"^{re.escape(WPF_TITLE)}$",
+            process_names=("powershell.exe",),
+            require_all=True,
         )
+    finally:
+        set_launch_output_dir(None)
+    try:
+        win.set_foreground(verify=False)
+        time.sleep(1.0)
+        yield win
+    finally:
         try:
-            deadline = time.monotonic() + 90.0
-            win = None
-            while time.monotonic() < deadline:
-                try:
-                    win = Window.find(title_exact=WPF_TITLE, timeout=1.0)
-                    break
-                except WindowDiscoveryTimeoutError:
-                    if proc.poll() is not None:
-                        pytest.fail(
-                            "the WPF fixture exited before its window appeared:\n"
-                            + log.read_text(encoding="utf-8", errors="replace")[-800:]
-                        )
-            if win is None:
-                pytest.fail("the WPF fixture window did not appear within 90s")
-            win.set_foreground(verify=False)
-            time.sleep(1.0)
-            yield win
-        finally:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            proc.kill()
+        except Exception:
+            pass
 
 
 def _find(win: Window, **kwargs) -> UiaElement:

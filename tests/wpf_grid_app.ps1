@@ -16,9 +16,11 @@
 # them. That is what makes VirtualizedItemPattern and ItemContainerPattern
 # testable here rather than merely implemented.
 
+[Console]::Error.WriteLine("[{0:HH:mm:ss.fff}] start" -f (Get-Date))
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
+[Console]::Error.WriteLine("[{0:HH:mm:ss.fff}] assemblies loaded" -f (Get-Date))
 
 $Title = 'wintegrate grid fixture'
 $RowCount = 200
@@ -49,6 +51,7 @@ $xaml = @"
 
 $reader = New-Object System.Xml.XmlNodeReader ([xml]$xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
+[Console]::Error.WriteLine("[{0:HH:mm:ss.fff}] xaml loaded" -f (Get-Date))
 $grid = $window.FindName('Grid')
 
 # Deterministic content: the tests compute the expected value for any row from
@@ -64,6 +67,7 @@ for ($i = 0; $i -lt $RowCount; $i++) {
     })
 }
 $grid.ItemsSource = $items
+[Console]::Error.WriteLine("[{0:HH:mm:ss.fff}] data bound, showing window" -f (Get-Date))
 
 $window.Add_ContentRendered({ Write-Host $Title })
 $window.ShowDialog() | Out-Null

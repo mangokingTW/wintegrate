@@ -8,6 +8,28 @@ do about it — that callout is the guarantee, not the version number.
 
 ## [Unreleased]
 
+### Added
+
+- **A discovery wait now says what the process was doing.** `launch_and_discover`
+  samples the launched process while its window is awaited -- alive, CPU seconds,
+  and every top-level window it owns, hidden ones included -- every 5s
+  (`wait_for_new(..., watch_pid=, sample_every=)`). The samples go to the session
+  journal as `discovery_wait` events and end the timeout message. A process that
+  exits before its window appears ends the wait at once with its exit code
+  instead of after the whole timeout. When the wait gives up, Windows itself is
+  asked what it knows (one PowerShell call): the process's threads and what they
+  wait on, whether the PowerShell engine in it reached "Available" (event 400),
+  Defender scan events, CAPI2 revocation-check records when that log is on,
+  FontCache service starts, Application Hang reports -- and the answer ends the
+  message. `SessionConfig(etw_trace=True)` records a `wpr` GeneralProfile trace
+  for the session and keeps `etw_trace.etl` when it closes on an exception, for
+  WPA's wait analysis. `wintegrate.procwatch` is the instrument.
+  Measured on a hosted arm64 runner: a WPF fixture showed nothing after 90s on
+  one launch and came up in 18s on the next, and nothing recorded said whether
+  the process had been working, idle, or gone -- this would have. The two WPF
+  fixtures in the test suite now launch through it, and `wpf_grid_app.ps1`
+  stamps its phases to stderr.
+
 ### Changed
 
 - **The report says what happened, not where the code was.** In the pytest-html

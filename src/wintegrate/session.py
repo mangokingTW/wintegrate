@@ -25,6 +25,7 @@ from wintegrate.diagnostics import (
     capture_screen_image,
     capture_window_image,
     set_launch_output_dir,
+    set_wait_observer,
 )
 from wintegrate.element import UiaElement
 from wintegrate.env import env, is_ci
@@ -71,6 +72,12 @@ class SessionConfig:
     default_timeout: float = 15.0
     dismiss_oobe: bool | str = "auto"
     isolated_virtual_desktop: bool | str = "auto"
+    # Opt-in ETW trace for the whole session through Windows Performance Recorder
+    # (`wpr`, inbox on Windows 10+, needs admin). Kept as `etw_trace.etl` in the
+    # artifact directory only when the session closes on an exception; cancelled
+    # otherwise. WPA's wait analysis on it says which call each thread was
+    # blocked in, which no sampling from the outside can.
+    etw_trace: bool = False
 
     @property
     def should_sanitize_runner(self) -> bool:
@@ -571,6 +578,32 @@ class Session:
 
             self._mouse = Mouse(session=self)
         return self._mouse
+
+    @staticmethod
+    def _wpr(*args: str) -> bool:
+        try:
+            run = subprocess.run(["wpr", *args], capture_output=True, text=True, timeout=120)
+            if run.returncode != 0:
+                logger.warning(
+                    f"wpr {' '.join(args)} exited {run.returncode}: {run.stderr.strip()[:200]}"
+                )
+            return run.returncode == 0
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning(f"wpr {' '.join(args)} failed: {exc}")
+            return False
+
+    def _on_wait_sample(self, event: dict) -> None:
+        image, pid = event.get("image") or "process", event.get("pid")
+        if not event.get("alive", True):
+            message = f"{image} (pid {pid}) exited with code {event.get('exit_code')} at {event.get('at')}s"
+        else:
+            message = (
+                f"{image} (pid {pid}) alive at {event.get('at')}s: cpu {event.get('cpu_seconds')}s, "
+                f"windows {event.get('windows')} ({event.get('visible_windows')} visible)"
+            )
+        self.log_event(
+            "discovery_wait", message, **{k: v for k, v in event.items() if k != "image"}
+        )
 
     def log_event(self, event_type: str, message: str, **kwargs):
         """Records a structured event, in memory and -- once open -- in the journal.
@@ -1073,6 +1106,15 @@ class Session:
         # stdout/stderr here rather than inheriting this process's -- see
         # diagnostics.set_launch_output_dir.
         set_launch_output_dir(self.artifact_dir)
+        # Discovery waits report what the awaited process is doing; those samples
+        # belong in the journal, next to the launch they qualify.
+        set_wait_observer(self._on_wait_sample)
+        self._etw_started = False
+        if self.config.etw_trace:
+            self._etw_started = self._wpr("-start", "GeneralProfile", "-filemode")
+            self.log_event(
+                "etw_trace", "wpr started" if self._etw_started else "wpr could not start"
+            )
         # Preflight before anything is touched: what this process is, what shares
         # its console, what is in the foreground. On disk first, so a run that
         # dies in the next hundred lines still says what it was.
@@ -1293,6 +1335,17 @@ class Session:
             except Exception as exc:
                 logger.debug(f"restore skipped ({type(exc).__name__}): {exc}")
         set_launch_output_dir(None)
+        set_wait_observer(None)
+        if getattr(self, "_etw_started", False):
+            if exc_type is not None:
+                target = self.artifact_dir / "etw_trace.etl"
+                ok = self._wpr("-stop", str(target))
+                self.log_event(
+                    "etw_trace", f"wpr stopped -> {target.name}" if ok else "wpr stop failed"
+                )
+            else:
+                self._wpr("-cancel")
+                self.log_event("etw_trace", "wpr cancelled: session closed cleanly")
 
         # Capture final census and compute diff
         self.final_census = WindowCensus.capture()

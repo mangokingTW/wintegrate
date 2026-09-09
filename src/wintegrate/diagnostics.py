@@ -47,6 +47,27 @@ _launch_output_lock = threading.Lock()
 _launch_seq = 0
 
 
+# Observer for discovery waits: called with one dict per sample of the awaited
+# process (see procwatch.ProcessSample.as_event). Set by the Session so the
+# samples land in the journal; None means nobody is listening and the samples
+# only travel in the exception.
+_wait_observer = None
+
+
+def set_wait_observer(fn) -> None:
+    global _wait_observer
+    _wait_observer = fn
+
+
+def notify_wait_observer(event: dict) -> None:
+    fn = _wait_observer
+    if fn is not None:
+        try:
+            fn(event)
+        except Exception:  # noqa: BLE001 - a journal problem must not break the wait
+            pass
+
+
 def set_launch_output_dir(path: Path | None) -> None:
     global _launch_output_dir
     with _launch_output_lock:
