@@ -111,16 +111,19 @@ def test_the_jsonl_is_read_line_by_line_and_a_cut_line_is_dropped(tmp_path):
     assert [e["type"] for e in events] == ["session_open", "step_start", "launch_app"]
 
 
-def test_the_newest_failure_screenshot_wins(tmp_path):
-    assert last_failure_screenshot(tmp_path) is None
-    (tmp_path / "failure_screenshot.png").write_bytes(b"a")
-    (tmp_path / "failure-When-I-type.png").write_bytes(b"b")
+def test_the_steps_own_failure_screenshot_beats_the_one_taken_at_exit(tmp_path):
+    """The exit screenshot is taken after the test's cleanup closed the window, so
+    it shows an empty desktop; the step's was taken the instant it raised."""
     import os
     import time
 
+    assert last_failure_screenshot(tmp_path) is None
+    (tmp_path / "failure_screenshot.png").write_bytes(b"a")
+    assert last_failure_screenshot(tmp_path).name == "failure_screenshot.png"
+    (tmp_path / "failure-When-I-type.png").write_bytes(b"b")
     now = time.time()
-    os.utime(tmp_path / "failure_screenshot.png", (now - 10, now - 10))
-    os.utime(tmp_path / "failure-When-I-type.png", (now, now))
+    os.utime(tmp_path / "failure-When-I-type.png", (now - 10, now - 10))
+    os.utime(tmp_path / "failure_screenshot.png", (now, now))  # newer, still loses
     assert last_failure_screenshot(tmp_path).name == "failure-When-I-type.png"
 
 
