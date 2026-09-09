@@ -38,7 +38,9 @@ def dialog():
     """Launches the dialog fixture in its own process and guarantees cleanup."""
     proc = subprocess.Popen([sys.executable, str(APP)])
     try:
-        win = Window.find(class_name="#32770", title_exact=DIALOG_TITLE, timeout=20.0)
+        # pid= so a dialog the previous test closed and that is still being torn
+        # down cannot be mistaken for this one.
+        win = Window.find(class_name="#32770", title_exact=DIALOG_TITLE, pid=proc.pid, timeout=20.0)
         win.set_foreground(verify=False)
         time.sleep(0.3)
         yield win
