@@ -63,7 +63,12 @@ def test_a_process_that_dies_ends_the_wait_at_once_with_its_exit_code():
     proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(3)"])
     with pytest.raises(WindowDiscoveryTimeoutError) as excinfo:
         Window.wait_for_new(
-            before, timeout=20.0, title_pattern="never-there", watch_pid=proc.pid, sample_every=0.5
+            before,
+            timeout=20.0,
+            title_pattern="never-there",
+            watch_pid=proc.pid,
+            sample_every=0.5,
+            watch_is_target=True,
         )
     elapsed = time.monotonic() - started
     assert elapsed < 10, f"the wait ran {elapsed:.1f}s past a process that had exited"
@@ -114,3 +119,20 @@ def test_describe_probe_reports_a_failed_probe_without_raising():
 
     assert "probe failed" in describe_probe({"error": "boom"})
     assert describe_probe({}) == ""
+
+
+def test_a_launcher_that_exits_does_not_end_the_wait_but_is_reported():
+    """`explorer.exe shell:appsFolder\\...` exits with code 1 once the packaged app is
+    running; ending the wait on that exit broke every Store-app launch. Without
+    `watch_is_target` the exit is recorded and the wait runs to its deadline."""
+    before = WindowCensus.capture()
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(1)"])
+    started = time.monotonic()
+    with pytest.raises(WindowDiscoveryTimeoutError) as excinfo:
+        Window.wait_for_new(
+            before, timeout=2.0, title_pattern="never-there", watch_pid=proc.pid, sample_every=0.5
+        )
+    assert time.monotonic() - started >= 2.0
+    message = str(excinfo.value)
+    assert "exited with code 1" in message and "launcher" in message
+    assert excinfo.value.facts.get("exit_code") is None

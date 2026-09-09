@@ -221,6 +221,25 @@ def _launch_target_note(cmd: list[str] | str) -> str:
         return ""
 
 
+def _launched_is_the_app(cmd, pid: int, process_names) -> bool:
+    r"""Whether the process we started is the application, or a launcher for it.
+
+    Only the caller knows, through `process_names`: if the launched image is one
+    of the names the window is expected to belong to, its exit means no window is
+    coming. `explorer.exe shell:appsFolder\...` exits with code 1 once the packaged
+    app is running, and `wt.exe` hands off to `WindowsTerminal.exe`; neither exit
+    says anything about the window.
+    """
+    if not process_names:
+        return False
+    names = {p.lower() for p in process_names}
+    image = get_process_image_name(pid)
+    if not image:
+        first = cmd[0] if isinstance(cmd, list) else str(cmd).split()[0]
+        image = Path(first).name.lower()
+    return image.lower() in names
+
+
 def _describe_desktop_now(before: list, limit: int = 12, launched: bool = True) -> str:
     """What was on the desktop when discovery gave up, for the exception message.
 
@@ -1233,6 +1252,7 @@ class Window:
                 require_all=require_all,
                 context=f"cmd={cmd}",
                 watch_pid=proc.pid,
+                watch_is_target=_launched_is_the_app(cmd, proc.pid, process_names),
             )
         except WindowDiscoveryTimeoutError as exc:
             # Best-effort: don't leak the launcher on timeout (a late-arriving
@@ -1263,14 +1283,18 @@ class Window:
         context: str = "",
         watch_pid: int | None = None,
         sample_every: float = 5.0,
+        watch_is_target: bool = False,
     ) -> Window:
         """Waits for a window that was not in `before` to appear, and returns it.
 
         With `watch_pid`, the process is sampled every `sample_every` seconds
         while the wait goes on -- alive, CPU seconds, the windows it owns even
         when hidden -- and the samples go to the session journal and into the
-        timeout message. A process that exits before its window appears ends
-        the wait at once, with its exit code, instead of after the whole timeout.
+        timeout message. With `watch_is_target` the process *is* the app, so its
+        exit before any window ends the wait at once with its exit code.
+        Without it the process may be a launcher (`explorer.exe shell:...` exits
+        with code 1 once the packaged app is off; `wt.exe` hands off to
+        `WindowsTerminal.exe`), so its exit is recorded and the wait goes on.
 
         The waiting half of `launch_and_discover`, for the windows something
         other than a launch opens. A Qt menu is the case this was split out for:
@@ -1312,15 +1336,19 @@ class Window:
             if snap is not None:
                 return cls(snap.hwnd, snap.pid)
             now = time.monotonic()
-            if watch_pid and (now >= next_sample or not samples):
+            if (
+                watch_pid
+                and (now >= next_sample or not samples)
+                and (not samples or samples[-1].alive)
+            ):
                 sample = procwatch.sample_process(watch_pid, at=now - started, census=census)
                 samples.append(sample)
                 notify_wait_observer(
                     {"pid": watch_pid, "image": watched_image, **sample.as_event()}
                 )
                 next_sample = now + sample_every
-                if not sample.alive:
-                    # Nothing to wait for any more; say so now, not at the deadline.
+                if not sample.alive and watch_is_target:
+                    # The app itself is gone: nothing to wait for; say so now.
                     raise WindowDiscoveryTimeoutError(
                         f"{watched_image or 'The launched process'} (pid {watch_pid}) exited "
                         f"with code {sample.exit_code} after {sample.at:.1f}s, before any "
@@ -1344,11 +1372,12 @@ class Window:
         where = f" ({context})" if context else ""
         watched = ""
         if watch_pid:
-            samples.append(
-                procwatch.sample_process(
-                    watch_pid, at=time.monotonic() - started, census=WindowCensus.capture()
+            if not samples or samples[-1].alive:
+                samples.append(
+                    procwatch.sample_process(
+                        watch_pid, at=time.monotonic() - started, census=WindowCensus.capture()
+                    )
                 )
-            )
             probe = procwatch.windows_probe(watch_pid, since_seconds=timeout + 5)
             notify_wait_observer(
                 {"pid": watch_pid, "image": watched_image, "probe": probe, **samples[-1].as_event()}

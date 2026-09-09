@@ -89,7 +89,10 @@ def describe_wait(pid: int, image: str, samples: list[ProcessSample]) -> str:
     first, last = samples[0], samples[-1]
     who = f"{image or 'the process'} (pid {pid})"
     if not last.alive:
-        state = f"exited with code {last.exit_code} at {last.at:.0f}s"
+        state = (
+            f"exited with code {last.exit_code} at {last.at:.0f}s -- if it was a launcher "
+            "handing off to the real application, that is expected"
+        )
     else:
         cpu0, cpu1 = first.cpu_seconds or 0.0, last.cpu_seconds or 0.0
         state = (
