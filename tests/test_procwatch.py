@@ -1,5 +1,5 @@
-"""What the awaited process was doing: the samples, the machine snapshot, and
-the wait that ends the moment the process does."""
+"""What the awaited process was doing: alive, CPU, windows -- and the wait that
+ends the moment the process does."""
 
 from __future__ import annotations
 
@@ -15,56 +15,30 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Win32 process A
 from wintegrate import Window  # noqa: E402
 from wintegrate.diagnostics import WindowCensus, set_wait_observer  # noqa: E402
 from wintegrate.exceptions import WindowDiscoveryTimeoutError  # noqa: E402
-from wintegrate.procwatch import (  # noqa: E402
-    ProcessSample,
-    describe_wait,
-    machine_snapshot,
-    sample_process,
-)
+from wintegrate.procwatch import ProcessSample, describe_wait, sample_process  # noqa: E402
 
 
-def test_a_live_process_is_sampled_with_cpu_threads_and_windows():
-    sample = sample_process(os.getpid(), at=1.5)
+def test_a_live_process_is_sampled_alive_with_cpu_time():
+    sample = sample_process(os.getpid(), at=1.5, census=WindowCensus.capture())
     assert sample.alive and sample.exit_code is None
     assert sample.cpu_seconds is not None and sample.cpu_seconds >= 0
-    assert sample.threads and sample.threads >= 1
-    assert sample.working_set_mb and sample.working_set_mb > 0
     assert sample.as_event()["at"] == 1.5
 
 
-def test_an_exited_process_is_sampled_as_gone_with_its_exit_code():
-    proc = subprocess.run([sys.executable, "-c", "import sys; sys.exit(7)"], check=False)
-    sample = sample_process(proc.pid if hasattr(proc, "pid") else 0)
-    # The pid may already be recycled or unopenable; either way the sample says
-    # "not alive" rather than raising. A still-open handle would report 7.
+def test_a_gone_process_is_a_sample_that_says_so():
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(7)"])
+    proc.wait(timeout=30)
+    sample = sample_process(proc.pid)
     assert sample.alive is False
-    assert sample.exit_code in (7, None)
-
-
-def test_the_machine_snapshot_names_the_busiest_processes():
-    snap = machine_snapshot(interval=0.2, top=3)
-    assert "error" not in snap
-    assert snap["processes"] > 10
-    for entry in snap["busiest"]:
-        assert entry["name"].endswith(".exe") or entry["name"] == "?"
-        assert entry["cpu_percent_of_one_core"] > 0
+    assert sample.exit_code in (7, None)  # None if the pid could no longer be opened
 
 
 def test_describe_wait_says_idle_and_windowless_in_words():
-    samples = [
-        ProcessSample(0.0, True, None, 0.30, 9, 40.0, []),
-        ProcessSample(90.0, True, None, 0.31, 9, 40.5, []),
-    ]
-    machine = {
-        "busiest": [{"pid": 1, "name": "msmpeng.exe", "cpu_percent_of_one_core": 97.0}],
-        "known_busy": ["Microsoft Defender scanning"],
-    }
-    text = describe_wait(4242, "powershell.exe", samples, machine)
+    samples = [ProcessSample(0.0, True, None, 0.30), ProcessSample(90.0, True, None, 0.31)]
+    text = describe_wait(4242, "powershell.exe", samples)
     assert "powershell.exe (pid 4242) was sampled 2x" in text
-    assert "CPU 0.3s total (+0.0s over the wait)" in text
+    assert "still alive at 90s, having used 0.0s of CPU over the wait" in text
     assert "created no top-level window at all" in text
-    assert "msmpeng.exe 97.0%" in text
-    assert "That is Microsoft Defender scanning." in text
 
 
 def test_describe_wait_lists_hidden_windows_and_an_exit():
@@ -74,13 +48,11 @@ def test_describe_wait_lists_hidden_windows_and_an_exit():
             True,
             None,
             0.1,
-            3,
-            10.0,
             [{"hwnd": 1, "class": "MSCTFIME UI", "title": "", "visible": False}],
         ),
-        ProcessSample(4.0, False, 3, 0.4, None, None, []),
+        ProcessSample(4.0, False, 3, 0.4),
     ]
-    text = describe_wait(7, "app.exe", samples, None)
+    text = describe_wait(7, "app.exe", samples)
     assert "exited with code 3 at 4s" in text
     assert "'MSCTFIME UI' '' (hidden)" in text
 
@@ -119,7 +91,26 @@ def test_a_long_wait_samples_the_process_and_reports_it_in_the_timeout():
     message = str(excinfo.value)
     assert "was sampled" in message and "still alive at 3s" in message
     assert "created no top-level window" in message
-    assert "Busiest on the machine" in message or "processes" in message or True
     assert len(seen) >= 3  # the first look, at least one mid-wait, and the final one
     assert all(e["pid"] == proc.pid for e in seen)
-    assert seen[-1].get("machine") is not None
+
+
+def test_the_windows_probe_answers_for_a_live_process():
+    from wintegrate.procwatch import describe_probe, windows_probe
+
+    probe = windows_probe(os.getpid(), since_seconds=60)
+    assert "error" not in probe, probe
+    threads = probe["process"]["threads"]
+    threads = threads if isinstance(threads, list) else [threads]
+    assert threads and all("state" in t and "wait" in t for t in threads)
+    assert "capi2_enabled" in probe
+    text = describe_probe(probe)
+    assert "threads:" in text
+    assert ("CAPI2 log disabled" in text) or ("revocation-check" in text) or probe["capi2_enabled"]
+
+
+def test_describe_probe_reports_a_failed_probe_without_raising():
+    from wintegrate.procwatch import describe_probe
+
+    assert "probe failed" in describe_probe({"error": "boom"})
+    assert describe_probe({}) == ""

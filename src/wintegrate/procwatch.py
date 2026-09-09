@@ -1,19 +1,14 @@
 """What a process is doing while its window is awaited.
 
-"No window appeared within 90s" says what did not happen. These samples say
-what did: whether the launched process is alive, whether it is burning CPU or
-idle, how many threads it has, and whether it has created any window at all,
-visible or not -- plus, when the wait runs out, who else on the machine was
-busy. Measured on a hosted arm64 runner: a WPF fixture that took 18 seconds to
-show its window on one launch had shown nothing after 90 on the previous one,
-and nothing on the desktop or in its stderr said why. This is the instrument
-that was missing.
+Three facts, sampled while the wait goes on: is it still alive (and if not,
+its exit code), is it doing work (CPU seconds), and has it created any
+top-level window at all, visible or not. "No window appeared within 90s" says
+what did not happen; these say what did.
 """
 
 from __future__ import annotations
 
 import ctypes
-import time
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,122 +17,25 @@ from wintegrate.interop import kernel32
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 STILL_ACTIVE = 259
-TH32CS_SNAPPROCESS = 0x00000002
-_INVALID_HANDLE = ctypes.c_void_p(-1).value
-
-# Processes whose place in the top-CPU list explains a stall on a fresh runner:
-# the antivirus scanning a first-run script, .NET's native-image compiler, and
-# Windows servicing. Named so the message can say so.
-BUSY_BY_NAME = {
-    "msmpeng.exe": "Microsoft Defender scanning",
-    "mscorsvw.exe": ".NET native image generation",
-    "ngen.exe": ".NET native image generation",
-    "ngentask.exe": ".NET native image generation",
-    "tiworker.exe": "Windows servicing",
-    "trustedinstaller.exe": "Windows servicing",
-    "msiexec.exe": "an MSI installer",
-    "werfault.exe": "Windows Error Reporting (something crashed)",
-    "compattelrunner.exe": "compatibility telemetry",
-}
 
 
 class _FILETIME(ctypes.Structure):
     _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
 
 
-class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
-    _fields_ = [
-        ("cb", wintypes.DWORD),
-        ("PageFaultCount", wintypes.DWORD),
-        ("PeakWorkingSetSize", ctypes.c_size_t),
-        ("WorkingSetSize", ctypes.c_size_t),
-        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-        ("PagefileUsage", ctypes.c_size_t),
-        ("PeakPagefileUsage", ctypes.c_size_t),
-    ]
-
-
-class _PROCESSENTRY32W(ctypes.Structure):
-    _fields_ = [
-        ("dwSize", wintypes.DWORD),
-        ("cntUsage", wintypes.DWORD),
-        ("th32ProcessID", wintypes.DWORD),
-        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
-        ("th32ModuleID", wintypes.DWORD),
-        ("cntThreads", wintypes.DWORD),
-        ("th32ParentProcessID", wintypes.DWORD),
-        ("pcPriClassBase", wintypes.LONG),
-        ("dwFlags", wintypes.DWORD),
-        ("szExeFile", wintypes.WCHAR * 260),
-    ]
-
-
-def _filetime_seconds(ft: _FILETIME) -> float:
-    return ((ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 1e7
-
-
 def _cpu_seconds(handle) -> float | None:
     created, exited, kernel, user = _FILETIME(), _FILETIME(), _FILETIME(), _FILETIME()
-    if not kernel32.GetProcessTimes(
+    ok = kernel32.GetProcessTimes(
         handle,
         ctypes.byref(created),
         ctypes.byref(exited),
         ctypes.byref(kernel),
         ctypes.byref(user),
-    ):
+    )
+    if not ok:
         return None
-    return round(_filetime_seconds(kernel) + _filetime_seconds(user), 3)
-
-
-def _working_set_mb(handle) -> float | None:
-    counters = _PROCESS_MEMORY_COUNTERS()
-    counters.cb = ctypes.sizeof(counters)
-    fn = getattr(kernel32, "K32GetProcessMemoryInfo", None)
-    if fn is None or not fn(handle, ctypes.byref(counters), counters.cb):
-        return None
-    return round(counters.WorkingSetSize / (1024 * 1024), 1)
-
-
-def _thread_counts() -> dict[int, int]:
-    """{pid: thread count} for every process, one Toolhelp snapshot."""
-    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if not snapshot or snapshot == _INVALID_HANDLE:
-        return {}
-    try:
-        entry = _PROCESSENTRY32W()
-        entry.dwSize = ctypes.sizeof(entry)
-        out: dict[int, int] = {}
-        if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
-            return {}
-        while True:
-            out[int(entry.th32ProcessID)] = int(entry.cntThreads)
-            if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
-                break
-        return out
-    finally:
-        kernel32.CloseHandle(snapshot)
-
-
-def _process_names() -> dict[int, str]:
-    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-    if not snapshot or snapshot == _INVALID_HANDLE:
-        return {}
-    try:
-        entry = _PROCESSENTRY32W()
-        entry.dwSize = ctypes.sizeof(entry)
-        out: dict[int, str] = {}
-        if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
-            return {}
-        while True:
-            out[int(entry.th32ProcessID)] = str(entry.szExeFile).lower()
-            if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
-                break
-        return out
-    finally:
-        kernel32.CloseHandle(snapshot)
+    ticks = sum((ft.dwHighDateTime << 32) | ft.dwLowDateTime for ft in (kernel, user))
+    return round(ticks / 1e7, 2)
 
 
 @dataclass
@@ -148,8 +46,6 @@ class ProcessSample:
     alive: bool
     exit_code: int | None
     cpu_seconds: float | None
-    threads: int | None
-    working_set_mb: float | None
     windows: list[dict[str, Any]] = field(default_factory=list)  # every top-level, visible or not
 
     def as_event(self) -> dict[str, Any]:
@@ -158,20 +54,17 @@ class ProcessSample:
             "alive": self.alive,
             "exit_code": self.exit_code,
             "cpu_seconds": self.cpu_seconds,
-            "threads": self.threads,
-            "working_set_mb": self.working_set_mb,
             "windows": len(self.windows),
             "visible_windows": sum(1 for w in self.windows if w.get("visible")),
         }
 
 
 def sample_process(pid: int, at: float = 0.0, census: list | None = None) -> ProcessSample:
-    """Alive, CPU time, threads, memory, and the windows the process owns right now.
-
-    Never raises: a process that has gone is a sample that says so.
-    """
+    """Alive, CPU time, and the windows the process owns in `census` (a
+    `WindowCensus.capture()` list). Never raises: a process that has gone is a
+    sample that says so."""
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    alive, code, cpu, wset = False, None, None, None
+    alive, code, cpu = False, None, None
     if handle:
         try:
             exit_code = wintypes.DWORD()
@@ -179,100 +72,28 @@ def sample_process(pid: int, at: float = 0.0, census: list | None = None) -> Pro
                 alive = exit_code.value == STILL_ACTIVE
                 code = None if alive else int(exit_code.value)
             cpu = _cpu_seconds(handle)
-            wset = _working_set_mb(handle) if alive else None
         finally:
             kernel32.CloseHandle(handle)
-    threads = _thread_counts().get(pid) if alive else None
-    windows: list[dict[str, Any]] = []
-    if census is None and alive:
-        try:
-            from wintegrate.diagnostics import WindowCensus
-
-            census = WindowCensus.capture()
-        except Exception:  # noqa: BLE001 - a sample must not raise
-            census = []
-    for w in census or []:
-        if getattr(w, "pid", None) == pid:
-            windows.append(
-                {
-                    "hwnd": w.hwnd,
-                    "class": w.class_name,
-                    "title": w.title,
-                    "visible": bool(w.is_visible),
-                }
-            )
-    return ProcessSample(at, alive, code, cpu, threads, wset, windows)
+    windows = [
+        {"hwnd": w.hwnd, "class": w.class_name, "title": w.title, "visible": bool(w.is_visible)}
+        for w in (census or [])
+        if getattr(w, "pid", None) == pid
+    ]
+    return ProcessSample(at, alive, code, cpu, windows)
 
 
-def machine_snapshot(interval: float = 0.5, top: int = 6) -> dict[str, Any]:
-    """Who was busy: the processes that used the most CPU over `interval` seconds,
-    and whether any of the known stall-makers (Defender, ngen, servicing) is
-    among the running processes. Never raises."""
-    try:
-        names = _process_names()
-
-        def cpu_map() -> dict[int, float]:
-            out: dict[int, float] = {}
-            for pid in names:
-                if pid == 0:
-                    continue
-                handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-                if not handle:
-                    continue
-                try:
-                    cpu = _cpu_seconds(handle)
-                    if cpu is not None:
-                        out[pid] = cpu
-                finally:
-                    kernel32.CloseHandle(handle)
-            return out
-
-        first = cpu_map()
-        time.sleep(interval)
-        second = cpu_map()
-        deltas = sorted(
-            ((second.get(pid, c) - c, pid) for pid, c in first.items()),
-            reverse=True,
-        )
-        busiest = [
-            {
-                "pid": pid,
-                "name": names.get(pid, "?"),
-                "cpu_percent_of_one_core": round(100 * delta / interval, 1),
-            }
-            for delta, pid in deltas[:top]
-            if delta > 0
-        ]
-        # Named only when actually consuming CPU: Defender's service exists on
-        # every Windows, so its presence says nothing; its place in the busy list does.
-        present = sorted({BUSY_BY_NAME[b["name"]] for b in busiest if b["name"] in BUSY_BY_NAME})
-        return {
-            "interval": interval,
-            "busiest": busiest,
-            "known_busy": present,
-            "processes": len(names),
-        }
-    except Exception as exc:  # noqa: BLE001 - decorating a failure must not replace it
-        return {"error": f"{type(exc).__name__}: {exc}"}
-
-
-def describe_wait(
-    pid: int, image: str, samples: list[ProcessSample], machine: dict[str, Any] | None
-) -> str:
-    """The paragraph for a timeout message: what the process did while it was awaited."""
+def describe_wait(pid: int, image: str, samples: list[ProcessSample]) -> str:
+    """The sentence for a timeout message: what the process did while awaited."""
     if not samples:
         return ""
-    last = samples[-1]
-    first = samples[0]
-    lines = [f" While waiting, {image or 'the process'} (pid {pid}) was sampled {len(samples)}x:"]
+    first, last = samples[0], samples[-1]
+    who = f"{image or 'the process'} (pid {pid})"
     if not last.alive:
-        lines.append(f" it exited with code {last.exit_code} at {last.at:.0f}s.")
+        state = f"exited with code {last.exit_code} at {last.at:.0f}s"
     else:
-        cpu0 = first.cpu_seconds or 0.0
-        cpu1 = last.cpu_seconds if last.cpu_seconds is not None else cpu0
-        lines.append(
-            f" still alive at {last.at:.0f}s, CPU {cpu1:.1f}s total ({cpu1 - cpu0:+.1f}s over the wait), "
-            f"threads {first.threads}->{last.threads}, working set {last.working_set_mb} MB."
+        cpu0, cpu1 = first.cpu_seconds or 0.0, last.cpu_seconds or 0.0
+        state = (
+            f"still alive at {last.at:.0f}s, having used {cpu1 - cpu0:.1f}s of CPU over the wait"
         )
     windows = {(w["class"], w["title"], w["visible"]) for s in samples for w in s.windows}
     if windows:
@@ -280,18 +101,141 @@ def describe_wait(
             f"{cls!r} {title!r}{'' if vis else ' (hidden)'}"
             for cls, title, vis in sorted(windows)[:6]
         )
-        lines.append(f" Windows it created: {shown}.")
+        made = f"windows it created: {shown}"
     else:
-        lines.append(" It created no top-level window at all, visible or hidden.")
-    if machine and not machine.get("error"):
-        busiest = machine.get("busiest") or []
-        if busiest:
-            lines.append(
-                " Busiest on the machine: "
-                + ", ".join(f"{b['name']} {b['cpu_percent_of_one_core']}%" for b in busiest[:5])
+        made = "it created no top-level window at all, visible or hidden"
+    return f" While waiting, {who} was sampled {len(samples)}x: {state}; {made}."
+
+
+# --- what Windows itself can say at the moment the wait gives up -----------------
+
+# One PowerShell invocation, JSON out. Each probe is a fact Windows already keeps:
+# the awaited process's threads and what they wait on; whether a PowerShell
+# engine reached "Available" (event 400, in the classic 'Windows PowerShell' log); Defender scan start/finish
+# (1000/1001) and detections (1116/1117); CAPI2 revocation-check records, when
+# that log is enabled; the FontCache service starting (System 7036), which is what
+# a first WPF window waits for; Application Hang reports (1002).
+_PROBE_SCRIPT = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$pid_ = [int]__PID__; $since = (Get-Date).AddSeconds(-[double]__SINCE__)
+$out = [ordered]@{}
+$p = Get-Process -Id $pid_
+if ($p) {
+  $out.process = [ordered]@{ name = $p.ProcessName; start = $p.StartTime.ToString('o'); cpu_s = [math]::Round($p.TotalProcessorTime.TotalSeconds, 2);
+    threads = @($p.Threads | ForEach-Object { [ordered]@{ id = $_.Id; state = "$($_.ThreadState)"; wait = "$($_.WaitReason)"; cpu_s = [math]::Round($_.TotalProcessorTime.TotalSeconds, 2) } }) }
+}
+function Recent($log, $ids) {
+  $f = @{ LogName = $log; StartTime = $since }; if ($ids) { $f.Id = $ids }
+  @(Get-WinEvent -FilterHashtable $f -MaxEvents 40 -ErrorAction SilentlyContinue | ForEach-Object {
+    [ordered]@{ t = $_.TimeCreated.ToString('HH:mm:ss.fff'); id = $_.Id; text = (($_.Message -split "`n")[0]).Trim() } })
+}
+$out.powershell_engine = Recent 'Windows PowerShell' @(400, 403)
+$out.defender = Recent 'Microsoft-Windows-Windows Defender/Operational' @(1000, 1001, 1116, 1117)
+$capi = Get-WinEvent -ListLog 'Microsoft-Windows-CAPI2/Operational' -ErrorAction SilentlyContinue
+$out.capi2_enabled = [bool]($capi -and $capi.IsEnabled)
+$out.capi2 = if ($out.capi2_enabled) { Recent 'Microsoft-Windows-CAPI2/Operational' $null } else { @() }
+$out.services = @(Recent 'System' @(7036) | Where-Object { $_.text -match 'Font|Presentation|Defender|Update|Installer' })
+$out.hangs = Recent 'Application' @(1002)
+$out | ConvertTo-Json -Depth 5 -Compress
+"""
+
+
+def windows_probe(pid: int, since_seconds: float, timeout: float = 25.0) -> dict[str, Any]:
+    """Asks Windows what it knows about the awaited process and the last
+    `since_seconds`: thread wait reasons, PowerShell engine state events,
+    Defender activity, CAPI2 revocation checks, FontCache service starts,
+    Application Hang reports. Never raises."""
+    import json
+    import subprocess
+
+    try:
+        # -Command does not take positional arguments the way -File does, so the
+        # two numbers are written into the script text.
+        script = _PROBE_SCRIPT.replace("__PID__", str(int(pid))).replace(
+            "__SINCE__", repr(float(since_seconds))
+        )
+        run = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        text = (run.stdout or "").strip()
+        if not text:
+            err = (run.stderr or "").strip().splitlines()
+            tail = err[-1][:200] if err else ""
+            return {"error": f"probe printed nothing (exit {run.returncode}): {tail}"}
+        return json.loads(text)
+    except Exception as exc:  # noqa: BLE001 - decorating a failure must not replace it
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _normalize_list(value) -> list:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def describe_probe(probe: dict[str, Any]) -> str:
+    """The sentences for a timeout message, only for the facts that carry news."""
+    if not probe or probe.get("error"):
+        return f" (Windows probe failed: {probe.get('error')})" if probe else ""
+    parts: list[str] = []
+    proc = probe.get("process") or {}
+    threads = _normalize_list(proc.get("threads"))
+    if threads:
+        waits: dict[str, int] = {}
+        for t in threads:
+            key = (
+                f"{t.get('state')}/{t.get('wait')}"
+                if t.get("state") == "Wait"
+                else str(t.get("state"))
+            )
+            waits[key] = waits.get(key, 0) + 1
+        summary = ", ".join(f"{n}x {k}" for k, n in sorted(waits.items(), key=lambda kv: -kv[1]))
+        parts.append(f" Its {len(threads)} threads: {summary}.")
+    engine = _normalize_list(probe.get("powershell_engine"))
+    if engine:
+        started = [e for e in engine if e.get("id") == 400]
+        parts.append(
+            f" PowerShell engine events since the wait began: {len(engine)}"
+            + (
+                f", last 'Available' at {started[-1]['t']}"
+                if started
+                else ", none reached 'Available'"
+            )
+            + "."
+        )
+    defender = _normalize_list(probe.get("defender"))
+    if defender:
+        parts.append(
+            " Defender: " + "; ".join(f"{e['t']} {e['text'][:80]}" for e in defender[-3:]) + "."
+        )
+    if probe.get("capi2_enabled"):
+        capi = _normalize_list(probe.get("capi2"))
+        if capi:
+            parts.append(
+                f" {len(capi)} certificate revocation-check record(s), e.g. "
+                + "; ".join(f"{e['t']} {e['text'][:70]}" for e in capi[-2:])
                 + "."
             )
-        known = machine.get("known_busy") or []
-        if known:
-            lines.append(" That is " + "; ".join(known) + ".")
-    return "".join(lines)
+    else:
+        parts.append(
+            " (CAPI2 log disabled: revocation checks were not recorded; enable with"
+            " wevtutil sl Microsoft-Windows-CAPI2/Operational /e:true.)"
+        )
+    services = _normalize_list(probe.get("services"))
+    if services:
+        parts.append(
+            " Services: " + "; ".join(f"{e['t']} {e['text'][:80]}" for e in services[-3:]) + "."
+        )
+    hangs = _normalize_list(probe.get("hangs"))
+    if hangs:
+        parts.append(
+            " Application Hang reported: "
+            + "; ".join(f"{e['t']} {e['text'][:80]}" for e in hangs[-2:])
+            + "."
+        )
+    return "".join(parts)

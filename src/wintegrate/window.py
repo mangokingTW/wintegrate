@@ -1267,11 +1267,10 @@ class Window:
         """Waits for a window that was not in `before` to appear, and returns it.
 
         With `watch_pid`, the process is sampled every `sample_every` seconds
-        while the wait goes on -- alive, CPU, threads, the windows it owns even
+        while the wait goes on -- alive, CPU seconds, the windows it owns even
         when hidden -- and the samples go to the session journal and into the
-        timeout message together with a snapshot of who else was busy. A
-        process that exits before its window appears ends the wait at once,
-        with its exit code, instead of after the whole timeout.
+        timeout message. A process that exits before its window appears ends
+        the wait at once, with its exit code, instead of after the whole timeout.
 
         The waiting half of `launch_and_discover`, for the windows something
         other than a launch opens. A Qt menu is the case this was split out for:
@@ -1345,17 +1344,17 @@ class Window:
         where = f" ({context})" if context else ""
         watched = ""
         if watch_pid:
-            samples.append(procwatch.sample_process(watch_pid, at=time.monotonic() - started))
-            machine = procwatch.machine_snapshot()
-            notify_wait_observer(
-                {
-                    "pid": watch_pid,
-                    "image": watched_image,
-                    "machine": machine,
-                    **samples[-1].as_event(),
-                }
+            samples.append(
+                procwatch.sample_process(
+                    watch_pid, at=time.monotonic() - started, census=WindowCensus.capture()
+                )
             )
-            watched = procwatch.describe_wait(watch_pid, watched_image, samples, machine)
+            probe = procwatch.windows_probe(watch_pid, since_seconds=timeout + 5)
+            notify_wait_observer(
+                {"pid": watch_pid, "image": watched_image, "probe": probe, **samples[-1].as_event()}
+            )
+            watched = procwatch.describe_wait(watch_pid, watched_image, samples)
+            watched += procwatch.describe_probe(probe)
         raise WindowDiscoveryTimeoutError(
             f"No new window appeared within {timeout}s{where} "
             f"(pattern={title_pattern}, classes={window_classes}, "
