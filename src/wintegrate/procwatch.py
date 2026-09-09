@@ -117,6 +117,7 @@ def describe_wait(pid: int, image: str, samples: list[ProcessSample]) -> str:
 # a first WPF window waits for; Application Hang reports (1002).
 _PROBE_SCRIPT = r"""
 $ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 $pid_ = [int]__PID__; $since = (Get-Date).AddSeconds(-[double]__SINCE__)
 $out = [ordered]@{}
 $p = Get-Process -Id $pid_
@@ -127,9 +128,9 @@ if ($p) {
 function Recent($log, $ids) {
   $f = @{ LogName = $log; StartTime = $since }; if ($ids) { $f.Id = $ids }
   @(Get-WinEvent -FilterHashtable $f -MaxEvents 40 -ErrorAction SilentlyContinue | ForEach-Object {
-    [ordered]@{ t = $_.TimeCreated.ToString('HH:mm:ss.fff'); id = $_.Id; text = (($_.Message -split "`n")[0]).Trim() } })
+    [ordered]@{ t = $_.TimeCreated.ToString('HH:mm:ss.fff'); id = $_.Id; pid = $_.ProcessId; text = (($_.Message -split "`n")[0]).Trim() } })
 }
-$out.powershell_engine = Recent 'Windows PowerShell' @(400, 403)
+$out.powershell_engine = @(Recent 'Windows PowerShell' @(400, 403) | Where-Object { $_.pid -eq $pid_ })
 $out.defender = Recent 'Microsoft-Windows-Windows Defender/Operational' @(1000, 1001, 1116, 1117)
 $capi = Get-WinEvent -ListLog 'Microsoft-Windows-CAPI2/Operational' -ErrorAction SilentlyContinue
 $out.capi2_enabled = [bool]($capi -and $capi.IsEnabled)
@@ -197,16 +198,12 @@ def describe_probe(probe: dict[str, Any]) -> str:
         summary = ", ".join(f"{n}x {k}" for k, n in sorted(waits.items(), key=lambda kv: -kv[1]))
         parts.append(f" Its {len(threads)} threads: {summary}.")
     engine = _normalize_list(probe.get("powershell_engine"))
-    if engine:
-        started = [e for e in engine if e.get("id") == 400]
+    if str(proc.get("name", "")).lower().startswith("powershell") or engine:
+        started = sorted(e["t"] for e in engine if e.get("id") == 400)
         parts.append(
-            f" PowerShell engine events since the wait began: {len(engine)}"
-            + (
-                f", last 'Available' at {started[-1]['t']}"
-                if started
-                else ", none reached 'Available'"
-            )
-            + "."
+            f" Its PowerShell engine reached 'Available' at {started[0]}."
+            if started
+            else " Its PowerShell engine never logged 'Available' (event 400): still starting up."
         )
     defender = _normalize_list(probe.get("defender"))
     if defender:
