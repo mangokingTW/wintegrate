@@ -8,6 +8,21 @@ do about it — that callout is the guarantee, not the version number.
 
 ## [Unreleased]
 
+### Added
+
+- **A discovery wait now says what the process was doing.** `launch_and_discover`
+  samples the launched process while its window is awaited -- alive, CPU time,
+  threads, working set, and every top-level window it owns, hidden ones included
+  -- every 5s (`wait_for_new(..., watch_pid=, sample_every=)`). The samples go to
+  the session journal as `discovery_wait` events, and a timeout message ends with
+  them plus a snapshot of the busiest processes on the machine and whether
+  Defender, `ngen` or Windows servicing was running. A process that exits before
+  its window appears ends the wait at once with its exit code instead of after
+  the whole timeout. `wintegrate.procwatch` holds the instrument. Measured on a
+  hosted arm64 runner: a WPF fixture showed nothing after 90s on one launch and
+  came up in 18s on the next, and nothing recorded said why -- this is what would
+  have. The two WPF fixtures in the test suite now launch through it.
+
 ### Changed
 
 - **The report says what happened, not where the code was.** In the pytest-html

@@ -11,11 +11,13 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from wintegrate import procwatch
 from wintegrate.diagnostics import (
     WindowCensus,
     WindowSnapshot,
     capture_window_image,
     launch_output_paths,
+    notify_wait_observer,
 )
 from wintegrate.element import UiaElement
 from wintegrate.exceptions import (
@@ -1230,6 +1232,7 @@ class Window:
                 window_classes=window_classes,
                 require_all=require_all,
                 context=f"cmd={cmd}",
+                watch_pid=proc.pid,
             )
         except WindowDiscoveryTimeoutError as exc:
             # Best-effort: don't leak the launcher on timeout (a late-arriving
@@ -1258,8 +1261,17 @@ class Window:
         window_classes: tuple[str, ...] | list[str] | None = None,
         require_all: bool = False,
         context: str = "",
+        watch_pid: int | None = None,
+        sample_every: float = 5.0,
     ) -> Window:
         """Waits for a window that was not in `before` to appear, and returns it.
+
+        With `watch_pid`, the process is sampled every `sample_every` seconds
+        while the wait goes on -- alive, CPU, threads, the windows it owns even
+        when hidden -- and the samples go to the session journal and into the
+        timeout message together with a snapshot of who else was busy. A
+        process that exits before its window appears ends the wait at once,
+        with its exit code, instead of after the whole timeout.
 
         The waiting half of `launch_and_discover`, for the windows something
         other than a launch opens. A Qt menu is the case this was split out for:
@@ -1280,12 +1292,17 @@ class Window:
         proc_names = {p.lower() for p in process_names} if process_names else None
         classes = set(window_classes) if window_classes else None
 
-        deadline = time.monotonic() + timeout
+        started = time.monotonic()
+        deadline = started + timeout
         saw_unready = False
+        samples: list = []
+        next_sample = started + sample_every
+        watched_image = get_process_image_name(watch_pid) if watch_pid else ""
         while True:
+            census = WindowCensus.capture()
             snap, unready = _select_new_window(
                 before,
-                WindowCensus.capture(),
+                census,
                 excluded=excluded,
                 classes=classes,
                 proc_names=proc_names,
@@ -1295,7 +1312,27 @@ class Window:
             saw_unready = saw_unready or unready
             if snap is not None:
                 return cls(snap.hwnd, snap.pid)
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if watch_pid and (now >= next_sample or not samples):
+                sample = procwatch.sample_process(watch_pid, at=now - started, census=census)
+                samples.append(sample)
+                notify_wait_observer(
+                    {"pid": watch_pid, "image": watched_image, **sample.as_event()}
+                )
+                next_sample = now + sample_every
+                if not sample.alive:
+                    # Nothing to wait for any more; say so now, not at the deadline.
+                    raise WindowDiscoveryTimeoutError(
+                        f"{watched_image or 'The launched process'} (pid {watch_pid}) exited "
+                        f"with code {sample.exit_code} after {sample.at:.1f}s, before any "
+                        f"window appeared{f' ({context})' if context else ''}."
+                        f"{_describe_desktop_now(before)}",
+                        title_pattern=title_pattern,
+                        window_classes=tuple(window_classes) if window_classes else None,
+                        process_names=tuple(process_names) if process_names else None,
+                        exit_code=sample.exit_code,
+                    )
+            if now >= deadline:
                 break
             time.sleep(0.1)
 
@@ -1306,10 +1343,23 @@ class Window:
             else ""
         )
         where = f" ({context})" if context else ""
+        watched = ""
+        if watch_pid:
+            samples.append(procwatch.sample_process(watch_pid, at=time.monotonic() - started))
+            machine = procwatch.machine_snapshot()
+            notify_wait_observer(
+                {
+                    "pid": watch_pid,
+                    "image": watched_image,
+                    "machine": machine,
+                    **samples[-1].as_event(),
+                }
+            )
+            watched = procwatch.describe_wait(watch_pid, watched_image, samples, machine)
         raise WindowDiscoveryTimeoutError(
             f"No new window appeared within {timeout}s{where} "
             f"(pattern={title_pattern}, classes={window_classes}, "
-            f"process_names={process_names}).{detail}"
+            f"process_names={process_names}).{detail}{watched}"
             f"{_describe_desktop_now(before)}",
             title_pattern=title_pattern,
             window_classes=tuple(window_classes) if window_classes else None,

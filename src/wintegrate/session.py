@@ -25,6 +25,7 @@ from wintegrate.diagnostics import (
     capture_screen_image,
     capture_window_image,
     set_launch_output_dir,
+    set_wait_observer,
 )
 from wintegrate.element import UiaElement
 from wintegrate.env import env, is_ci
@@ -572,6 +573,20 @@ class Session:
             self._mouse = Mouse(session=self)
         return self._mouse
 
+    def _on_wait_sample(self, event: dict) -> None:
+        image, pid = event.get("image") or "process", event.get("pid")
+        if not event.get("alive", True):
+            message = f"{image} (pid {pid}) exited with code {event.get('exit_code')} at {event.get('at')}s"
+        else:
+            message = (
+                f"{image} (pid {pid}) alive at {event.get('at')}s: cpu {event.get('cpu_seconds')}s, "
+                f"threads {event.get('threads')}, windows {event.get('windows')} "
+                f"({event.get('visible_windows')} visible)"
+            )
+        self.log_event(
+            "discovery_wait", message, **{k: v for k, v in event.items() if k != "image"}
+        )
+
     def log_event(self, event_type: str, message: str, **kwargs):
         """Records a structured event, in memory and -- once open -- in the journal.
 
@@ -1073,6 +1088,9 @@ class Session:
         # stdout/stderr here rather than inheriting this process's -- see
         # diagnostics.set_launch_output_dir.
         set_launch_output_dir(self.artifact_dir)
+        # Discovery waits report what the awaited process is doing; those samples
+        # belong in the journal, next to the launch they qualify.
+        set_wait_observer(self._on_wait_sample)
         # Preflight before anything is touched: what this process is, what shares
         # its console, what is in the foreground. On disk first, so a run that
         # dies in the next hundred lines still says what it was.
@@ -1293,6 +1311,7 @@ class Session:
             except Exception as exc:
                 logger.debug(f"restore skipped ({type(exc).__name__}): {exc}")
         set_launch_output_dir(None)
+        set_wait_observer(None)
 
         # Capture final census and compute diff
         self.final_census = WindowCensus.capture()
