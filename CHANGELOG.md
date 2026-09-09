@@ -8,6 +8,8 @@ do about it — that callout is the guarantee, not the version number.
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-09-09
+
 ### Added
 
 - **A discovery wait now says what the process was doing.** `launch_and_discover`
