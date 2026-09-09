@@ -8,6 +8,27 @@ do about it — that callout is the guarantee, not the version number.
 
 ## [Unreleased]
 
+### Changed
+
+- **The report says what happened, not where the code was.** In the pytest-html
+  row: the frame per step is taken at the *end* of the step (its result, or the
+  moment it failed) rather than its start; the error line is the exception's
+  message, not `file:line: Type`; a failed step shows the message too (the
+  journal's `step_failed` now carries `detail`); the steps table has a header,
+  fixed columns, a video-time column, and events summarised as sentences with
+  the raw lines on demand; frames are decoded at 720 px and enlarge in place on
+  click (the previous `<a href="data:...">` zoom opened nothing: Chromium refuses
+  top-frame navigation to `data:` URLs); rows carrying sessions are marked and
+  listed in the summary; the artifact line names the folder in the uploaded
+  artifacts instead of a runner-local path.
+- **GitHub Step Summary reads like the run.** Steps are listed in run order with
+  their nesting (they were ordered by completion, child before parent); the
+  failure callout is one line and names the step; the error is no longer printed
+  twice; the file list is gone; the window-leak warning ignores message-only,
+  IME, tooltip and shell windows, which made every passing test look leaky.
+  `wintegrate.evidence` holds the shared shaping so the report and the summary
+  cannot disagree.
+
 ## [0.6.3] — 2026-09-08
 
 ### Added

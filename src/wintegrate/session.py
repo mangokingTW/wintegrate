@@ -703,7 +703,7 @@ class Session:
                 pass
             self._journal = None
 
-    def _write_step_summary(self, exc_type=None) -> None:
+    def _write_step_summary(self, exc_type=None, exc_val=None) -> None:
         """Appends a summary to $GITHUB_STEP_SUMMARY, when there is one.
 
         The run page is what a person -- or an agent -- reads first, and it is
@@ -714,109 +714,85 @@ class Session:
         if not path:
             return
         try:
-            starts: dict[str, float] = {}
-            rows = []
-            for e in self.logs:
-                if e.get("type") == "step_start":
-                    starts[e["message"]] = e.get("monotonic", 0.0)
-                elif e.get("type") in ("step_ok", "step_failed"):
-                    is_ok = e["type"] == "step_ok"
-                    outcome_icon = "✅" if is_ok else "❌"
-                    outcome_text = "ok" if is_ok else f"**failed** ({e.get('error', '?')})"
-                    dur = (
-                        f"{e.get('seconds', ''):.2f}s"
-                        if isinstance(e.get("seconds"), (int, float))
-                        else str(e.get("seconds", ""))
-                    )
-                    rows.append((e["message"], f"{outcome_icon} {outcome_text}", dur))
+            from wintegrate.evidence import build_step_tree, flatten_steps, leaked_windows, one_line
 
+            steps = flatten_steps(build_step_tree(self.logs))
             failed = exc_type is not None
             verdict = "failed" if failed else "completed"
             title_icon = "❌" if failed else "✅"
 
-            # Check window census diff for leaks
-            added_windows = []
+            leaked = []
             census_file = self.artifact_dir / "window_census.json"
             if census_file.exists():
                 try:
-                    cdata = json.loads(census_file.read_text(encoding="utf-8"))
-                    added_windows = cdata.get("added", [])
+                    leaked = leaked_windows(
+                        json.loads(census_file.read_text(encoding="utf-8")).get("added", [])
+                    )
                 except Exception:
-                    added_windows = []
+                    leaked = []
 
-            step_count_label = f"{len(rows)} step(s)" if rows else "no steps"
-
-            # Derive a meaningful session name (from pytest test ID if running under pytest, else artifact folder name)
             test_id = os.environ.get("PYTEST_CURRENT_TEST", "").split(" (")[0]
-            if test_id:
-                session_name = test_id
-            else:
-                session_name = f"session {self.artifact_dir.name}"
+            session_name = test_id or f"session {self.artifact_dir.name}"
+            step_count_label = f"{len(steps)} step(s)" if steps else "no steps"
 
             lines = [""]
-            if not failed:
-                lines.append(
-                    f"<details><summary><b>{title_icon} {session_name} -- {verdict}</b> ({step_count_label})</summary>"
-                )
-                lines.append("")
-            else:
-                lines.append(f"### {title_icon} {session_name} -- {verdict}")
-                lines.append("")
-
-            # For failed sessions, place a high-priority GitHub alert right at the top
             if failed:
-                errors = [e for e in self.logs if e.get("type") == "session_error"]
-                err_msg = ""
-                if errors:
-                    first_err = errors[0]
-                    err_msg = f"`{first_err.get('signature') or exc_type.__name__}`: {str(first_err.get('message'))[:200]}"
-                    if first_err.get("step"):
-                        err_msg += f" (in step `{first_err.get('step')}`)"
-                else:
-                    err_msg = f"`{exc_type.__name__}`"
-                lines.append(f"> [!CAUTION]\n> **Session failed**: {err_msg}\n")
-
-            # Leak warning if windows persisted
-            if added_windows:
-                sample_titles = [
-                    w.get("name") or w.get("class_name") or "Window" for w in added_windows[:3]
+                lines += [f"### {title_icon} {session_name} -- {verdict}", ""]
+                failed_step = next((n for _d, n in steps if n["status"] == "failed"), None)
+                what = one_line(
+                    (failed_step or {}).get("detail")
+                    or (str(exc_val) if exc_val is not None else "")
+                    or exc_type.__name__,
+                    300,
+                )
+                where = f" in step **{failed_step['name']}**" if failed_step else ""
+                # One line inside the callout: a newline would fall out of the quote.
+                lines += ["> [!CAUTION]", f"> `{exc_type.__name__}`{where}: {what}", ""]
+            else:
+                lines += [
+                    f"<details><summary><b>{title_icon} {session_name} -- {verdict}</b> ({step_count_label})</summary>",
+                    "",
                 ]
-                summary_sample = ", ".join(f"`{t}`" for t in sample_titles)
-                if len(added_windows) > 3:
-                    summary_sample += f" and {len(added_windows) - 3} more"
-                lines.append(
-                    f"> [!WARNING]\n> **Window leak detected**: {len(added_windows)} window(s) remained open at exit ({summary_sample}).\n"
+
+            if leaked:
+                sample = ", ".join(
+                    f"`{w.get('title') or w.get('name') or w.get('class_name')}`"
+                    for w in leaked[:3]
                 )
+                if len(leaked) > 3:
+                    sample += f" and {len(leaked) - 3} more"
+                lines += [
+                    "> [!WARNING]",
+                    f"> {len(leaked)} window(s) still open at exit: {sample}",
+                    "",
+                ]
 
-            lines.append(
-                f"artifacts: `{self.artifact_dir}` -- start with `READ_THIS_FIRST.md`; `session_events.jsonl` is the authority."
-            )
-            lines.append("")
+            lines += [
+                f"artifacts: folder `{self.artifact_dir.name}` in this job's uploaded artifacts; "
+                "start with `READ_THIS_FIRST.md`, `session_events.jsonl` is the authority.",
+                "",
+            ]
 
-            if rows:
-                lines += ["| step | outcome | duration |", "| :--- | :--- | ---: |"]
-                lines += [f"| {name} | {outcome} | {secs} |" for name, outcome, secs in rows]
+            if steps:
+                lines += ["| step | outcome | took |", "| :--- | :--- | ---: |"]
+                for depth, node in steps:
+                    indent = "&nbsp;&nbsp;&nbsp;&nbsp;" * depth
+                    if node["status"] == "ok":
+                        outcome = "✅ ok"
+                    elif node["status"] == "failed":
+                        outcome = f"❌ **failed** ({node.get('error') or '?'})"
+                    else:
+                        outcome = "⏳ never finished"
+                    took = (
+                        f"{node['seconds']:.2f}s"
+                        if isinstance(node.get("seconds"), (int, float))
+                        else ""
+                    )
+                    lines.append(f"| {indent}{node['name']} | {outcome} | {took} |")
                 lines.append("")
 
             if not failed:
-                errors = [e for e in self.logs if e.get("type") == "session_error"]
-            for e in errors:
-                lines.append(
-                    f"- error `{e.get('signature') or '?'}`: {str(e.get('message'))[:300]}"
-                    + (f" in step `{e.get('step')}`" if e.get("step") else "")
-                )
-
-            files = (
-                sorted(p.name for p in self.artifact_dir.iterdir() if p.is_file())
-                if self.artifact_dir.exists()
-                else []
-            )
-            if files:
-                lines.append("- files: " + ", ".join(f"`{f}`" for f in files))
-
-            if not failed:
-                lines.append("")
-                lines.append("</details>")
+                lines += ["</details>", ""]
 
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write("\n".join(lines) + "\n")
@@ -1066,6 +1042,7 @@ class Session:
                 seconds=round(elapsed, 3),
                 error=type(exc).__name__,
                 signature=getattr(exc, "signature", type(exc).__name__),
+                detail=str(exc)[:400],
                 **self._census_delta(before),
             )
             self._write_index("running")
@@ -1346,13 +1323,14 @@ class Session:
         # Flush session logs
         self._flush_session_logs()
         self._write_index("closed")
-        self._write_step_summary(exc_type)
+        self._write_step_summary(exc_type, exc_val)
         self._close_journal()
         RECENT_SESSIONS.append(
             {
                 "artifact_dir": str(self.artifact_dir),
                 "failed": exc_type is not None,
                 "error": exc_type.__name__ if exc_type is not None else None,
+                "detail": str(exc_val)[:400] if exc_val is not None else None,
             }
         )
 

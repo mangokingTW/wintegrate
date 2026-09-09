@@ -13,14 +13,19 @@ stays inert without `--html`.
 1. **The last screenshot**, in the media pane, before anything has to be
    expanded. The step's own `failure-<step>.png` when the failure was inside a
    `session.step`, otherwise the session's `failure_screenshot.png`.
-2. **The error**, one line: the assertion or exception that ended the test.
-3. **The steps**, one row each: tick or cross, the step's name, its duration,
-   its failure signature when it failed, and the frame the recording holds at the
-   moment the step began. Steps nest the way they ran, and each expands to the
-   events logged inside it with their arguments.
+2. **The error**, one line: the exception's own message (not the file and line,
+   which the traceback below already gives).
+3. **The steps**, one row each: tick or cross, the step's name, how long it
+   took, where it sits in the video, and the frame the recording holds at the
+   *end* of the step -- the result, or the moment it failed. A failed step shows
+   the exception's message. Steps nest the way they ran; the events inside each
+   are listed as plain sentences, with the raw journal lines a click away.
+   Clicking a frame enlarges it in place.
 4. **The recording**, as a video the report plays.
 
-A passing row has the same steps table, collapsed with the row.
+A passing row has the same steps table, collapsed with the row. Rows that carry
+sessions are marked &#127916; in the results table, and the summary lists them,
+so they can be found in a long report where every passing row is collapsed.
 
 The order is the one that lets a failure be read without expanding anything:
 Playwright's report opens on the last screenshot for the same reason. One frame

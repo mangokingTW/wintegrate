@@ -62,7 +62,12 @@ def test_a_failed_step_keeps_its_signature_and_an_open_one_is_not_guessed():
     assert failed["status"] == "failed"
     assert failed["signature"] == "TextMismatchError[expected=hello]"
     assert tree[2]["status"] == "open" and tree[2]["end"] is None
-    assert len(flatten_steps(tree)) == 4
+    assert [(d, n["name"]) for d, n in flatten_steps(tree)] == [
+        (0, "Given the app is running"),
+        (1, "find the editor"),
+        (0, "When I type"),
+        (0, "left open by a kill"),
+    ]
 
 
 def test_rendering_shows_the_cross_the_signature_and_the_inner_events():
@@ -76,12 +81,27 @@ def test_rendering_shows_the_cross_the_signature_and_the_inner_events():
     assert "1.10s" in out
 
 
-def test_rendering_places_a_thumbnail_at_the_step_start_time():
+def test_rendering_places_the_frame_at_the_step_end_and_names_the_video_time():
+    """The frame is the step's result (or the moment it failed), so it is taken at
+    the end; a step that never ended keeps its start."""
     tree = build_step_tree(EVENTS)
     anchor = {"monotonic_start": 100.0}
-    out = render_steps(tree, thumbs={1000: ("data:image/png;base64,AAAA", 240, 180)}, anchor=anchor)
+    # "Given the app is running" ended at 102.1 -> 2100 ms; the open step started at 105.0
+    out = render_steps(
+        tree,
+        thumbs={
+            2100: ("data:image/png;base64,AAAA", 720, 540),
+            5000: ("data:image/png;base64,BBBB", 720, 540),
+        },
+        anchor=anchor,
+    )
     assert "background-image:url(data:image/png;base64,AAAA)" in out
+    assert "background-image:url(data:image/png;base64,BBBB)" in out
     assert "<img" not in out  # pytest-html's media viewer rewrites <img> inside extras
+    assert 'href="data:' not in out  # Chromium refuses top-frame navigation to data: URLs
+    assert '<details class="wt-frame">' in out
+    assert '<td class="wt-at">0:02.1</td>' in out
+    assert '<td class="wt-at">0:04.0</td>' in out  # the failed step ended at 104.0
 
 
 def test_the_jsonl_is_read_line_by_line_and_a_cut_line_is_dropped(tmp_path):
@@ -109,21 +129,60 @@ def test_render_session_shows_window_leaks(tmp_path):
 
     census_file = tmp_path / "window_census.json"
     census_file.write_text(
-        json.dumps({"added": [{"name": "Dialog Leaked", "class_name": "#32770"}]}),
+        json.dumps(
+            {"added": [{"title": "Dialog Leaked", "class_name": "#32770", "is_visible": True}]}
+        ),
         encoding="utf-8",
     )
     block, _ = render_session(tmp_path, failed=False, error=None)
-    assert "Window leak detected" in block
+    assert "still open at exit" in block
     assert "Dialog Leaked" in block
 
 
-def test_render_steps_thumbnails_have_zoom_link():
+def test_a_failed_step_shows_the_exception_message_not_only_its_type():
+    events = EVENTS[:7] + [
+        {**EVENTS[7], "detail": "[When I type] expected 'hello', the editor holds 'hel'"}
+    ]
+    tree = build_step_tree(events)
+    out = render_steps(tree, thumbs={}, anchor=None)
+    assert "expected &#x27;hello&#x27;, the editor holds &#x27;hel&#x27;" in out
+
+
+def test_events_inside_a_step_read_as_sentences_with_the_raw_lines_on_demand():
     tree = build_step_tree(EVENTS)
-    anchor = {"monotonic_start": 100.0}
-    out = render_steps(tree, thumbs={1000: ("data:image/png;base64,AAAA", 240, 180)}, anchor=anchor)
-    assert '<a class="wt-thumb-link"' in out
-    assert 'href="data:image/png;base64,AAAA"' in out
-    assert 'target="_blank"' in out
+    out = render_steps(tree, thumbs={}, anchor=None)
+    assert "<li>launched notepad</li>" in out
+    assert "raw events (1)" in out
+    assert "launch_app: Launching notepad" in out
+
+
+def test_the_table_has_a_header_naming_its_columns():
+    from wintegrate.pytest_plugin import render_steps_table
+
+    out = render_steps_table(build_step_tree(EVENTS), {}, None)
+    assert "<th>step</th><th>took</th><th>video</th>" in out
+    assert "frame at the end of the step" in out
+
+
+def test_leak_warning_ignores_the_process_own_plumbing(tmp_path):
+    from wintegrate.pytest_plugin import render_session
+
+    (tmp_path / "window_census.json").write_text(
+        json.dumps(
+            {
+                "added": [
+                    {"title": "", "class_name": "MessageWindowClass", "is_visible": False},
+                    {"title": "Tooltip", "class_name": "tooltips_class32", "is_visible": True},
+                    {"title": "Untitled - Notepad", "class_name": "Notepad", "is_visible": True},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    block, _ = render_session(tmp_path, failed=False, error=None)
+    assert "1 window(s) still open at exit" in block
+    assert "Untitled - Notepad" in block
+    assert "MessageWindowClass" not in block
 
 
 def test_render_session_attaches_screenshot_when_failed(tmp_path):
@@ -135,3 +194,30 @@ def test_render_session_attaches_screenshot_when_failed(tmp_path):
     block, media = render_session(tmp_path, failed=True, error="AssertionError: deliberate")
     assert len(media) == 1
     assert "AssertionError: deliberate" in block
+
+
+def test_step_summary_lists_steps_in_run_order_with_nesting_and_one_line_errors(
+    tmp_path, monkeypatch
+):
+    """The GitHub Step Summary must read like the run: parent before child, indented,
+    the failure on one line inside its callout, and no runner-local paths."""
+    from wintegrate import Session, SessionConfig
+
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_x.py::test_y (call)")
+    session = Session(SessionConfig(artifact_dir=tmp_path / "art", record_video=False))
+    session.logs = EVENTS[:7] + [
+        {**EVENTS[7], "detail": "expected 'hello'\nthe editor holds 'hel'"}
+    ]
+    (tmp_path / "art").mkdir()
+    session._write_step_summary(AssertionError, AssertionError("boom"))
+    text = summary.read_text(encoding="utf-8")
+    assert text.index("| Given the app is running") < text.index("find the editor")
+    assert "| &nbsp;&nbsp;&nbsp;&nbsp;find the editor" in text
+    assert (
+        "> `AssertionError` in step **When I type**: expected 'hello' the editor holds 'hel'"
+        in text
+    )
+    assert str(tmp_path) not in text  # folder name only, never the runner's path
+    assert "- files:" not in text
