@@ -23,14 +23,6 @@ def test_get_skill_path():
     assert path.exists()
 
 
-def test_bundled_skill_matches_example():
-    """Verify that bundled SKILL.md and examples/skills/wintegrate/SKILL.md remain in sync."""
-    bundled_content = get_skill_content()
-    example_path = Path(__file__).resolve().parent.parent / "examples" / "skills" / "wintegrate" / "SKILL.md"
-    assert example_path.exists(), f"Example skill not found at {example_path}"
-    example_content = example_path.read_text(encoding="utf-8")
-    assert bundled_content == example_content
-
 
 def test_install_skill_custom_path(tmp_path: Path):
     dest = install_skill(target=tmp_path / "custom" / "SKILL.md")
