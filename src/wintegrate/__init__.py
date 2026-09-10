@@ -127,6 +127,7 @@ from wintegrate.recorder import (
 )
 from wintegrate.scintilla import EolMode, ScintillaView, is_scintilla
 from wintegrate.session import Session, SessionConfig
+from wintegrate.skills import get_skill_content, get_skill_path, install_skill
 from wintegrate.text import count_lines, normalize_line_endings
 from wintegrate.touch import Contact, Touch
 from wintegrate.window import Window
@@ -177,6 +178,8 @@ __all__ = [
     "get_keyboard_layout",
     "get_keyboard_layout_list",
     "get_process_image_name",
+    "get_skill_content",
+    "get_skill_path",
     "get_window_class",
     "get_window_cloak_reason",
     "get_window_display_affinity",
@@ -184,6 +187,7 @@ __all__ = [
     "get_window_title",
     "ImeConversion",
     "inspect_desktop_tree",
+    "install_skill",
     "is_scintilla",
     "is_windows_desktop",
     "is_windows_server",

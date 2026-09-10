@@ -2,7 +2,7 @@
 
 `wintegrate` (Windows + integrate) is a CI-first Python automation library engineered to reliably test and drive Windows desktop applications (Win32, WinForms, WPF, Qt, and WinUI 3 / Windows App SDK) on unattended headless runners without flakiness, window focus stealing, or localized string dependencies.
 
-A ready-to-use Agent Skill is provided in `.agents/skills/wintegrate/SKILL.md`. Claude Code configuration is available in `CLAUDE.md`.
+An example Agent Skill is provided in [examples/skills/wintegrate/SKILL.md](examples/skills/wintegrate/SKILL.md), or can be installed directly into any workspace via `python -m wintegrate.skills install`. Claude Code configuration is in `CLAUDE.md`.
 
 ---
 

@@ -19,3 +19,6 @@ scratch_debug_*.py
 
 # MkDocs build output
 site/
+
+# Local agent working files
+.agents/
