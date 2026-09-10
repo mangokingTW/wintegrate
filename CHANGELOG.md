@@ -8,6 +8,24 @@ do about it — that callout is the guarantee, not the version number.
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-09-10
+
+### Added
+
+- **AI Agent Skill distribution and CLI installer.** Bundled canonical `SKILL.md`
+  into package data under `wintegrate.skills` and added `python -m wintegrate.skills install`
+  (`--target`, `--global`, `--force`), `show`, and `path` subcommands to install the
+  wintegrate agent skill into any workspace without manual copy-pasting. PR(120)
+- **CLAUDE.md configuration.** Added standard Claude Code project memory file
+  importing `@AGENTS.md`. PR(120)
+
+### Changed
+
+- **Formalized AGENTS.md.** Removed decorative emojis and expanded comprehensive
+  guidance covering Playwright-style locators, session lifecycle & the pytest fixture
+  exception-suppression gotcha, WinUI 3 Content Island focus routing, and verified
+  action patterns. PR(120)
+
 ## [0.6.4] — 2026-09-09
 
 ### Added
