@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 import pytest
 
 from wintegrate.skills import get_skill_content, get_skill_path, install_skill
@@ -21,7 +22,6 @@ def test_get_skill_path():
     path = get_skill_path()
     assert path.name == "SKILL.md"
     assert path.exists()
-
 
 
 def test_install_skill_custom_path(tmp_path: Path):

@@ -58,9 +58,7 @@ def install_skill(
         new_content = get_skill_content()
         if existing_content == new_content:
             return dest
-        raise FileExistsError(
-            f"Skill file already exists at {dest}. Use --force to overwrite."
-        )
+        raise FileExistsError(f"Skill file already exists at {dest}. Use --force to overwrite.")
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(get_skill_content(), encoding="utf-8")

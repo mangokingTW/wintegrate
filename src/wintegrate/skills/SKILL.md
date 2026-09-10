@@ -63,6 +63,7 @@ import subprocess
 from wintegrate import Window, Session, SessionConfig
 from wintegrate.apps import sweep_processes_verified
 
+
 @contextmanager
 def app_session(test_name: str | None = None):
     if test_name is None:
@@ -73,7 +74,9 @@ def app_session(test_name: str | None = None):
     artifact_dir = Path(rec_dir) / test_name
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    with Session(config=SessionConfig(artifact_dir=artifact_dir, record_video=True, fps=15)) as session:
+    with Session(
+        config=SessionConfig(artifact_dir=artifact_dir, record_video=True, fps=15)
+    ) as session:
         with session.step("prepare_environment"):
             sweep_processes_verified(("target_app.exe",))
 
@@ -96,6 +99,7 @@ def app_session(test_name: str | None = None):
                     pass
                 sweep_processes_verified(("target_app.exe",))
 
+
 def test_feature():
     with app_session("test_feature") as (session, win):
         with session.step("verify_feature"):
@@ -114,6 +118,7 @@ NOTEPAD_SPEC = AppSpec(
     process_names=("notepad.exe",),
     window_classes=("Notepad", "RichEditD2DPT"),
 )
+
 
 def test_notepad():
     config = SessionConfig(artifact_dir=Path("recording-artifacts/notepad"), record_video=True)
@@ -213,6 +218,7 @@ import time
 from wintegrate import UiaElement
 from wintegrate.interop import send_keys
 
+
 def settled(
     read: Callable[[], Any],
     matches: Callable[[Any], bool],
@@ -220,7 +226,7 @@ def settled(
     poll_interval: float = 0.05,
 ) -> Any:
     """Polls read() until matches(value), returning the last value either way.
-    
+
     Returning the value rather than raising allows pytest's own assertion
     to output the exact diff.
     """
@@ -230,6 +236,7 @@ def settled(
         time.sleep(poll_interval)
         val = read()
     return val
+
 
 # Example: Waiting for focus after TAB
 send_keys("{TAB}")
