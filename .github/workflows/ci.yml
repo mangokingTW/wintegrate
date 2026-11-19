@@ -205,6 +205,10 @@ jobs:
           # answered 'Unable to connect to source' from the runners, which took
           # out two jobs, and it ships the x64 build on both architectures for
           # applications whose arm64 build behaves differently.
+          # /noUpdater omits WinGUp (updater\GUP.exe). Without it, once upstream
+          # ships a release newer than the pinned fixture, every Notepad++ launch
+          # spawns GUP.exe and its "Notepad++ Update Available" #32770 dialog
+          # steals foreground mid-typing.
           - app: notepad++
             os: windows-latest
             arch: x64
@@ -214,7 +218,7 @@ jobs:
             fixtureAsset: npp.8.9.8.Installer.x64.exe
             fixtureSha256: '7b2a949bf460fb37a3888c9048698f43222a185a48323023df1c51e78a3ca1c2'
             fixtureSigner: 'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, S=Île-de-France, C=FR'
-            installerArgs: '/S'
+            installerArgs: '/S /noUpdater'
             installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
           - app: notepad++
             os: windows-11-arm
@@ -225,7 +229,7 @@ jobs:
             fixtureAsset: npp.8.9.8.Installer.arm64.exe
             fixtureSha256: '3ac2c91245e980c4fd0991e5c1971439e234c0713e994d1dae532c70b7528587'
             fixtureSigner: 'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, S=Île-de-France, C=FR'
-            installerArgs: '/S'
+            installerArgs: '/S /noUpdater'
             installerExpects: 'C:\\Program Files\\Notepad++\\notepad++.exe'
           - app: winmerge
             os: windows-latest

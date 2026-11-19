@@ -91,7 +91,9 @@ def editor():
     keeps third-party plugins out of the measurement.
     """
     npp = find_executable("Notepad++", NPP_CANDIDATES)
-    sweep_processes_verified(("notepad++.exe",), ("Notepad++",))
+    # Also sweep WinGUp (gup.exe): local installs that kept the updater can
+    # leave "Notepad++ Update Available" dialogs stealing foreground.
+    sweep_processes_verified(("notepad++.exe", "gup.exe"), ("Notepad++",))
     proc = subprocess.Popen([str(npp), "-nosession", "-multiInst", "-noPlugin"])
     try:
         win = Window.find(class_name="Notepad++", timeout=60.0)
@@ -119,9 +121,10 @@ def editor():
             # whichever test reads it first.
             typed = settled(edit.get_value, lambda v: v == EXPECTED_TEXT, timeout=10.0)
             assert typed == EXPECTED_TEXT, (
-                f"typing produced {typed!r}, expected {EXPECTED_TEXT!r} — a "
-                "keystroke was dropped, so every assertion below is measuring the "
-                "wrong document"
+                f"typing produced {typed!r}, expected {EXPECTED_TEXT!r} "
+                f"(foreground={_describe_foreground()}) — a keystroke was "
+                "dropped or diverted, so every assertion below is measuring "
+                "the wrong document"
             )
             yield win, edit
     finally:
